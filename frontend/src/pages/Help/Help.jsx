@@ -18,6 +18,13 @@ export const Help = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleEmailClick = (e) => {
+    e.preventDefault();
+    window.location.href = `mailto:${supportEmail}`;
+    navigator.clipboard.writeText(supportEmail);
+    toast.success("Opening email client (email copied to clipboard!)");
+  };
+
   const faqs = [
     {
       question: "How do I create a new booking?",
@@ -76,12 +83,12 @@ export const Help = () => {
                 </div>
 
                 <div className="flex gap-2">
-                  <a
-                    href={`mailto:${supportEmail}`}
-                    className="flex-1 inline-flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-500 text-white px-4 py-2.5 rounded-xl font-bold text-sm shadow-md shadow-primary-900/30 transition-all active:scale-98"
+                  <button
+                    onClick={handleEmailClick}
+                    className="flex-1 inline-flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-500 text-white px-4 py-2.5 rounded-xl font-bold text-sm shadow-md shadow-primary-900/30 transition-all active:scale-98 cursor-pointer"
                   >
                     Email Us
-                  </a>
+                  </button>
                   <button
                     onClick={handleCopyEmail}
                     className="p-2.5 bg-white/10 hover:bg-white/15 border border-white/10 rounded-xl transition-all text-white flex items-center justify-center active:scale-95"
