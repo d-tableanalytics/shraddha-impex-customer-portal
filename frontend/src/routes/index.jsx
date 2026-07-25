@@ -16,6 +16,7 @@ const Login = lazy(() => import("../pages/Auth/Login").then(m => ({ default: m.L
 const Inventory = lazy(() => import("../pages/Inventory/Inventory").then(m => ({ default: m.Inventory })));
 const Reports = lazy(() => import("../pages/Reports/Reports").then(m => ({ default: m.Reports })));
 const Settings = lazy(() => import("../pages/Settings/Settings").then(m => ({ default: m.Settings })));
+const Help = lazy(() => import("../pages/Help/Help").then(m => ({ default: m.Help })));
 
 export const router = createBrowserRouter([
   {
@@ -75,6 +76,10 @@ export const router = createBrowserRouter([
           {
             path: "settings",
             element: <Settings />,
+          },
+          {
+            path: "help",
+            element: <Help />,
           }
         ],
       }

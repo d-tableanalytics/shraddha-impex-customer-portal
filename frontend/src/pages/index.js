@@ -8,3 +8,4 @@ export { Login } from "./Auth/Login";
 export { Inventory } from "./Inventory/Inventory";
 export { Reports } from "./Reports/Reports";
 export { Settings } from "./Settings/Settings";
+export { Help } from "./Help/Help";

@@ -8,6 +8,7 @@ import {
   Boxes,
   Users,
   Settings,
+  HelpCircle,
   ChevronLeft,
   ChevronRight,
   LogOut,
@@ -54,6 +55,7 @@ export const Sidebar = () => {
       // { name: "Reports", path: "/reports", icon: BarChart3 },
     ] : []),
     { name: "Settings", path: "/settings", icon: Settings },
+    { name: "Help", path: "/help", icon: HelpCircle },
   ];
 
   return (

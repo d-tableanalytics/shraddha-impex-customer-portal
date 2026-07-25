@@ -50,10 +50,10 @@ export const Backorders = () => {
     import("../../utils/exportUtils").then(({ exportToExcel }) => {
       const cols = [
         { key: "indentNo", label: "Indent No" },
+        { key: "date", label: "Date" },
         { key: "sku", label: "SKU Code" },
         ...(isAdmin ? [{ key: "customer", label: "Customer" }] : []),
-        { key: "category", label: "Category" },
-        { key: "pendingQty", label: "Pending Qty" },
+        { key: "pendingQty", label: "Qty" },
         { key: "stock", label: "Current Stock" },
         { key: "status", label: "Status" },
       ];
@@ -63,9 +63,9 @@ export const Backorders = () => {
         group.lines.forEach(line => {
           rows.push({
             indentNo: group.indentNumber || "—",
+            date: line.updatedAt ? new Date(line.updatedAt).toLocaleDateString() : "—",
             sku: line.product?.code || "—",
             customer: line.customer?.name || "—",
-            category: line.product?.category || "—",
             pendingQty: line.pendingQuantity || 0,
             stock: line.product?.availableStock || 0,
             status: line.status || "—",
@@ -124,7 +124,7 @@ export const Backorders = () => {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Pending Indents"
+        title="Indents History"
         actions={
           <div className="flex gap-2">
             <button
@@ -147,7 +147,7 @@ export const Backorders = () => {
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <div className="bg-white p-5 rounded-2xl border border-amber-200/70 shadow-sm">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-            Pending Indents
+            Indents
           </p>
           {pendingLoading ? (
             <SkeletonLoader variant="text" className="h-8 w-16 mt-1" />
@@ -157,7 +157,7 @@ export const Backorders = () => {
         </div>
         <div className="bg-white p-5 rounded-2xl border border-amber-200/70 shadow-sm">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-            Pending Indent Lines
+            Indent Lines
           </p>
           {pendingLoading ? (
             <SkeletonLoader variant="text" className="h-8 w-16 mt-1" />
@@ -167,7 +167,7 @@ export const Backorders = () => {
         </div>
         <div className="bg-white p-5 rounded-2xl border border-amber-200/70 shadow-sm">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-            Total Pending Qty
+            Total Indent Qty
           </p>
           {pendingLoading ? (
             <SkeletonLoader variant="text" className="h-8 w-16 mt-1" />
@@ -181,7 +181,7 @@ export const Backorders = () => {
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-400 to-orange-500" />
         <div className="flex items-center gap-2 mb-4">
           <PackageX size={18} className="text-amber-500" />
-          <h2 className="text-lg font-black text-slate-900 tracking-tight">Pending Indent Details</h2>
+          <h2 className="text-lg font-black text-slate-900 tracking-tight">Indent Details</h2>
         </div>
         <BackordersTable
           items={pageItems}

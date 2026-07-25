@@ -355,7 +355,7 @@ export const OrderDrawer = () => {
                           <tr>
                             <th className="px-5 py-3">SKU Code</th>
                             {showMsilCode && <th className="px-5 py-3">MSIL Code</th>}
-                            <th className="px-5 py-3 text-center">Pending Qty</th>
+                            <th className="px-5 py-3 text-center">Qty</th>
                             <th className="px-5 py-3 text-center">Status</th>
                           </tr>
                         </thead>

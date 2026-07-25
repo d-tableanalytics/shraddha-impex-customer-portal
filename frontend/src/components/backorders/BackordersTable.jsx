@@ -114,9 +114,9 @@ export const BackordersTable = ({
               <th className={`${pad} pr-4`}>Indent No</th>
               <th className={`${pad} pr-4`}>SKU Code</th>
               {showCustomer && <th className={`${pad} pr-4`}>Customer</th>}
-              <th className={`${pad} pr-4`}>Category</th>
+              <th className={`${pad} pr-4`}>Date</th>
               <th className={`${pad} pr-4 text-center`}>Items</th>
-              <th className={`${pad} pr-4 text-center`}>Pending Qty</th>
+              <th className={`${pad} pr-4 text-center`}>Qty</th>
               <th className={`${pad} pr-4 text-center`}>Details</th>
               {onRestore && <th className={`${pad} pr-4 text-center`}>Action</th>}
             </tr>
@@ -154,7 +154,7 @@ export const BackordersTable = ({
                     </td>
                   )}
                   <td className={`${pad} pr-4 text-slate-500`}>
-                    {isMulti ? "Multiple" : primary.product.category}
+                    {primary.updatedAt ? new Date(primary.updatedAt).toLocaleDateString() : "—"}
                   </td>
                   <td className={`${pad} pr-4 text-center font-semibold text-slate-600`}>
                     {lines.length}
@@ -238,7 +238,7 @@ export const BackordersTable = ({
                   <tr>
                     <th className="px-4 py-2.5">SKU Code</th>
                     {showCustomer && <th className="px-4 py-2.5">Customer</th>}
-                    <th className="px-4 py-2.5">Category</th>
+                    <th className="px-4 py-2.5">Date</th>
                     <th className="px-4 py-2.5 text-center">Pending Qty</th>
                     <th className="px-4 py-2.5 text-center">Current Stock</th>
                     <th className="px-4 py-2.5 text-center">Status</th>
@@ -258,7 +258,9 @@ export const BackordersTable = ({
                             {line.customer?.name || "—"}
                           </td>
                         )}
-                        <td className="px-4 py-2.5 text-slate-500">{line.product.category}</td>
+                        <td className="px-4 py-2.5 text-slate-500">
+                          {line.updatedAt ? new Date(line.updatedAt).toLocaleDateString() : "—"}
+                        </td>
                         <td className="px-4 py-2.5 text-center font-black text-amber-600">
                           {line.pendingQuantity}
                         </td>
