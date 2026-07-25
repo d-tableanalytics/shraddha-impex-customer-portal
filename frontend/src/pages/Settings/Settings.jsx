@@ -169,29 +169,37 @@ export const Settings = () => {
                       </div>
                     </div>
 
-                    <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="flex-1 w-full flex flex-col gap-6">
+                      {/* Full Name is the only editable field, so it leads on its
+                          own row; the read-only details sit paired below it. */}
                       <div className="flex flex-col gap-1.5">
                         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Full Name</label>
-                        <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 font-medium text-slate-800" />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Email Address</label>
                         <div className="relative">
-                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                          <input type="email" defaultValue={user?.email} disabled className="w-full pl-10 pr-4 py-2 border border-slate-200 bg-slate-50 rounded-lg outline-none font-medium text-slate-500 cursor-not-allowed" />
+                          <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your full name" className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 font-medium text-slate-800" />
                         </div>
                       </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Company</label>
-                        <div className="relative">
-                          <Building className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                          <input type="text" defaultValue={user?.company || '—'} disabled className="w-full pl-10 pr-4 py-2 border border-slate-200 bg-slate-50 rounded-lg outline-none font-medium text-slate-500 cursor-not-allowed" />
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Email Address</label>
+                          <div className="relative">
+                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                            <input type="email" defaultValue={user?.email} disabled className="w-full pl-10 pr-4 py-2 border border-slate-200 bg-slate-50 rounded-lg outline-none font-medium text-slate-500 cursor-not-allowed" />
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Company</label>
+                          <div className="relative">
+                            <Building className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                            <input type="text" defaultValue={user?.company || '—'} disabled className="w-full pl-10 pr-4 py-2 border border-slate-200 bg-slate-50 rounded-lg outline-none font-medium text-slate-500 cursor-not-allowed" />
+                          </div>
                         </div>
                       </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Role</label>
-                        <input type="text" defaultValue={user?.role || 'User'} disabled className="w-full px-4 py-2 border border-slate-200 bg-slate-50 rounded-lg outline-none font-bold text-slate-700 cursor-not-allowed" />
-                      </div>
+
+                      <p className="text-xs text-slate-400">
+                        Email and company are managed by your administrator and can't be edited here.
+                      </p>
                     </div>
                   </div>
 
