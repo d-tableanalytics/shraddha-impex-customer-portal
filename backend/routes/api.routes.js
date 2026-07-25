@@ -81,7 +81,7 @@ router.post('/orders', async (req, res, next) => {
    * or a full Mongoose transaction block if MongoDB replica set is available.
    */
   const session = await mongoose.startSession();
-  
+
   try {
     session.startTransaction();
 
@@ -189,7 +189,7 @@ router.post('/auth/login', async (req, res, next) => {
 
     // Match plaintext password as requested
     const user = await User.findOne({ email: String(email).toLowerCase() });
-    
+
     // TODO: replace with bcrypt.compare once ready
     if (!user || user.password !== String(password)) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
@@ -225,7 +225,7 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
       ];
     } else {
       if (req.user?.brandAccess?.koken) allowedModels.push(ProductKoken);
-      if (req.user?.brandAccess?.bix)   allowedModels.push(ProductBIX);
+      if (req.user?.brandAccess?.bix) allowedModels.push(ProductBIX);
       if (req.user?.brandAccess?.imada && !isMsilCustomer) allowedModels.push(ProductIMADA);
     }
 
@@ -297,7 +297,7 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
         {
           $group: {
             _id: null,
-            booked:    { $sum: { $ifNull: ['$bookedQty', '$requestedQty'] } },
+            booked: { $sum: { $ifNull: ['$bookedQty', '$requestedQty'] } },
             confirmed: { $sum: { $ifNull: ['$confirmedQty', '$requestedQty'] } }
           }
         }
@@ -312,14 +312,14 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
       ])
     ]);
 
-    const ordersBooked    = orderTotalsAgg[0]?.booked || 0;
-    const totalConfirmed  = orderTotalsAgg[0]?.confirmed || 0;
+    const ordersBooked = orderTotalsAgg[0]?.booked || 0;
+    const totalConfirmed = orderTotalsAgg[0]?.confirmed || 0;
     const fullyPendingQty = fullyPendingAgg[0]?.qty || 0;
-    const totalReserved   = reservedAgg[0]?.qty || 0;   // in selection list, not yet confirmed
-    const totalPending    = pendingBackorderQty;        // Pending + Partially Confirmed
+    const totalReserved = reservedAgg[0]?.qty || 0;   // in selection list, not yet confirmed
+    const totalPending = pendingBackorderQty;        // Pending + Partially Confirmed
     // Booked demand = confirmed + partial-pending (in ordersBooked) + fully-pending + reserved
-    const totalBooked     = ordersBooked + fullyPendingQty + totalReserved;
-    const conversionRate  = totalBooked > 0
+    const totalBooked = ordersBooked + fullyPendingQty + totalReserved;
+    const conversionRate = totalBooked > 0
       ? Math.round((totalConfirmed / totalBooked) * 10000) / 100
       : 0;
 
@@ -328,14 +328,14 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
     //   ?range=15d | 1m | 3m | 6m (default) | 12m
     const RANGES = {
       '15d': { unit: 'day', count: 15 },
-      '1m':  { unit: 'day', count: 30 },
-      '3m':  { unit: 'month', count: 3 },
-      '6m':  { unit: 'month', count: 6 },
+      '1m': { unit: 'day', count: 30 },
+      '3m': { unit: 'month', count: 3 },
+      '6m': { unit: 'month', count: 6 },
       '12m': { unit: 'month', count: 12 },
     };
     const range = RANGES[req.query.range] || RANGES['6m'];
 
-    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const byDay = range.unit === 'day';
 
     // Window start.
@@ -360,8 +360,8 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
         {
           $group: {
             _id: idFor('$createdAt'),
-            count:     { $sum: 1 },
-            booked:    { $sum: { $ifNull: ['$bookedQty', '$requestedQty'] } },
+            count: { $sum: 1 },
+            booked: { $sum: { $ifNull: ['$bookedQty', '$requestedQty'] } },
             confirmed: { $sum: { $ifNull: ['$confirmedQty', '$requestedQty'] } }
           }
         }
@@ -378,8 +378,8 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
 
     const keyOf = (id) => byDay ? `${id.year}-${id.month}-${id.day}` : `${id.year}-${id.month}`;
     const orderMap = new Map(orderTrend.map(o => [keyOf(o._id), o]));
-    const pendMap  = new Map(pendingTrend.map(p => [keyOf(p._id), p]));
-    const resvMap  = new Map(reservedTrend.map(r => [keyOf(r._id), r]));
+    const pendMap = new Map(pendingTrend.map(p => [keyOf(p._id), p]));
+    const resvMap = new Map(reservedTrend.map(r => [keyOf(r._id), r]));
 
     const trendFormatted = [];
     const cursor = new Date(startDate);
@@ -394,12 +394,12 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
       const confirmed = o?.confirmed || 0;
       const booked = (o?.booked || 0) + (p?.booked || 0) + (rv?.booked || 0);
       trendFormatted.push({
-        name:        byDay ? `${d} ${MONTH_NAMES[m - 1]}` : MONTH_NAMES[m - 1],
+        name: byDay ? `${d} ${MONTH_NAMES[m - 1]}` : MONTH_NAMES[m - 1],
         booked,
         confirmed,
         unfulfilled: Math.max(0, booked - confirmed), // reserved (in list) + pending backorder
-        orders:      o?.count || 0, // retained for back-compat (CSV export)
-        qty:         confirmed
+        orders: o?.count || 0, // retained for back-compat (CSV export)
+        qty: confirmed
       });
       if (byDay) cursor.setDate(cursor.getDate() + 1);
       else cursor.setMonth(cursor.getMonth() + 1);
