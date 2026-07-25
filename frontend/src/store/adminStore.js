@@ -4,7 +4,9 @@ import { adminApi } from "../services/admin";
 export const useAdminStore = create((set, get) => ({
   users: [],
   roles: [],
-  loading: false,
+  // True by default: the admin screens fetch on mount, so their tables show
+  // skeleton rows from first paint instead of a brief "no records" flash.
+  loading: true,
   error: null,
 
   fetchUsers: async () => {

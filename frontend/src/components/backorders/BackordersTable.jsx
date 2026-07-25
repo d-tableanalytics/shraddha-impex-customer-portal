@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PackageX, ArrowRightCircle, Loader2, Eye, FileSpreadsheet } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { Pagination } from "../ui/Pagination";
+import { TableSkeleton } from "../ui/TableSkeleton";
 import { usePagination } from "../../hooks/usePagination";
 
 const DETAIL_PAGE_SIZE = 10;
@@ -46,6 +47,7 @@ export const groupByIndent = (items) => {
  */
 export const BackordersTable = ({
   items = [],
+  loading = false,
   showCustomer = false,
   compact = false,
   onRestore = null,
@@ -58,11 +60,28 @@ export const BackordersTable = ({
   const [selectedGroup, setSelectedGroup] = useState(null);
   const detailPaging = usePagination(selectedGroup?.lines || [], DETAIL_PAGE_SIZE);
 
+  const pad = compact ? "py-2" : "py-3";
+
   // Opening a different indent should always start at its first page.
   const openGroup = (group) => {
     detailPaging.setPage(1);
     setSelectedGroup(group);
   };
+
+  // Skeleton while the first fetch is in flight, so the table doesn't flash
+  // "No pending indents" before the data has had a chance to arrive.
+  if (loading) {
+    const cols = 8 + (showCustomer ? 1 : 0) + (onRestore ? 1 : 0);
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <tbody className="divide-y divide-slate-100">
+            <TableSkeleton rows={6} columns={cols} cellClass={`${pad} px-4`} />
+          </tbody>
+        </table>
+      </div>
+    );
+  }
 
   if (!items || items.length === 0) {
     return (
@@ -76,7 +95,6 @@ export const BackordersTable = ({
     );
   }
 
-  const pad = compact ? "py-2" : "py-3";
   const groups = groupByIndent(items);
 
   return (

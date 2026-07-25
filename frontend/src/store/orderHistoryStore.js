@@ -46,7 +46,9 @@ export const useOrderHistoryStore = create((set, get) => ({
     today: 0,
     thisMonth: 0,
   },
-  loading: false,
+  // Starts true: the history page fetches on mount, so the table should show
+  // skeleton rows from first paint rather than a "no bookings" flash.
+  loading: true,
   error: null,
 
   fetchOrders: async () => {

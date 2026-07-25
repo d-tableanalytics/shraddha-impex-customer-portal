@@ -8,7 +8,8 @@ import { Modal } from '../../../components/ui/Modal';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Pagination } from '../../../components/ui/Pagination';
 import { usePagination } from '../../../hooks/usePagination';
-import { UserPlus, Shield, Mail, Loader2, Search, X, Pencil, KeyRound } from 'lucide-react';
+import { UserPlus, Shield, Mail, Search, X, Pencil, KeyRound } from 'lucide-react';
+import { TableSkeleton } from '../../../components/ui/TableSkeleton';
 import toast from 'react-hot-toast';
 
 const PAGE_SIZE = 10;
@@ -247,11 +248,7 @@ export const UserManagement = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
-                      <Loader2 className="animate-spin inline-block mr-2" size={24} /> Loading users...
-                    </td>
-                  </tr>
+                  <TableSkeleton rows={PAGE_SIZE} columns={6} />
                 ) : filteredUsers.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="px-6 py-12 text-center text-slate-400">

@@ -4,10 +4,12 @@ import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
 import { Pagination } from "../ui/Pagination";
+import { TableSkeleton } from "../ui/TableSkeleton";
 
 export const OrderHistoryTable = () => {
   const {
     orders,
+    loading,
     sortBy,
     sortOrder,
     setSort,
@@ -129,7 +131,9 @@ export const OrderHistoryTable = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
-            {currentOrders.length > 0 ? (
+            {loading ? (
+              <TableSkeleton rows={8} columns={isAdmin ? 7 : 6} cellClass="px-5 py-4" />
+            ) : currentOrders.length > 0 ? (
               currentOrders.map((order) => (
                 <tr
                   key={order.id}

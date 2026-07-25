@@ -5,6 +5,7 @@ import { useProductStore } from '../../store/productStore';
 import { useUserStore } from '../../store/userStore';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
 import { Pagination } from '../../components/ui/Pagination';
+import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 
@@ -198,6 +199,9 @@ export const Inventory = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
+                {inventoryLoading && items.length === 0 && (
+                  <TableSkeleton rows={PAGE_SIZE} columns={showMsilCode ? 5 : 4} />
+                )}
                 <AnimatePresence>
                   {items.map(product => (
                     <motion.tr 
@@ -228,12 +232,10 @@ export const Inventory = () => {
                     </motion.tr>
                   ))}
                 </AnimatePresence>
-                {items.length === 0 && (
+                {!inventoryLoading && items.length === 0 && (
                   <tr>
                     <td colSpan={showMsilCode ? 5 : 4} className="px-6 py-12 text-center text-slate-500 font-medium">
-                      {inventoryLoading
-                        ? "Loading products…"
-                        : "No products found matching your search."}
+                      No products found matching your search.
                     </td>
                   </tr>
                 )}

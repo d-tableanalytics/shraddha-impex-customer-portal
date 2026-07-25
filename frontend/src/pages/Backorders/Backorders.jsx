@@ -6,11 +6,12 @@ import { useUserStore } from "../../store/userStore";
 import { PageHeader } from "../../components/common/PageHeader";
 import { BackordersTable, groupByIndent } from "../../components/backorders/BackordersTable";
 import { Pagination } from "../../components/ui/Pagination";
+import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
 
 const PAGE_SIZE = 10;
 
 export const Backorders = () => {
-  const { pendingItems, fetchPendingReservations, restorePending } = useCartStore();
+  const { pendingItems, pendingLoading, fetchPendingReservations, restorePending } = useCartStore();
   const { user } = useUserStore();
   const isAdmin = user?.role === "Admin";
   const [page, setPage] = useState(1);
@@ -148,19 +149,31 @@ export const Backorders = () => {
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
             Pending Indents
           </p>
-          <h3 className="text-2xl font-bold text-slate-900 mt-1">{distinctIndents}</h3>
+          {pendingLoading ? (
+            <SkeletonLoader variant="text" className="h-8 w-16 mt-1" />
+          ) : (
+            <h3 className="text-2xl font-bold text-slate-900 mt-1">{distinctIndents}</h3>
+          )}
         </div>
         <div className="bg-white p-5 rounded-2xl border border-amber-200/70 shadow-sm">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
             Pending Indent Lines
           </p>
-          <h3 className="text-2xl font-bold text-slate-900 mt-1">{pendingItems.length}</h3>
+          {pendingLoading ? (
+            <SkeletonLoader variant="text" className="h-8 w-16 mt-1" />
+          ) : (
+            <h3 className="text-2xl font-bold text-slate-900 mt-1">{pendingItems.length}</h3>
+          )}
         </div>
         <div className="bg-white p-5 rounded-2xl border border-amber-200/70 shadow-sm">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
             Total Pending Qty
           </p>
-          <h3 className="text-2xl font-bold text-amber-600 mt-1">{totalPendingQty}</h3>
+          {pendingLoading ? (
+            <SkeletonLoader variant="text" className="h-8 w-16 mt-1" />
+          ) : (
+            <h3 className="text-2xl font-bold text-amber-600 mt-1">{totalPendingQty}</h3>
+          )}
         </div>
       </div>
 
@@ -172,6 +185,7 @@ export const Backorders = () => {
         </div>
         <BackordersTable
           items={pageItems}
+          loading={pendingLoading}
           showCustomer={isAdmin}
           selectedIds={selectedIds}
           toggleSelectId={toggleSelectId}
@@ -179,7 +193,7 @@ export const Backorders = () => {
           onExportRow={handleExportRow}
         />
 
-        {allGroups.length > 0 && (
+        {!pendingLoading && allGroups.length > 0 && (
           <div className="mt-4 -mx-6 -mb-6 px-6 py-4 border-t border-slate-100 bg-slate-50/60">
             <Pagination
               page={currentPage}
