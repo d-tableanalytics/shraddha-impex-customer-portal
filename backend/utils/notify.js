@@ -19,7 +19,16 @@ const room = (userId) => `user:${String(userId)}`;
 export const notifyUser = async (userId, { title, message, type = 'reservation' }) => {
   try {
     const notif = await Notification.create({ user: userId, title, message, type });
-    io.to(room(userId)).emit('notification-received', notif);
+    const populatedNotif = await Notification.findById(notif._id).populate('user', 'user name company email role');
+    
+    // Emit to the target user's personal room
+    io.to(room(userId)).emit('notification-received', populatedNotif);
+    
+    // If the recipient user is not an Admin, also emit to all admins so they see it in real-time
+    if (populatedNotif.user && populatedNotif.user.role !== 'Admin') {
+      io.to('admins').emit('notification-received', populatedNotif);
+    }
+    
     return notif;
   } catch (err) {
     console.error('[notifyUser error]', err);
@@ -35,7 +44,11 @@ export const notifyAdmins = async ({ title, message, type = 'order' }) => {
     if (!admins.length) return;
     const docs = admins.map((a) => ({ user: a._id, title, message, type }));
     const created = await Notification.insertMany(docs);
-    created.forEach((notif) => io.to(room(notif.user)).emit('notification-received', notif));
+    
+    for (const notif of created) {
+      const populated = await Notification.findById(notif._id).populate('user', 'user name company email role');
+      io.to(room(notif.user)).emit('notification-received', populated);
+    }
   } catch (err) {
     console.error('[notifyAdmins error]', err);
   }

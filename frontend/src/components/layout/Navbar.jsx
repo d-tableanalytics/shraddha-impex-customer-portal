@@ -214,7 +214,14 @@ export const Navbar = () => {
                     }`}
                   />
                   <div className="flex-1">
-                    <p className="text-xs font-bold leading-relaxed">{n.title}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-bold leading-relaxed">{n.title}</p>
+                      {user?.role === "Admin" && typeof n.user === "object" && n.user && (
+                        <span className="text-[9px] bg-primary-600 text-white px-1.5 py-0.5 rounded font-bold uppercase shrink-0 max-w-[120px] truncate">
+                          {n.user.user || n.user.name || "System"}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs font-medium leading-relaxed text-slate-500">
                       {n.message}
                     </p>
