@@ -13,10 +13,26 @@ const transporter = nodemailer.createTransport({
 });
 
 
-export const sendEmail = async (to, subject, htmlBody) => {
+/**
+ * @param {string}   to        Primary recipient.
+ * @param {string}   subject
+ * @param {string}   htmlBody  Inner HTML — wrapped in the standard shell below.
+ * @param {object}  [options]
+ * @param {string[]} [options.cc]  Extra addresses to copy (e.g. a user's bookingCcEmails).
+ */
+export const sendEmail = async (to, subject, htmlBody, options = {}) => {
+  // Accept a single string or an array; drop blanks and de-duplicate against `to`.
+  const cc = [...new Set(
+    (Array.isArray(options.cc) ? options.cc : options.cc ? [options.cc] : [])
+      .map((a) => String(a).trim())
+      .filter(Boolean)
+      .filter((a) => a.toLowerCase() !== String(to).trim().toLowerCase())
+  )];
+
   if (!process.env.SMTP_HOST || process.env.SMTP_HOST === 'smtp.example.com') {
     console.log(`\n=== [DEV MAIL SIMULATOR] ===`);
     console.log(`To: ${to}`);
+    if (cc.length) console.log(`Cc: ${cc.join(', ')}`);
     console.log(`Subject: ${subject}`);
     console.log(`Body: \n${htmlBody}`);
     console.log(`============================\n`);
@@ -27,6 +43,7 @@ export const sendEmail = async (to, subject, htmlBody) => {
     const info = await transporter.sendMail({
       from: process.env.EMAIL_FROM || '"Shraddha Impex Booking Portal" <no-reply@example.com>',
       to,
+      ...(cc.length ? { cc } : {}),
       subject,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">

@@ -553,6 +553,68 @@ const runConfirmBooking = async (req, session) => {
   return { orderNumber, poNumber, indentId, createdOrders, summary, totalConfirmed, totalPending };
 };
 
+// Company address copied on every booking confirmation, so Shraddha Impex keeps
+// a record of each confirmed booking. Override via BOOKING_CC_EMAILS in .env
+// (comma-separated) to change or add addresses without touching this file.
+const COMPANY_CC = (process.env.BOOKING_CC_EMAILS ?? 'Contact@shraddhaimpex.net')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// Escape values that originate from user/product data before dropping them into
+// the email HTML.
+const esc = (v) =>
+  String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+// Builds the booking-confirmation email body. One mail per confirmation,
+// listing every line that was confirmed plus anything moved to an indent.
+const buildConfirmationEmail = ({ customerName, orderNumber, poNumber, indentId, summary, totalConfirmed, totalPending }) => {
+  const cell = 'padding: 6px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
+  const head = 'padding: 6px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase;';
+
+  const rows = summary.map((s) => `
+    <tr>
+      <td style="${cell}"><strong>${esc(s.skuCode)}</strong></td>
+      <td style="${cell}">${esc(s.msilCode || '—')}</td>
+      <td style="${cell} text-align: right;">${s.requestedQty}</td>
+      <td style="${cell} text-align: right; color: #1a7f37; font-weight: bold;">${s.confirmedQty}</td>
+      <td style="${cell} text-align: right; ${s.pendingQty > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #999;'}">${s.pendingQty}</td>
+    </tr>`).join('');
+
+  return `
+    <p>Hi ${esc(customerName)},</p>
+    <p>Your booking has been <strong>confirmed</strong>. Here are the details:</p>
+    <table style="border-collapse: collapse; margin: 12px 0;">
+      <tr><td style="padding: 4px 12px; color: #777;">Booking / Order No.</td><td style="padding: 4px 12px; font-weight: bold;">${esc(orderNumber)}</td></tr>
+      <tr><td style="padding: 4px 12px; color: #777;">PO Number</td><td style="padding: 4px 12px; font-weight: bold;">${esc(poNumber)}</td></tr>
+      ${totalPending > 0 ? `<tr><td style="padding: 4px 12px; color: #777;">Indent No.</td><td style="padding: 4px 12px; font-weight: bold;">${esc(indentId)}</td></tr>` : ''}
+    </table>
+
+    <table style="border-collapse: collapse; margin: 16px 0; width: 100%;">
+      <thead>
+        <tr>
+          <th style="${head}">SKU</th>
+          <th style="${head}">MSIL Code</th>
+          <th style="${head} text-align: right;">Booked</th>
+          <th style="${head} text-align: right;">Confirmed</th>
+          <th style="${head} text-align: right;">On Indent</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <p style="font-size: 14px;">
+      <strong>${totalConfirmed}</strong> unit(s) confirmed${totalPending > 0 ? ` and <strong>${totalPending}</strong> unit(s) moved to indent <strong>${esc(indentId)}</strong>` : ''}.
+    </p>
+    ${totalPending > 0
+      ? `<p>The indent quantity was not available in stock. We will notify you as soon as it is back, and it will return to your selection list for confirmation.</p>`
+      : `<p>Your full booking was fulfilled from available stock.</p>`}
+    <p>Thank you for your business.</p>
+  `;
+};
+
 export const confirmBooking = async (req, res, next) => {
   const session = await mongoose.startSession();
   let result;
@@ -590,6 +652,25 @@ export const confirmBooking = async (req, res, next) => {
       message: `${who} confirmed booking ${orderNumber} — ${totalConfirmed} units confirmed${totalPending > 0 ? `, ${totalPending} units on indent` : ''}.`,
       type: 'order',
     });
+
+    // Booking confirmation email to the customer who placed it. Sent once per
+    // confirmation (not per line), and only after the transaction has committed
+    // so we never email about a booking that was rolled back.
+    if (req.user.email && req.user.preferences?.emailNotifications !== false) {
+      const subject = totalPending > 0
+        ? `Booking ${orderNumber} confirmed (${totalConfirmed} units) — ${totalPending} on indent`
+        : `Booking ${orderNumber} confirmed — ${totalConfirmed} units`;
+
+      const body = buildConfirmationEmail({
+        customerName: req.user.user || req.user.company || 'Customer',
+        orderNumber, poNumber, indentId, summary, totalConfirmed, totalPending,
+      });
+
+      // Fire-and-forget: a mail failure must not fail an already-committed booking.
+      sendEmail(req.user.email, subject, body, {
+        cc: [...(req.user.bookingCcEmails || []), ...COMPANY_CC],
+      }).catch((e) => console.error('[confirmBooking] email error', e));
+    }
 
     if (createdOrders.length) {
       io.emit('order-created', { orderId: createdOrders[0]._id, orderNumber });
