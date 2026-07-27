@@ -95,26 +95,20 @@ export const TEMPLATE_CONFIG = {
   label: "Bulk Upload Template",
   fileName: "Bulk_Order_Template.xlsx",
   headers: ["SKU Code", "MSIL Code", "Quantity"],
-  sample: [
-    ["13405M-8", "", "10"],
-    ["", "MSIL-XYZ-1", "5"],
-  ],
+  sample: [],
 };
 
 // Non-MSIL customers never order by MSIL Code, so they get a template without
-// that column and the sample rows are keyed on SKU Code alone.
+// that column and no sample rows.
 export const TEMPLATE_CONFIG_NO_MSIL = {
   ...TEMPLATE_CONFIG,
   headers: ["SKU Code", "Quantity"],
-  sample: [
-    ["13405M-8", "10"],
-    ["14205K-2", "5"],
-  ],
+  sample: [],
 };
 
 export const downloadTemplate = (showMsilCode = true) => {
   const cfg = showMsilCode ? TEMPLATE_CONFIG : TEMPLATE_CONFIG_NO_MSIL;
-  const templateData = [cfg.headers, ...cfg.sample];
+  const templateData = [cfg.headers];
 
   const ws = XLSX.utils.aoa_to_sheet(templateData);
   const wb = XLSX.utils.book_new();

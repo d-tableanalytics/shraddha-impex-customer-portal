@@ -46,7 +46,7 @@ export const ConversionSummary = () => {
   const chips = [
     { key: 'booked', label: 'Booked', value: booked, color: COLORS.booked, hint: 'total demand', path: '/orders/history' },
     { key: 'confirmed', label: 'Confirmed', value: confirmed, color: COLORS.confirmed, hint: 'fulfilled', path: '/orders/history' },
-    { key: 'pending', label: 'Pending Indent', value: pending, color: COLORS.pending, hint: 'awaiting stock', path: '/orders/indent-history' },
+    { key: 'pending', label: 'Indent', value: pending, color: COLORS.pending, hint: 'awaiting stock', path: '/orders/indent-history' },
     { key: 'reserved', label: 'In List', value: reserved, color: COLORS.reserved, hint: 'awaiting confirm', path: '/orders/new' },
   ];
 

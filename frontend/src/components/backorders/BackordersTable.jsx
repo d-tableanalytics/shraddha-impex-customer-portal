@@ -42,7 +42,7 @@ export const groupByIndent = (items) => {
  * @param {boolean}  showCustomer Show the customer column (admin view).
  * @param {boolean}  compact      Tighter padding for embedding in a dashboard.
  * @param {Function} onRestore    Admin-only. If provided, renders an action to move
- *                                a pending indent line back to the customer's selection list.
+ *                                a indent line back to the customer's selection list.
  * @param {string}   restoringId  _id of the row currently being restored (spinner).
  */
 export const BackordersTable = ({
@@ -167,7 +167,7 @@ export const BackordersTable = ({
                       <button
                         onClick={() => openGroup(group)}
                         className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-700 bg-primary-50 border border-primary-200 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition-all"
-                        title="View pending indent details"
+                        title="View indent details"
                       >
                         <Eye size={14} /> View
                       </button>
@@ -201,7 +201,7 @@ export const BackordersTable = ({
                               title={
                                 inStock
                                   ? "Move to the customer's selection list & email them to confirm"
-                                  : "Not enough stock yet to fulfil this pending indent"
+                                  : "Not enough stock yet to fulfil this indent"
                               }
                               className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             >
@@ -227,7 +227,7 @@ export const BackordersTable = ({
       <Modal
         isOpen={!!selectedGroup}
         onClose={() => setSelectedGroup(null)}
-        title={`Pending Indent ${selectedGroup?.indentNumber || ""}`}
+        title={`Indent ${selectedGroup?.indentNumber || ""}`}
         size="lg"
       >
         {selectedGroup && (
@@ -241,7 +241,6 @@ export const BackordersTable = ({
                     <th className="px-4 py-2.5">Date</th>
                     <th className="px-4 py-2.5 text-center">Pending Qty</th>
                     <th className="px-4 py-2.5 text-center">Current Stock</th>
-                    <th className="px-4 py-2.5 text-center">Status</th>
                     {onRestore && <th className="px-4 py-2.5 text-center">Action</th>}
                   </tr>
                 </thead>
@@ -267,11 +266,6 @@ export const BackordersTable = ({
                         <td className="px-4 py-2.5 text-center font-semibold text-slate-600">
                           {line.product.availableStock}
                         </td>
-                        <td className="px-4 py-2.5 text-center">
-                          <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                            {line.status}
-                          </span>
-                        </td>
                         {onRestore && (
                           <td className="px-4 py-2.5 text-center">
                             <button
@@ -280,7 +274,7 @@ export const BackordersTable = ({
                               title={
                                 inStock
                                   ? "Move to the customer's selection list & email them to confirm"
-                                  : "Not enough stock yet to fulfil this pending indent"
+                                  : "Not enough stock yet to fulfil this indent"
                               }
                               className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             >

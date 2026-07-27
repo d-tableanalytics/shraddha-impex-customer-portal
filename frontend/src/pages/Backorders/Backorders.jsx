@@ -106,7 +106,7 @@ export const Backorders = () => {
         `${item.product.code} moved to ${item.customer?.name || "the customer"}'s selection list. They've been emailed to confirm.`,
       );
     } else {
-      toast.error(res.error || "Could not move pending indent to selection list.");
+      toast.error(res.error || "Could not move indent to selection list.");
     }
   };
 
@@ -115,7 +115,7 @@ export const Backorders = () => {
     0,
   );
 
-  // Distinct booking confirmations represented in the pending indent list
+  // Distinct booking confirmations represented in the indent list
   // (grouped by indentNumber; ungrouped/legacy rows each count as their own).
   const distinctIndents = new Set(
     pendingItems.map((i) => i.indentNumber || i._id),
@@ -124,7 +124,7 @@ export const Backorders = () => {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Indents History"
+        title="Indent History"
         actions={
           <div className="flex gap-2">
             <button

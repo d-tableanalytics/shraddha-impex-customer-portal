@@ -194,12 +194,12 @@ export const getCancelledCount = async (req, res, next) => {
 export const restoreBackorder = async (req, res, next) => {
   try {
     if (req.user.role !== 'Admin') {
-      return res.status(403).json({ success: false, message: 'Only an admin can move a pending indent to the selection list.' });
+      return res.status(403).json({ success: false, message: 'Only an admin can move a indent to the selection list.' });
     }
 
     const reservation = await Reservation.findById(req.params.id).populate('customerId', 'user email company');
     if (!reservation) {
-      throw new Error('Pending Indent not found.');
+      throw new Error('Indent not found.');
     }
 
     if (!['Pending', 'Partially Confirmed'].includes(reservation.status)) {
@@ -214,7 +214,7 @@ export const restoreBackorder = async (req, res, next) => {
     const available = Math.max(0, product.availableForSale);
     if (available < reservation.quantity) {
       throw new Error(
-        `Not enough stock to restore this pending indent. Requires ${reservation.quantity}, only ${available} available.`
+        `Not enough stock to restore this indent. Requires ${reservation.quantity}, only ${available} available.`
       );
     }
 
@@ -233,21 +233,21 @@ export const restoreBackorder = async (req, res, next) => {
 
     await logEvent(
       req.user,
-      'Pending Indent Restored',
-      `Moved pending indent ${reservation.reservationId} (${reservation.skuCode} x${reservation.quantity}) back to selection list.`,
+      'Indent Restored',
+      `Moved indent ${reservation.reservationId} (${reservation.skuCode} x${reservation.quantity}) back to selection list.`,
       req
     );
 
     // Notify the customer in-app and by email.
     sendNotification(
       customer._id || reservation.customerId,
-      'Pending Indent Back in Stock',
+      'Indent Back in Stock',
       `${reservation.skuCode} (${reservation.quantity} units) is back in stock and moved to your selection list. Confirm it from your dashboard.`,
       'reservation'
     );
 
     if (customer.email) {
-      const subject = `Your pending indent ${reservation.skuCode} is back in stock — confirm it now`;
+      const subject = `Your indent ${reservation.skuCode} is back in stock — confirm it now`;
       const body = `
         <p>Hi ${customerName},</p>
         <p>Good news! An item that was previously <strong>out of stock</strong> in your booking is now available again:</p>
@@ -306,7 +306,7 @@ export const createReservation = async (req, res, next) => {
     // NOTE: Stock availability is intentionally NOT validated here. Customers may
     // book any quantity, even beyond availableForSale. Stock is only checked and
     // deducted at confirmation time (see confirmBooking), where any unfulfillable
-    // quantity is moved to a Pending Indent.
+    // quantity is moved to a Indent.
 
     // MSIL Code Validation — only enforced for users MSIL Codes apply to, and
     // only when a code is actually assigned. Products without an MSIL Code are
@@ -451,7 +451,7 @@ const runConfirmBooking = async (req, session) => {
   const seqStr = String(orderSeq).padStart(6, '0');
   // One confirmation produces THREE identifiers:
   //   Booking ID       BO-2026-001312   (the booking)
-  //   Pending Indent   PI-2026-001312   (same number, different 2-char prefix)
+  //   Indent   PI-2026-001312   (same number, different 2-char prefix)
   //   PO Number        PO-260713-4821   (DIFFERENT, time-based, its own sequence)
   // The booking id and pending-indent id share the sequence so they line up;
   // the PO number is independent so it can be an externally-meaningful ref.
@@ -493,10 +493,10 @@ const runConfirmBooking = async (req, session) => {
         requestedQty: confirmedQty, // kept = confirmedQty for back-compat
         bookedQty: requestedQty,    // what the customer originally booked
         confirmedQty,               // what was actually fulfilled from stock
-        pendingQty,                 // unfulfilled remainder (pending indent)
+        pendingQty,                 // unfulfilled remainder (indent)
         poNumber,
         remarks: pendingQty > 0
-          ? `Partially confirmed (${confirmedQty}/${requestedQty}). ${pendingQty} moved to Pending Indent. ${req.body.remarks || ''}`.trim()
+          ? `Partially confirmed (${confirmedQty}/${requestedQty}). ${pendingQty} moved to Indent. ${req.body.remarks || ''}`.trim()
           : (req.body.remarks || 'Confirmed ERP reservation booking.'),
         msilCode: product.msilCode || null,
         boxNo: product.boxNo || null,
@@ -514,7 +514,7 @@ const runConfirmBooking = async (req, session) => {
       resItem.quantity = confirmedQty;
     } else {
       // Some (or all) of the quantity could not be fulfilled — keep the
-      // unfulfilled remainder as a Pending Indent reservation. Tag it with the
+      // unfulfilled remainder as a Indent reservation. Tag it with the
       // PI id (matches the booking id's number) and the PO number for linkage.
       resItem.status = confirmedQty > 0 ? 'Partially Confirmed' : 'Pending';
       resItem.quantity = pendingQty;
@@ -580,14 +580,14 @@ export const confirmBooking = async (req, res, next) => {
 
     // Side effects run only after a successful commit.
     const notifMessage = totalPending > 0
-      ? `Booking ${orderNumber} (PO ${poNumber}): ${totalConfirmed} units confirmed, ${totalPending} units moved to Pending Indent ${indentId}.`
+      ? `Booking ${orderNumber} (PO ${poNumber}): ${totalConfirmed} units confirmed, ${totalPending} units moved to Indent ${indentId}.`
       : `Your booking ${orderNumber} (PO ${poNumber}) is confirmed.`;
     sendNotification(req.user._id, 'Booking Confirmed', notifMessage, 'order');
 
     const who = req.user.company || req.user.user || req.user.email;
     notifyAdmins({
-      title: totalPending > 0 ? 'Booking Confirmed (with Pending Indent)' : 'Booking Confirmed',
-      message: `${who} confirmed booking ${orderNumber} — ${totalConfirmed} units confirmed${totalPending > 0 ? `, ${totalPending} units on pending indent` : ''}.`,
+      title: totalPending > 0 ? 'Booking Confirmed (with Indent)' : 'Booking Confirmed',
+      message: `${who} confirmed booking ${orderNumber} — ${totalConfirmed} units confirmed${totalPending > 0 ? `, ${totalPending} units on indent` : ''}.`,
       type: 'order',
     });
 
@@ -694,10 +694,10 @@ export const validateBulk = async (req, res, next) => {
       }
 
       // Check Stock — no longer a hard error. Over-booking is allowed; any
-      // shortfall becomes a Pending Indent at confirmation time.
+      // shortfall becomes a Indent at confirmation time.
       if (product.availableForSale < quantity) {
         const shortfall = quantity - Math.max(0, product.availableForSale);
-        warnings.push(`Only ${Math.max(0, product.availableForSale)} in stock. ${shortfall} unit(s) will move to Pending Indent.`);
+        warnings.push(`Only ${Math.max(0, product.availableForSale)} in stock. ${shortfall} unit(s) will move to Indent.`);
       }
 
       // Check MSIL Active — only enforced for users MSIL Codes apply to, and

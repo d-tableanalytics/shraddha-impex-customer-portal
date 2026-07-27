@@ -100,7 +100,7 @@ export const CustomerOrders = () => {
     }
 
     // Over-booking is allowed: any quantity may be booked even if it exceeds
-    // available stock. Unfulfillable quantity becomes a Pending Indent at confirmation.
+    // available stock. Unfulfillable quantity becomes a Indent at confirmation.
 
     const res = await addItem(selectedProduct, data.quantity);
 
@@ -148,7 +148,7 @@ export const CustomerOrders = () => {
   };
 
   // Split each cart line into the quantity that can be booked from stock now
-  // and the shortfall that becomes a Pending Indent at confirmation.
+  // and the shortfall that becomes a Indent at confirmation.
   const computeReview = (items) => {
     const available = [];
     const pending = [];
@@ -175,7 +175,7 @@ export const CustomerOrders = () => {
   const indentPaging = usePagination(indentLines, REVIEW_PAGE_SIZE);
 
   // "Raise Indent" from a Selection List row: opens the Review Indent popup so
-  // the user can confirm the booking (the shortfall becomes a Pending Indent).
+  // the user can confirm the booking (the shortfall becomes a Indent).
   const handleRaiseIndent = () => {
     setShowIndentConfirm(true);
   };
@@ -358,7 +358,7 @@ export const CustomerOrders = () => {
               )}
               {selectedProduct && watchQuantity > selectedProduct.availableStock && (
                 <span className="text-xs text-amber-600 mt-1 font-semibold">
-                  Exceeds available quantity (AVL {selectedProduct.availableStock}). {watchQuantity - selectedProduct.availableStock} unit(s) will move to Pending Indent on confirmation.
+                  Exceeds available quantity (AVL {selectedProduct.availableStock}). {watchQuantity - selectedProduct.availableStock} unit(s) will move to Indent on confirmation.
                 </span>
               )}
             </div>
@@ -468,7 +468,7 @@ export const CustomerOrders = () => {
             <AlertTriangle size={20} className="text-amber-500 shrink-0 mt-0.5" />
             <p className="text-sm text-slate-700 leading-relaxed">
               Some items exceed the available quantity. Review what will be booked now versus
-              what becomes a <span className="font-bold">Pending Indent</span> (fulfilled when
+              what becomes a <span className="font-bold">Indent</span> (fulfilled when
               fresh stock arrives), then continue.
             </p>
           </div>
@@ -515,7 +515,7 @@ export const CustomerOrders = () => {
           {/* Pending indent */}
           <div>
             <h4 className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <AlertTriangle size={14} /> Converts to Pending Indent ({review.pending.length})
+              <AlertTriangle size={14} /> Converts to Indent ({review.pending.length})
             </h4>
             <div className="border border-slate-200 rounded-xl overflow-hidden">
               <table className="w-full text-left text-sm">
@@ -524,7 +524,7 @@ export const CustomerOrders = () => {
                     <th className="px-4 py-2.5">SKU Code</th>
                     <th className="px-4 py-2.5 text-center">Requested</th>
                     <th className="px-4 py-2.5 text-center">AVL</th>
-                    <th className="px-4 py-2.5 text-center">Pending Indent</th>
+                    <th className="px-4 py-2.5 text-center">Indent</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -620,13 +620,13 @@ export const CustomerOrders = () => {
               </div>
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
                 <p className="text-2xl font-black text-amber-700">{summary.pending}</p>
-                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mt-1">Units → Pending Indent</p>
+                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mt-1">Units → Indent</p>
               </div>
             </div>
 
             {summary.pending > 0 && (
               <p className="text-xs text-slate-500 leading-relaxed">
-                Pending Indent <span className="font-semibold text-amber-700">{summary.indentId}</span> (PO {summary.poNumber})
+                Indent <span className="font-semibold text-amber-700">{summary.indentId}</span> (PO {summary.poNumber})
                 is tracked separately and fulfilled when fresh stock arrives.
               </p>
             )}

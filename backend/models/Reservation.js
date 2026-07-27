@@ -18,11 +18,11 @@ const reservationSchema = new mongoose.Schema({
     default: 'Reserved'
   },
   reservedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  // Pending Indent id (PI-YYYY-######) — shares the booking's sequence number,
+  //  Indent id (PI-YYYY-######) — shares the booking's sequence number,
   // differing only in the 2-char prefix (booking is BO-YYYY-######).
   indentNumber: { type: String, default: null },
-  // PO number of the confirmation that produced this pending indent. Distinct
-  // from the booking/indent ids; used to link a pending indent back to its booking.
+  // PO number of the confirmation that produced this indent. Distinct
+  // from the booking/indent ids; used to link a indent back to its booking.
   poNumber: { type: String, default: null },
   confirmedAt: Date,
   expiredAt: Date,

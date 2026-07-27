@@ -180,14 +180,14 @@ export const createOrder = async (req, res, next) => {
       notifyUser(req.user._id, {
         title: 'Booking Placed',
         message: totalPending > 0
-          ? `Your booking ${orderNumber} is placed. ${totalPending} units could not be fulfilled and are on pending indent.`
+          ? `Your booking ${orderNumber} is placed. ${totalPending} units could not be fulfilled and are on indent.`
           : `Your booking ${orderNumber} has been placed successfully.`,
         type: 'order',
       });
       const who = req.user.company || req.user.user || req.user.email;
       notifyAdmins({
         title: 'New Booking Placed',
-        message: `${who} placed booking ${orderNumber} (${summary.length} line item${summary.length === 1 ? '' : 's'})${totalPending > 0 ? ` — ${totalPending} units on pending indent` : ''}.`,
+        message: `${who} placed booking ${orderNumber} (${summary.length} line item${summary.length === 1 ? '' : 's'})${totalPending > 0 ? ` — ${totalPending} units on indent` : ''}.`,
         type: 'order',
       });
     }

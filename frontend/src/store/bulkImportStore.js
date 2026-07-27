@@ -43,7 +43,7 @@ export const revalidateRow = (row) => {
     status = "pending";
   } else if (quantity > (row.product.availableStock ?? 0)) {
     warnings.push(
-      `Only ${Math.max(0, row.product.availableStock ?? 0)} in stock. ${quantity - Math.max(0, row.product.availableStock ?? 0)} unit(s) will move to Pending Indent.`,
+      `Only ${Math.max(0, row.product.availableStock ?? 0)} in stock. ${quantity - Math.max(0, row.product.availableStock ?? 0)} unit(s) will move to Indent.`,
     );
     status = "warning";
   } else {
