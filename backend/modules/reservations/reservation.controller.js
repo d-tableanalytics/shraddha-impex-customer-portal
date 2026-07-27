@@ -568,11 +568,14 @@ const esc = (v) =>
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-// Builds the booking-confirmation email body. One mail per confirmation,
-// listing every line that was confirmed plus anything moved to an indent.
+// Builds the booking-confirmation email body. One mail per confirmation: a short
+// confirmation line, the Booking ID generated when the booking was made, and the
+// items the customer actually booked. Every value comes from the live booking.
 const buildConfirmationEmail = ({ customerName, orderNumber, indentId, summary, totalConfirmed, totalPending }) => {
-  const cell = 'padding: 6px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
-  const head = 'padding: 6px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase;';
+  const cell = 'padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
+  const head = 'padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;';
+
+  const totalRequested = summary.reduce((n, s) => n + s.requestedQty, 0);
 
   const rows = summary.map((s) => `
     <tr>
@@ -580,18 +583,20 @@ const buildConfirmationEmail = ({ customerName, orderNumber, indentId, summary, 
       <td style="${cell}">${esc(s.msilCode || '—')}</td>
       <td style="${cell} text-align: right;">${s.requestedQty}</td>
       <td style="${cell} text-align: right; color: #1a7f37; font-weight: bold;">${s.confirmedQty}</td>
-      <td style="${cell} text-align: right; ${s.pendingQty > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #999;'}">${s.pendingQty}</td>
+      <td style="${cell} text-align: right; ${s.pendingQty > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #bbb;'}">${s.pendingQty}</td>
     </tr>`).join('');
 
   return `
     <p>Hi ${esc(customerName)},</p>
-    <p>Your booking has been <strong>confirmed</strong>. Here are the details:</p>
-    <table style="border-collapse: collapse; margin: 12px 0;">
-      <tr><td style="padding: 4px 12px; color: #777;">Booking / Order No.</td><td style="padding: 4px 12px; font-weight: bold;">${esc(orderNumber)}</td></tr>
-      ${totalPending > 0 ? `<tr><td style="padding: 4px 12px; color: #777;">Indent No.</td><td style="padding: 4px 12px; font-weight: bold;">${esc(indentId)}</td></tr>` : ''}
-    </table>
+    <p>Your booking is <strong>confirmed</strong>.</p>
 
-    <table style="border-collapse: collapse; margin: 16px 0; width: 100%;">
+    <div style="margin: 18px 0; padding: 14px 18px; background: #f0f6ff; border: 1px solid #cfe0f7; border-radius: 4px;">
+      <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">Booking ID</div>
+      <div style="font-size: 22px; font-weight: bold; color: #1a5b9e; font-family: monospace; margin-top: 2px;">${esc(orderNumber)}</div>
+      ${totalPending > 0 ? `<div style="margin-top: 8px; font-size: 12px; color: #5a7ca8;">Indent reference: <strong style="font-family: monospace; color: #b54708;">${esc(indentId)}</strong></div>` : ''}
+    </div>
+
+    <table style="border-collapse: collapse; margin: 0 0 8px; width: 100%;">
       <thead>
         <tr>
           <th style="${head}">SKU</th>
@@ -602,14 +607,19 @@ const buildConfirmationEmail = ({ customerName, orderNumber, indentId, summary, 
         </tr>
       </thead>
       <tbody>${rows}</tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2" style="${cell} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${totalRequested}</td>
+          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">${totalConfirmed}</td>
+          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold; ${totalPending > 0 ? 'color: #b54708;' : 'color: #bbb;'}">${totalPending}</td>
+        </tr>
+      </tfoot>
     </table>
 
-    <p style="font-size: 14px;">
-      <strong>${totalConfirmed}</strong> unit(s) confirmed${totalPending > 0 ? ` and <strong>${totalPending}</strong> unit(s) moved to indent <strong>${esc(indentId)}</strong>` : ''}.
-    </p>
     ${totalPending > 0
-      ? `<p>The indent quantity was not available in stock. We will notify you as soon as it is back, and it will return to your selection list for confirmation.</p>`
-      : `<p>Your full booking was fulfilled from available stock.</p>`}
+      ? `<p>Of the ${totalRequested} unit(s) booked, <strong>${totalConfirmed}</strong> were confirmed from available stock and <strong>${totalPending}</strong> could not be fulfilled. The shortfall has been moved to indent <strong>${esc(indentId)}</strong> — we will notify you as soon as it is back in stock, and it will return to your selection list for confirmation.</p>`
+      : ''}
 
     <p style="margin: 16px 0; padding: 12px 16px; background: #fff8e6; border-left: 4px solid #f0a500; font-size: 14px;">
       <strong>Please note:</strong> the turnaround time (TAT) for this booking is
