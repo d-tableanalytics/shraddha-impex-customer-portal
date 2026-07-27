@@ -570,7 +570,7 @@ const esc = (v) =>
 
 // Builds the booking-confirmation email body. One mail per confirmation,
 // listing every line that was confirmed plus anything moved to an indent.
-const buildConfirmationEmail = ({ customerName, orderNumber, poNumber, indentId, summary, totalConfirmed, totalPending }) => {
+const buildConfirmationEmail = ({ customerName, orderNumber, indentId, summary, totalConfirmed, totalPending }) => {
   const cell = 'padding: 6px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
   const head = 'padding: 6px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase;';
 
@@ -588,7 +588,6 @@ const buildConfirmationEmail = ({ customerName, orderNumber, poNumber, indentId,
     <p>Your booking has been <strong>confirmed</strong>. Here are the details:</p>
     <table style="border-collapse: collapse; margin: 12px 0;">
       <tr><td style="padding: 4px 12px; color: #777;">Booking / Order No.</td><td style="padding: 4px 12px; font-weight: bold;">${esc(orderNumber)}</td></tr>
-      <tr><td style="padding: 4px 12px; color: #777;">PO Number</td><td style="padding: 4px 12px; font-weight: bold;">${esc(poNumber)}</td></tr>
       ${totalPending > 0 ? `<tr><td style="padding: 4px 12px; color: #777;">Indent No.</td><td style="padding: 4px 12px; font-weight: bold;">${esc(indentId)}</td></tr>` : ''}
     </table>
 
@@ -611,6 +610,12 @@ const buildConfirmationEmail = ({ customerName, orderNumber, poNumber, indentId,
     ${totalPending > 0
       ? `<p>The indent quantity was not available in stock. We will notify you as soon as it is back, and it will return to your selection list for confirmation.</p>`
       : `<p>Your full booking was fulfilled from available stock.</p>`}
+
+    <p style="margin: 16px 0; padding: 12px 16px; background: #fff8e6; border-left: 4px solid #f0a500; font-size: 14px;">
+      <strong>Please note:</strong> the turnaround time (TAT) for this booking is
+      <strong>7 days</strong> from the date of confirmation.
+    </p>
+
     <p>Thank you for your business.</p>
   `;
 };
@@ -663,7 +668,7 @@ export const confirmBooking = async (req, res, next) => {
 
       const body = buildConfirmationEmail({
         customerName: req.user.user || req.user.company || 'Customer',
-        orderNumber, poNumber, indentId, summary, totalConfirmed, totalPending,
+        orderNumber, indentId, summary, totalConfirmed, totalPending,
       });
 
       // Fire-and-forget: a mail failure must not fail an already-committed booking.
