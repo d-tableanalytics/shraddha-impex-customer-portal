@@ -5,7 +5,7 @@ dotenv.config();
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.ethereal.email',
   port: process.env.SMTP_PORT || 587,
-  secure: false, // true for 465, false for other ports
+  secure: false,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
@@ -14,7 +14,6 @@ const transporter = nodemailer.createTransport({
 
 
 export const sendEmail = async (to, subject, htmlBody) => {
-  // If SMTP is not configured, fallback to console log
   if (!process.env.SMTP_HOST || process.env.SMTP_HOST === 'smtp.example.com') {
     console.log(`\n=== [DEV MAIL SIMULATOR] ===`);
     console.log(`To: ${to}`);
