@@ -13,7 +13,7 @@ export const useCartStore = create((set, get) => ({
   items: [], // Stores reservation objects
   pendingItems: [], // Backordered quantities awaiting stock
   // Starts true so the Indent History table shows skeleton rows on first paint
-  // rather than a "no pending indents" flash before the first fetch resolves.
+  // rather than a "no indents" flash before the first fetch resolves.
   pendingLoading: true,
   header: { ...initialHeader },
   loading: false,

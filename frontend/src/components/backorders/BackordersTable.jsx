@@ -35,7 +35,7 @@ export const groupByIndent = (items) => {
 };
 
 /**
- * Renders the list of pending indents (unfulfilled reservation quantities),
+ * Renders the list of indents (unfulfilled reservation quantities),
  * one row per booking confirmation. Click a row to see every SKU it covers.
  *
  * @param {Array}    items        Pending items from the cart store.
@@ -69,7 +69,7 @@ export const BackordersTable = ({
   };
 
   // Skeleton while the first fetch is in flight, so the table doesn't flash
-  // "No pending indents" before the data has had a chance to arrive.
+  // "No indents" before the data has had a chance to arrive.
   if (loading) {
     const cols = 8 + (showCustomer ? 1 : 0) + (onRestore ? 1 : 0);
     return (
@@ -87,7 +87,7 @@ export const BackordersTable = ({
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
         <PackageX size={32} className="text-slate-300" />
-        <p className="text-sm font-semibold text-slate-400">No pending indents</p>
+        <p className="text-sm font-semibold text-slate-400">No indents</p>
         <p className="text-xs text-slate-400">
           Unfulfilled quantities from confirmations will appear here.
         </p>

@@ -203,7 +203,7 @@ export const restoreBackorder = async (req, res, next) => {
     }
 
     if (!['Pending', 'Partially Confirmed'].includes(reservation.status)) {
-      throw new Error('Only pending indents can be moved to the selection list.');
+      throw new Error('Only indents can be moved to the selection list.');
     }
 
     const product = await findProductById(reservation.productId);

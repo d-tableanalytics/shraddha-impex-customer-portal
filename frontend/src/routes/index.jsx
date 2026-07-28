@@ -7,7 +7,7 @@ const Dashboard = lazy(() => import("../pages/Dashboard/Dashboard").then(m => ({
 const CustomerOrders = lazy(() => import("../pages/CustomerOrders/CustomerOrders").then(m => ({ default: m.CustomerOrders })));
 const OrderHistory = lazy(() => import("../pages/OrderHistory/OrderHistory").then(m => ({ default: m.OrderHistory })));
 const BulkUpload = lazy(() => import("../pages/BulkUpload/BulkUpload").then(m => ({ default: m.BulkUpload })));
-const Backorders = lazy(() => import("../pages/Backorders/Backorders").then(m => ({ default: m.Backorders })));
+const IndentHistory = lazy(() => import("../pages/IndentHistory/IndentHistory").then(m => ({ default: m.IndentHistory })));
 const Admin = lazy(() => import("../pages/Admin/Admin").then(m => ({ default: m.Admin })));
 const UserManagement = lazy(() => import("../pages/Admin/Settings/UserManagement").then(m => ({ default: m.UserManagement })));
 const PermissionMatrix = lazy(() => import("../pages/Admin/Settings/PermissionMatrix").then(m => ({ default: m.PermissionMatrix })));
@@ -51,7 +51,7 @@ export const router = createBrowserRouter([
           },
           {
             path: "orders/indent-history",
-            element: <Backorders />,
+            element: <IndentHistory />,
           },
           {
             path: "admin",

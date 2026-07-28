@@ -62,7 +62,7 @@ export const OrderDrawer = () => {
     }
   };
 
-  // Load pending indents so the drawer can show the ones tied to this booking's PO.
+  // Load indents so the drawer can show the ones tied to this booking's PO.
   useEffect(() => {
     if (selectedOrder) fetchPendingReservations();
   }, [selectedOrder?.orderNumber, fetchPendingReservations]);
@@ -340,7 +340,7 @@ export const OrderDrawer = () => {
                   )}
                 </div>
 
-                {/* Pending Indents tied to this booking (matched by PO number) */}
+                {/* Indents tied to this booking (matched by PO number) */}
                 {bookingIndents.length > 0 && (
                   <div className="bg-white border border-amber-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
                     <div className="px-5 py-4 border-b border-amber-100 flex items-center gap-2 bg-amber-50/50">

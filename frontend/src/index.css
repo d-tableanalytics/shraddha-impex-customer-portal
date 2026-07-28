@@ -289,7 +289,7 @@ html.dark .hover\:bg-emerald-100:hover { background-color: rgba(16, 185, 129, 0.
 html.dark .hover\:bg-indigo-50:hover { background-color: rgba(99, 102, 241, 0.12); }
 html.dark .hover\:bg-indigo-100:hover { background-color: rgba(99, 102, 241, 0.18); }
 
-/* Amber accents (Pending Indents: ID column, qty figures, status pills, the card's
+/* Amber accents (Indents: ID column, qty figures, status pills, the card's
    top rule). The -600/-700 ambers are tuned for white backgrounds and read as a
    hot, oversaturated orange on the navy cards. Move them up the ramp to a softer,
    sandier tone, and dim the pill fill and gradient rule to match. */

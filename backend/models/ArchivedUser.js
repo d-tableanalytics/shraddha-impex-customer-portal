@@ -7,7 +7,7 @@ import mongoose from 'mongoose';
  * stops existing as far as login, customer lists and every other query is
  * concerned. The record is copied here first so setting the account back to
  * Active can recreate it, keeping the SAME _id: orders, reservations and
- * pending indents all reference the user by id, so they stay attached.
+ * indents all reference the user by id, so they stay attached.
  *
  * `strict: false` on purpose — this stores whatever the User document held at
  * suspension time, including fields added to the User schema later.

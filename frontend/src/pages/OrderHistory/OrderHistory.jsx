@@ -15,7 +15,7 @@ export const OrderHistory = () => {
 
   useEffect(() => {
     fetchOrders();
-    // Pending indents drive the per-row "includes pending indent" badge.
+    // indents drive the per-row "includes indent" badge.
     fetchPendingReservations();
     // Products give live Available Quantity for the detailed export.
     fetchAllProducts();

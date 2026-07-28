@@ -214,7 +214,7 @@ export const CustomerOrders = () => {
       setShowIndentConfirm(true);
       return;
     }
-    // No pending indent — still confirm the 7-day validity note before booking.
+    // No indent — still confirm the 7-day validity note before booking.
     setShowBookingConfirm(true);
   };
 
@@ -512,7 +512,7 @@ export const CustomerOrders = () => {
             )}
           </div>
 
-          {/* Pending indent */}
+          {/* indent */}
           <div>
             <h4 className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
               <AlertTriangle size={14} /> Converts to Indent ({review.pending.length})
@@ -568,7 +568,7 @@ export const CustomerOrders = () => {
         </div>
       </Modal>
 
-      {/* PLAIN BOOKING CONFIRMATION POPUP — shown when there is no pending indent */}
+      {/* PLAIN BOOKING CONFIRMATION POPUP — shown when there is no indent */}
       <Modal
         isOpen={showBookingConfirm}
         onClose={() => setShowBookingConfirm(false)}

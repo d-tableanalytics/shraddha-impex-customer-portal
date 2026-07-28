@@ -79,7 +79,7 @@ export const Backorders = () => {
 
   const handleBulkExport = () => {
     if (allGroups.length === 0) {
-      toast.error("No pending indents to export");
+      toast.error("No indents to export");
       return;
     }
     let toExport = allGroups;
