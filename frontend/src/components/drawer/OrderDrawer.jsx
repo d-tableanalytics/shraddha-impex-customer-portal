@@ -346,7 +346,7 @@ export const OrderDrawer = () => {
                     <div className="px-5 py-4 border-b border-amber-100 flex items-center gap-2 bg-amber-50/50">
                       <PackageX size={18} className="text-amber-500" />
                       <h3 className="text-sm font-bold text-slate-800">
-                        Pending Indents ({bookingIndents.length})
+                        Indents ({bookingIndents.length})
                       </h3>
                     </div>
                     <div className="overflow-x-auto">
