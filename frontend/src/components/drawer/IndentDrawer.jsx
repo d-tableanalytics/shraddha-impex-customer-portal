@@ -198,7 +198,6 @@ export const IndentDrawer = () => {
                           </th>
                           <th className="px-5 py-3 text-center">Indent Qty</th>
                           <th className="px-5 py-3 text-center">Available</th>
-                          <th className="px-5 py-3 text-center">Status</th>
                           {isAdmin && <th className="px-5 py-3 text-center">Action</th>}
                         </tr>
                       </thead>
@@ -228,9 +227,6 @@ export const IndentDrawer = () => {
                                 className={`px-5 py-4 text-center font-bold ${inStock ? "text-emerald-600" : "text-slate-500"}`}
                               >
                                 {line.product.availableStock}
-                              </td>
-                              <td className="px-5 py-4 text-center">
-                                <IndentStatusBadge status={line.status} />
                               </td>
                               {isAdmin && (
                                 <td className="px-5 py-4 text-center">

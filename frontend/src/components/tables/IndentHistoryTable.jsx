@@ -4,7 +4,6 @@ import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
 import { Pagination } from "../ui/Pagination";
 import { TableSkeleton } from "../ui/TableSkeleton";
-import { IndentStatusBadge } from "../ui/IndentStatusBadge";
 
 export const IndentHistoryTable = () => {
   const {
@@ -86,7 +85,7 @@ export const IndentHistoryTable = () => {
     );
   };
 
-  const colCount = isAdmin ? 9 : 8;
+  const colCount = isAdmin ? 8 : 7;
 
   return (
     <div className="flex flex-col gap-4">
@@ -113,12 +112,6 @@ export const IndentHistoryTable = () => {
                 onClick={() => handleSort("date")}
               >
                 Date {renderSortIcon("date")}
-              </th>
-              <th
-                className="px-5 py-3 border-b border-slate-200 cursor-pointer hover:bg-slate-100"
-                onClick={() => handleSort("status")}
-              >
-                Status {renderSortIcon("status")}
               </th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">Items</th>
               <th
@@ -178,9 +171,6 @@ export const IndentHistoryTable = () => {
                   )}
                   <td className="px-5 py-4 text-slate-600">
                     {indent.date ? new Date(indent.date).toLocaleDateString() : "—"}
-                  </td>
-                  <td className="px-5 py-4">
-                    <IndentStatusBadge status={indent.status} />
                   </td>
                   <td className="px-5 py-4 text-center font-bold text-slate-700">
                     {indent.itemCount}
