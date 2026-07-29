@@ -1,4 +1,5 @@
 import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
+import { canAccessBrand, allowedBrandModels } from '../../utils/brandAccess.js';
 
 // Map brand param → correct Mongoose model
 const getModel = (brand) => {
@@ -82,21 +83,9 @@ export const getInventory = async (req, res, next) => {
     // MSIL customers do not carry the IMADA brand, so it is excluded from their
     // Inventory entirely — rows, counts and low-stock all follow from this list.
     // Admins always see every brand. Customers only see brands they have brandAccess to.
-    const isMsilCustomer =
-      req.user?.role !== 'Admin' && req.user?.customerCategory === 'MSIL';
-    
-    let models = [];
-    if (req.user?.role === 'Admin') {
-      models = [
-        [ProductKoken, 'KOKEN'],
-        [ProductBIX, 'BIX'],
-        [ProductIMADA, 'IMADA'],
-      ];
-    } else {
-      if (req.user?.brandAccess?.koken) models.push([ProductKoken, 'KOKEN']);
-      if (req.user?.brandAccess?.bix)   models.push([ProductBIX, 'BIX']);
-      if (req.user?.brandAccess?.imada && !isMsilCustomer) models.push([ProductIMADA, 'IMADA']);
-    }
+    // Brand names are upper-cased here because the inventory rows/filters use
+    // that form; access itself is decided by the shared helper.
+    let models = allowedBrandModels(req.user).map(([Model, brand]) => [Model, brand.toUpperCase()]);
 
     // Filter by brand parameter if supplied
     if (brand) {
@@ -160,12 +149,8 @@ export const getProducts = async (req, res, next) => {
       return res.status(400).json({ success: false, message: `Unknown brand: ${brand}` });
     }
 
-    if (req.user?.role !== 'Admin') {
-      const allowed = req.user?.brandAccess?.[brand.toLowerCase()];
-      const isMsilCustomer = req.user?.customerCategory === 'MSIL';
-      if (!allowed || (brand.toLowerCase() === 'imada' && isMsilCustomer)) {
-        return res.status(403).json({ success: false, message: 'Access to this brand is restricted for your account.' });
-      }
+    if (!canAccessBrand(req.user, brand)) {
+      return res.status(403).json({ success: false, message: 'Access to this brand is restricted for your account.' });
     }
 
     const query = {};
@@ -202,12 +187,8 @@ export const getProductByCode = async (req, res, next) => {
       return res.status(400).json({ success: false, message: `Unknown brand: ${brand}` });
     }
 
-    if (req.user?.role !== 'Admin') {
-      const allowed = req.user?.brandAccess?.[brand.toLowerCase()];
-      const isMsilCustomer = req.user?.customerCategory === 'MSIL';
-      if (!allowed || (brand.toLowerCase() === 'imada' && isMsilCustomer)) {
-        return res.status(403).json({ success: false, message: 'Access to this brand is restricted for your account.' });
-      }
+    if (!canAccessBrand(req.user, brand)) {
+      return res.status(403).json({ success: false, message: 'Access to this brand is restricted for your account.' });
     }
 
     const product = await Model.findOne({
@@ -244,17 +225,9 @@ export const createProduct = async (req, res, next) => {
 // GET /api/v1/products/categories
 export const getCategories = async (req, res, next) => {
   try {
-    const isMsilCustomer =
-      req.user?.role !== 'Admin' && req.user?.customerCategory === 'MSIL';
-
-    let allowedModels = [];
-    if (req.user?.role === 'Admin') {
-      allowedModels = [ProductKoken, ProductBIX, ProductIMADA];
-    } else {
-      if (req.user?.brandAccess?.koken) allowedModels.push(ProductKoken);
-      if (req.user?.brandAccess?.bix)   allowedModels.push(ProductBIX);
-      if (req.user?.brandAccess?.imada && !isMsilCustomer) allowedModels.push(ProductIMADA);
-    }
+    // Categories are only offered for brands the user can actually see, so the
+    // filter never lists a category that exists solely in a hidden brand.
+    const allowedModels = allowedBrandModels(req.user).map(([Model]) => Model);
 
     const uniqueCategories = new Set();
     await Promise.all(

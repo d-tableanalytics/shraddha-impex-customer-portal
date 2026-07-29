@@ -6,6 +6,7 @@ import Order from '../models/Order.js';
 import MsilCode from '../models/MsilCode.js';
 import Reservation from '../models/Reservation.js';
 import { protect } from '../middlewares/auth.js';
+import { allowedBrandModels, brandFilter } from '../utils/brandAccess.js';
 
 const router = express.Router();
 
@@ -213,21 +214,11 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
       orderQuery.user = req.user._id;
     }
 
-    const isMsilCustomer =
-      req.user?.role !== 'Admin' && req.user?.customerCategory === 'MSIL';
+    // Order KPIs are brand-scoped too, so a hidden brand's bookings never show
+    // up in the dashboard counts.
+    Object.assign(orderQuery, brandFilter(req.user));
 
-    let allowedModels = [];
-    if (req.user?.role === 'Admin') {
-      allowedModels = [
-        ProductKoken,
-        ProductBIX,
-        ProductIMADA,
-      ];
-    } else {
-      if (req.user?.brandAccess?.koken) allowedModels.push(ProductKoken);
-      if (req.user?.brandAccess?.bix) allowedModels.push(ProductBIX);
-      if (req.user?.brandAccess?.imada && !isMsilCustomer) allowedModels.push(ProductIMADA);
-    }
+    const allowedModels = allowedBrandModels(req.user).map(([Model]) => Model);
 
     // Product counts and low-stock queries across allowed brands only
     const counts = await Promise.all(

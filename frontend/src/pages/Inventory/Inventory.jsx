@@ -4,6 +4,7 @@ import { Boxes, AlertTriangle, Search, Download, Loader2 } from 'lucide-react';
 import { useProductStore } from '../../store/productStore';
 import { useUserStore } from '../../store/userStore';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
+import { allowedBrands } from '../../utils/brandAccess';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -54,14 +55,7 @@ export const Inventory = () => {
     if (page > pages) setPage(pages);
   }, [pages, page]);
 
-  const availableBrands = [];
-  if (user?.role === 'Admin') {
-    availableBrands.push('Koken', 'BIX', 'IMADA');
-  } else {
-    if (user?.brandAccess?.koken) availableBrands.push('Koken');
-    if (user?.brandAccess?.bix)   availableBrands.push('BIX');
-    if (user?.brandAccess?.imada && user?.customerCategory !== 'MSIL') availableBrands.push('IMADA');
-  }
+  const availableBrands = allowedBrands(user);
 
   // Download the whole filtered catalogue (all pages) as Excel. The current
   // search and sort are applied so the file matches what's on screen.

@@ -6,6 +6,7 @@ import AuditLog from '../../models/AuditLog.js';
 import { nextSequence } from '../../models/Counter.js';
 import { io } from '../../server.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
+import { allowedBrandModels, canAccessBrand, brandFilter } from '../../utils/brandAccess.js';
 
 // Product is stored one-collection-per-brand; brand is implied by the collection.
 const BRAND_MODELS = [
@@ -14,9 +15,12 @@ const BRAND_MODELS = [
   [ProductIMADA, 'IMADA'],
 ];
 
-const findProductById = async (productId, session = null) => {
+// Pass `user` to restrict the lookup to that user's permitted brands, so a
+// product they cannot access resolves to null instead of being orderable by id.
+const findProductById = async (productId, session = null, user = null) => {
   const opts = session ? { session } : {};
-  for (const [Model, brand] of BRAND_MODELS) {
+  const models = user ? allowedBrandModels(user) : BRAND_MODELS;
+  for (const [Model, brand] of models) {
     const p = await Model.findById(productId, null, opts);
     if (p) return { product: p, brand };
   }
@@ -68,8 +72,9 @@ const logEvent = async (user, action, remarks, req, session = null) => {
 
 export const getOrders = async (req, res, next) => {
   try {
-    let query = {};
-    // If not Admin, restrict to orders created by this user
+    // Non-admins see only their own orders, and only in brands they still have
+    // access to — revoking a brand hides its past bookings too.
+    const query = { ...brandFilter(req.user) };
     if (req.user.role !== 'Admin') {
       query.user = req.user._id;
     }
@@ -84,6 +89,15 @@ export const getOrderById = async (req, res, next) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    // Owner + brand check. Both answer 404 rather than 403 so this endpoint
+    // cannot be used to probe which order ids or brands exist.
+    const isOwner = String(order.user) === String(req.user._id);
+    if (req.user.role !== 'Admin' && !isOwner) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    if (!canAccessBrand(req.user, order.brand)) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
     res.status(200).json({ success: true, data: order });
@@ -121,7 +135,7 @@ export const createOrder = async (req, res, next) => {
         throw new Error('Item quantity must be greater than zero.');
       }
 
-      const { product, brand } = await findProductById(item.productId, session);
+      const { product, brand } = await findProductById(item.productId, session, req.user);
       if (!product) {
         throw new Error(`Product ${item.productId} not found`);
       }

@@ -1,18 +1,13 @@
 import { create } from "zustand";
 import { productsApi } from "../services/products";
 import { useUserStore } from "./userStore";
+import { defaultBrand } from "../utils/brandAccess";
 
 // Resolves which brand collection to search based on the logged-in user's access.
-// Falls back to 'koken' if no specific brand is set.
-const getActiveBrand = () => {
-  const user = useUserStore.getState().user;
-  if (!user) return 'koken';
-  const { brandAccess } = user;
-  if (brandAccess?.koken) return 'koken';
-  if (brandAccess?.bix)   return 'bix';
-  if (brandAccess?.imada) return 'imada';
-  return 'koken';
-};
+// Returns null when the user has no brand access — callers must not fall back to
+// a brand, or a user with Koken switched off would still request Koken products
+// (which the server correctly rejects, leaving the page stuck on an error).
+const getActiveBrand = () => defaultBrand(useUserStore.getState().user);
 
 export const useProductStore = create((set) => ({
   products: [],
@@ -25,6 +20,11 @@ export const useProductStore = create((set) => ({
     set({ loading: true, error: null });
     try {
       const b = brand || getActiveBrand();
+      // No brand access at all → nothing to show, and no request to make.
+      if (!b) {
+        set({ products: [], loading: false });
+        return;
+      }
       const products = await productsApi.getAll(b);
       set({ products, loading: false });
     } catch (err) {
@@ -70,6 +70,10 @@ export const useProductStore = create((set) => ({
     set({ searching: true });
     try {
       const b = brand || getActiveBrand();
+      if (!b) {
+        set({ searchResults: [], searching: false });
+        return;
+      }
       const searchResults = await productsApi.search(query, b);
       set({ searchResults, searching: false });
     } catch {

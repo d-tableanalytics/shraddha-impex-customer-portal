@@ -8,6 +8,7 @@ import { nextSequence } from '../../models/Counter.js';
 import { io } from '../../server.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
+import { allowedBrandModels, canAccessBrand } from '../../utils/brandAccess.js';
 
 // The product collection is split one-per-brand; the brand is implied by which
 // collection a doc lives in (there is no brand field on the schema).
@@ -17,11 +18,17 @@ const BRAND_MODELS = [
   [ProductIMADA, 'IMADA'],
 ];
 
-// Helper to find product across all brands. Pass a session to read within a
+// Helper to find product across brands. Pass a session to read within a
 // transaction so the stock value is consistent for the read-modify-write cycle.
-const findProductById = async (productId, session = null) => {
+//
+// Pass `user` to restrict the search to that user's permitted brands: a product
+// in a brand they cannot access then resolves to null, exactly as if it did not
+// exist. Omitting `user` searches every brand and must only be done for
+// internal/system callers (e.g. the expiry job), never for a request path.
+const findProductById = async (productId, session = null, user = null) => {
   const opts = session ? { session } : {};
-  for (const [Model] of BRAND_MODELS) {
+  const models = user ? allowedBrandModels(user) : BRAND_MODELS;
+  for (const [Model] of models) {
     const p = await Model.findById(productId, null, opts);
     if (p) return p;
   }
@@ -39,8 +46,10 @@ const brandFromModel = (doc) => {
 
 // Read-side lookup that also resolves the brand (derived from the collection).
 // Returns a plain object so callers can safely spread extra fields onto it.
-const findProductWithBrand = async (productId) => {
-  for (const [Model, brand] of BRAND_MODELS) {
+// Scoped to the user's permitted brands when `user` is supplied.
+const findProductWithBrand = async (productId, user = null) => {
+  const models = user ? allowedBrandModels(user) : BRAND_MODELS;
+  for (const [Model, brand] of models) {
     const p = await Model.findById(productId);
     if (p) return { product: { ...p.toObject(), brand }, brand };
   }
@@ -135,12 +144,15 @@ const msilAppliesTo = (user) =>
 export const getReservations = async (req, res, next) => {
   try {
     const reservations = await Reservation.find({ customerId: req.user._id, status: 'Reserved' });
-    // Manually populate since refs don't span multiple models
+    // Manually populate since refs don't span multiple models. The lookup is
+    // brand-scoped, so a line whose brand access was revoked resolves to null.
     const populated = await Promise.all(reservations.map(async r => {
-      const { product } = await findProductWithBrand(r.productId);
+      const { product } = await findProductWithBrand(r.productId, req.user);
       return { ...r.toObject(), productId: product };
     }));
-    res.status(200).json({ success: true, data: populated });
+    // Drop rows the user may no longer see, rather than returning a line with a
+    // null product that the UI would render as a blank row.
+    res.status(200).json({ success: true, data: populated.filter((r) => r.productId) });
   } catch (error) {
     next(error);
   }
@@ -161,10 +173,11 @@ export const getPendingReservations = async (req, res, next) => {
 
     const populated = await Promise.all(reservations.map(async r => {
       const obj = r.toObject();
-      const { product } = await findProductWithBrand(r.productId);
+      const { product } = await findProductWithBrand(r.productId, req.user);
       return { ...obj, productId: product };
     }));
-    res.status(200).json({ success: true, data: populated });
+    // Brand-scoped: an indent for a brand this user cannot access is omitted.
+    res.status(200).json({ success: true, data: populated.filter((r) => r.productId) });
   } catch (error) {
     next(error);
   }
@@ -206,7 +219,7 @@ export const restoreBackorder = async (req, res, next) => {
       throw new Error('Only indents can be moved to the selection list.');
     }
 
-    const product = await findProductById(reservation.productId);
+    const product = await findProductById(reservation.productId, null, req.user);
     if (!product) {
       throw new Error(`Product ${reservation.skuCode} not found.`);
     }
@@ -284,7 +297,10 @@ export const createReservation = async (req, res, next) => {
       throw new Error('Valid Product ID and a whole-number Quantity are required.');
     }
 
-    const product = await findProductById(productId);
+    // Brand-scoped: a product in a brand this customer has no access to is
+    // indistinguishable from one that does not exist, so it cannot be booked
+    // by guessing its id.
+    const product = await findProductById(productId, null, req.user);
     if (!product) {
       throw new Error('Product not found.');
     }
@@ -388,7 +404,7 @@ export const updateReservationQuantity = async (req, res, next) => {
       throw new Error('Only active reservations can be edited.');
     }
 
-    const product = await findProductById(reservation.productId);
+    const product = await findProductById(reservation.productId, null, req.user);
     if (!product) {
       throw new Error('Product not found.');
     }
@@ -466,7 +482,7 @@ const runConfirmBooking = async (req, session) => {
   const dateNow = new Date();
 
   for (let resItem of reservations) {
-    const product = await findProductById(resItem.productId, session);
+    const product = await findProductById(resItem.productId, session, req.user);
     if (!product) {
       throw new Error(`Product ${resItem.skuCode} not found.`);
     }
@@ -732,7 +748,10 @@ export const validateBulk = async (req, res, next) => {
       : [];
     const bySku = new Map();
     const byMsil = new Map();
-    for (const Model of [ProductKoken, ProductBIX, ProductIMADA]) {
+    // Only the user's permitted brands are searched, so a bulk upload cannot
+    // smuggle in a SKU from a brand they have no access to — such a row simply
+    // reports as an unknown SKU.
+    for (const [Model] of allowedBrandModels(req.user)) {
       if (skuList.length) {
         const found = await Model.find({ skuCode: { $in: skuList } });
         for (const p of found) if (!bySku.has(p.skuCode)) bySku.set(p.skuCode, p);
