@@ -6,6 +6,7 @@ import app from './app.js';
 import User from './models/User.js';
 import { connectDatabase } from './config/database.js';
 import { runReservationExpiryChecks } from './modules/reservations/reservationExpiryJob.js';
+import { runPoSettlement } from './modules/orders/poExpiryJob.js';
 import { seedDefaultRoles } from './config/seedRoles.js';
 import cron from 'node-cron';
 
@@ -68,11 +69,15 @@ const startServer = async () => {
 
   // Initial check on boot
   await runReservationExpiryChecks();
-  
+  // Settle the stock held by confirmed bookings: consume it where a PO was
+  // raised, release it where the 7-day PO deadline has passed.
+  await runPoSettlement();
+
   // Daily cron scheduler (runs at 00:00 every day)
   cron.schedule('0 0 * * *', () => {
     console.log('[Cron] Running daily reservation expiry checks...');
     runReservationExpiryChecks();
+    runPoSettlement();
   });
   
   server.listen(PORT, () => {

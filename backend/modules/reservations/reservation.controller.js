@@ -9,6 +9,7 @@ import { io } from '../../server.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { allowedBrandModels, canAccessBrand } from '../../utils/brandAccess.js';
+import { COMPANY_CC } from '../../utils/mailRecipients.js';
 
 // The product collection is split one-per-brand; the brand is implied by which
 // collection a doc lives in (there is no brand field on the schema).
@@ -569,13 +570,6 @@ const runConfirmBooking = async (req, session) => {
   return { orderNumber, poNumber, indentId, createdOrders, summary, totalConfirmed, totalPending };
 };
 
-// Company address copied on every booking confirmation, so Shraddha Impex keeps
-// a record of each confirmed booking. Override via BOOKING_CC_EMAILS in .env
-// (comma-separated) to change or add addresses without touching this file.
-const COMPANY_CC = (process.env.BOOKING_CC_EMAILS ?? 'Contact@shraddhaimpex.net')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
 
 // Escape values that originate from user/product data before dropping them into
 // the email HTML.

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pkill -f \"node server.js\")",
+      "Bash(PORT=5098 timeout 15 node server.js)"
+    ]
+  }
+}

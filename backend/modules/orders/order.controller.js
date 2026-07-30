@@ -7,6 +7,9 @@ import { nextSequence } from '../../models/Counter.js';
 import { io } from '../../server.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { allowedBrandModels, canAccessBrand, brandFilter } from '../../utils/brandAccess.js';
+import { isBookingLocked, canOverrideLock } from '../../utils/bookingLock.js';
+import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
+import { findProductBySku, consumeStock } from '../../utils/stockLedger.js';
 
 // Product is stored one-collection-per-brand; brand is implied by the collection.
 const BRAND_MODELS = [
@@ -72,12 +75,12 @@ const logEvent = async (user, action, remarks, req, session = null) => {
 
 export const getOrders = async (req, res, next) => {
   try {
-    // Non-admins see only their own orders, and only in brands they still have
+    // Customers see only their own orders, and only in brands they still have
     // access to — revoking a brand hides its past bookings too.
-    const query = { ...brandFilter(req.user) };
-    if (req.user.role !== 'Admin') {
-      query.user = req.user._id;
-    }
+    // Roles holding VIEW_ALL_BOOKINGS (Admin, Sales) see every customer and
+    // every brand, since the sales desk has to process the whole queue.
+    const seesEverything = hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS);
+    const query = seesEverything ? {} : { ...brandFilter(req.user), user: req.user._id };
     const orders = await Order.find(query).sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: orders });
   } catch (error) {
@@ -93,12 +96,12 @@ export const getOrderById = async (req, res, next) => {
     }
     // Owner + brand check. Both answer 404 rather than 403 so this endpoint
     // cannot be used to probe which order ids or brands exist.
-    const isOwner = String(order.user) === String(req.user._id);
-    if (req.user.role !== 'Admin' && !isOwner) {
-      return res.status(404).json({ success: false, message: 'Order not found' });
-    }
-    if (!canAccessBrand(req.user, order.brand)) {
-      return res.status(404).json({ success: false, message: 'Order not found' });
+    const seesEverything = hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS);
+    if (!seesEverything) {
+      const isOwner = String(order.user) === String(req.user._id);
+      if (!isOwner || !canAccessBrand(req.user, order.brand)) {
+        return res.status(404).json({ success: false, message: 'Order not found' });
+      }
     }
     res.status(200).json({ success: true, data: order });
   } catch (error) {
@@ -269,10 +272,47 @@ export const updateOrderPO = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'orderNumber and poNumber required' });
     }
 
-    await Order.updateMany({ orderId: orderNumber }, { poNumber });
+    const rows = await Order.find({ orderId: orderNumber });
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    // Raising a PO here locks the booking exactly as the sales-desk route does,
+    // so the two paths cannot disagree about whether a booking is editable.
+    if (isBookingLocked(rows) && !canOverrideLock(req.user)) {
+      return res.status(423).json({
+        success: false,
+        message: 'Booking is locked because the PO has already been generated.',
+      });
+    }
+
+    const now = new Date();
+    await Order.updateMany(
+      { orderId: orderNumber },
+      { $set: { poNumber, poGeneratedAt: now, poGeneratedBy: req.user._id } },
+    );
+
+    // Same as the sales-desk route: raising the PO commits the goods, so the
+    // reserved units leave inventory permanently. stockState makes it idempotent.
+    for (const row of rows) {
+      if ((row.stockState ?? 'reserved') !== 'reserved') continue;
+      const product = await findProductBySku(row.skuCode);
+      if (product) await consumeStock(product, row.confirmedQty || 0);
+      await Order.updateOne(
+        { _id: row._id },
+        { $set: { stockState: 'consumed', stockSettledAt: now } },
+      );
+    }
 
     const indentNumber = orderNumber.replace(/^SO-|^BO-/, 'PI-');
     await Reservation.updateMany({ indentNumber }, { poNumber });
+
+    await logEvent(
+      req.user,
+      'PO Generated',
+      `PO ${poNumber} raised for booking ${orderNumber}. Booking is now locked.`,
+      req,
+    );
 
     res.status(200).json({ success: true, poNumber });
   } catch (error) {

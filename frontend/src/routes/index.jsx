@@ -8,6 +8,7 @@ const CustomerOrders = lazy(() => import("../pages/CustomerOrders/CustomerOrders
 const OrderHistory = lazy(() => import("../pages/OrderHistory/OrderHistory").then(m => ({ default: m.OrderHistory })));
 const BulkUpload = lazy(() => import("../pages/BulkUpload/BulkUpload").then(m => ({ default: m.BulkUpload })));
 const IndentHistory = lazy(() => import("../pages/IndentHistory/IndentHistory").then(m => ({ default: m.IndentHistory })));
+const SalesDesk = lazy(() => import("../pages/SalesDesk/SalesDesk").then(m => ({ default: m.SalesDesk })));
 const Admin = lazy(() => import("../pages/Admin/Admin").then(m => ({ default: m.Admin })));
 const UserManagement = lazy(() => import("../pages/Admin/Settings/UserManagement").then(m => ({ default: m.UserManagement })));
 const PermissionMatrix = lazy(() => import("../pages/Admin/Settings/PermissionMatrix").then(m => ({ default: m.PermissionMatrix })));
@@ -52,6 +53,12 @@ export const router = createBrowserRouter([
           {
             path: "orders/indent-history",
             element: <IndentHistory />,
+          },
+          {
+            // Sales desk. The page re-checks the permission itself, and every
+            // underlying API is guarded server-side.
+            path: "sales",
+            element: <SalesDesk />,
           },
           {
             path: "admin",

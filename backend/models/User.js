@@ -12,7 +12,9 @@ const userSchema = new mongoose.Schema({
     emailNotifications: { type: Boolean, default: true },
     pushNotifications: { type: Boolean, default: false },
   },
-  role: { type: String, enum: ['Admin', 'Customer'], default: 'Customer' },
+  // 'Sales' reviews confirmed bookings, may edit them until the PO is raised,
+  // and raises the PO itself. Permissions live in middlewares/rbac.js.
+  role: { type: String, enum: ['Admin', 'Sales', 'Customer'], default: 'Customer' },
   // Customer categorisation — drives which bulk-import template applies.
   customerCategory: { type: String, enum: ['MSIL', 'Non-MSIL'], default: 'Non-MSIL' },
   brandAccess: {

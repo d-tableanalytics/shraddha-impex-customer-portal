@@ -32,6 +32,24 @@ const orderSchema = new mongoose.Schema({
   confirmedQty: { type: Number, default: 0 },  // Quantity actually fulfilled from stock
   pendingQty: { type: Number, default: 0 },    // Unfulfilled remainder moved to backorder
   poNumber: { type: String, default: null }, // Maps to 'PO Number'
+  // PO audit. A booking is locked once poGeneratedAt is set (see utils/bookingLock.js).
+  // Rows predating this field fall back to "poNumber is a real value", which is
+  // the convention the rest of the app already uses ('-' means not yet raised).
+  poGeneratedAt: { type: Date, default: null },
+  poGeneratedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  // Where this line's stock currently sits. Confirming a booking moves units
+  // available → booked ('reserved'). From there exactly one thing happens:
+  //   'consumed' — the PO was raised, so the units leave inventory for good
+  //   'released' — no PO within the deadline, so the units go back on sale
+  // Guarding on this makes settlement idempotent: a re-run can never double
+  // release or double deduct. Missing (legacy rows) is treated as 'reserved'.
+  stockState: {
+    type: String,
+    enum: ['reserved', 'consumed', 'released'],
+    default: 'reserved',
+  },
+  stockSettledAt: { type: Date, default: null },
+  autoCancelledAt: { type: Date, default: null },
   remarks: { type: String, default: null }, // Maps to 'Remarks'
   expiryNotified: { type: Boolean, default: false }, // Maps to 'Expiry Notified'
   uniqueId: { type: String, default: null }, // Maps to 'Unique ID'

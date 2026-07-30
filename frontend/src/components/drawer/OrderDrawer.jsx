@@ -26,6 +26,7 @@ import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { useUserStore } from "../../store/userStore";
 import { useCartStore } from "../../store/cartStore";
 import { StatusBadge } from "../ui/StatusBadge";
+import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
 import { OrderSummaryCard } from "../cards/OrderSummaryCard";
@@ -75,6 +76,13 @@ export const OrderDrawer = () => {
     ? pendingItems.filter((p) => p.indentNumber === targetIndent)
     : [];
   const lineItems = Array.isArray(selectedOrder?.items) ? selectedOrder.items : [];
+
+  // A booking is locked once its PO is raised. '-' and blank are the
+  // "not raised yet" placeholders the backend also treats as unlocked.
+  const poRaised = Boolean(
+    selectedOrder?.poNumber &&
+    !['-', ''].includes(String(selectedOrder.poNumber).trim()),
+  );
 
   const linePaging = usePagination(lineItems, PAGE_SIZE);
   const indentPaging = usePagination(bookingIndents, PAGE_SIZE);
@@ -163,6 +171,7 @@ export const OrderDrawer = () => {
                 Booking {selectedOrder.orderNumber}
               </h2>
               <StatusBadge status={selectedOrder.status} />
+              <PoStatusBadge locked={poRaised} poNumber={selectedOrder.poNumber} />
               {selectedOrder.orderType === "bulk_upload" && (
                 <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-bold uppercase rounded-md border border-indigo-200">
                   Bulk Import
@@ -232,15 +241,17 @@ export const OrderDrawer = () => {
                       <p className="text-sm font-bold text-slate-800 line-clamp-2">
                         {selectedOrder.poNumber || "-"}
                       </p>
+                      {/* Once the PO exists the booking is locked; only an Admin
+                          may change it, and the server enforces this regardless. */}
                       {isAdmin && (
                         <button
                           onClick={() => {
-                            setNewPO(selectedOrder.poNumber && selectedOrder.poNumber !== "-" ? selectedOrder.poNumber : "");
+                            setNewPO(poRaised ? selectedOrder.poNumber : "");
                             setIsEditingPO(true);
                           }}
                           className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded hover:bg-indigo-100 whitespace-nowrap"
                         >
-                          {(selectedOrder.poNumber && selectedOrder.poNumber !== "-") ? "Edit" : "Raise PO"}
+                          {poRaised ? "Edit" : "Raise PO"}
                         </button>
                       )}
                     </div>

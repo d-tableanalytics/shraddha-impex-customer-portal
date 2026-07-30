@@ -11,12 +11,14 @@ import {
   HelpCircle,
   ChevronLeft,
   ChevronRight,
+  FileCheck2,
   LogOut,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useUIStore } from "../../store/uiStore";
 import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
+import { canUseSalesDesk } from "../../utils/permissions";
 
 export const Sidebar = () => {
   const { sidebarOpen, toggleSidebar } = useUIStore();
@@ -33,7 +35,7 @@ export const Sidebar = () => {
   // Admin is worth surfacing, but a separate chip crowds the card — fold it
   // into the second line alongside the company.
   const subtitle =
-    [user?.role === "Admin" ? "Admin" : null, user?.company || user?.email]
+    [user?.role && user.role !== "Customer" ? user.role : null, user?.company || user?.email]
       .filter(Boolean)
       .join(" · ") || "System Account";
 
@@ -49,6 +51,10 @@ export const Sidebar = () => {
     { name: "Booking History", path: "/orders/history", icon: History },
     { name: "Indent History", path: "/orders/indent-history", icon: PackageX },
     { name: "Inventory", path: "/inventory", icon: Boxes },
+    // Sales desk: Sales users and Admins (via the '*' wildcard).
+    ...(canUseSalesDesk(user) ? [
+      { name: "Sales Desk", path: "/sales", icon: FileCheck2 },
+    ] : []),
     ...(user?.role === 'Admin' ? [
       { name: "User Management", path: "/admin/users", icon: Users },
       // Reports hidden from the menu for now.

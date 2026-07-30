@@ -56,7 +56,9 @@ export const createUser = async (req, res, next) => {
       password,
       user: user || null,
       company: company || null,
-      role: role === 'Admin' ? 'Admin' : 'Customer',
+      // Only recognised roles are accepted; anything else falls back to Customer
+      // so an unexpected value can never grant privileges.
+      role: ['Admin', 'Sales', 'Customer'].includes(role) ? role : 'Customer',
       customerCategory: customerCategory === 'MSIL' ? 'MSIL' : 'Non-MSIL',
       status: status || 'Active',
       ...(brandAccess ? { brandAccess } : {}),

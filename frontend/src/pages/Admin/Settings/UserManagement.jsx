@@ -41,14 +41,21 @@ const emptyForm = {
 };
 
 // A single "access level" maps onto the underlying role + customerCategory fields.
-const ACCESS_LEVELS = ['Non-MSIL', 'MSIL', 'Admin'];
+// 'Sales User' is a role in its own right, not a customer category — it must be
+// listed here, or editing a Sales user would silently demote them to Customer.
+const ACCESS_LEVELS = ['Non-MSIL', 'MSIL', 'Sales User', 'Admin'];
 
-const accessLevelOf = (u) => (u.role === 'Admin' ? 'Admin' : (u.customerCategory === 'MSIL' ? 'MSIL' : 'Non-MSIL'));
+const accessLevelOf = (u) => {
+  if (u.role === 'Admin') return 'Admin';
+  if (u.role === 'Sales') return 'Sales User';
+  return u.customerCategory === 'MSIL' ? 'MSIL' : 'Non-MSIL';
+};
 
-const accessLevelToFields = (level) =>
-  level === 'Admin'
-    ? { role: 'Admin' }
-    : { role: 'Customer', customerCategory: level };
+const accessLevelToFields = (level) => {
+  if (level === 'Admin') return { role: 'Admin' };
+  if (level === 'Sales User') return { role: 'Sales' };
+  return { role: 'Customer', customerCategory: level };
+};
 
 export const UserManagement = () => {
   const { users, fetchUsers, loading, createUser, updateUser, resetUserPassword } = useAdminStore();
@@ -375,6 +382,7 @@ export const UserManagement = () => {
             <Field label="Role">
               <select value={form.role} onChange={setField('role')} className={inputCls}>
                 <option value="Customer">Customer</option>
+                <option value="Sales">Sales User</option>
                 <option value="Admin">Admin</option>
               </select>
             </Field>
@@ -383,7 +391,7 @@ export const UserManagement = () => {
                 value={form.customerCategory}
                 onChange={setField('customerCategory')}
                 className={inputCls}
-                disabled={form.role === 'Admin'}
+                disabled={form.role === 'Admin' || form.role === 'Sales'}
               >
                 <option value="Non-MSIL">Non-MSIL</option>
                 <option value="MSIL">MSIL</option>
