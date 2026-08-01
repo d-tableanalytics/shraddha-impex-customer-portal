@@ -6,7 +6,6 @@ import ImportJob, { JOB_TRANSITIONS } from '../../models/ImportJob.js';
 import ImportRow from '../../models/ImportRow.js';
 import ImportError from '../../models/ImportError.js';
 import StockMovement from '../../models/StockMovement.js';
-import StockBalance from '../../models/StockBalance.js';
 import Location from '../../models/Location.js';
 import { Product, createProductModel } from '../../models/Product.js';
 import { nextSequence } from '../../models/Counter.js';
@@ -18,7 +17,6 @@ import { applyMovements } from './balance.service.js';
 import { recomputeHealthForSkus } from './health.service.js';
 import { resolveConfig } from './config.service.js';
 import { createCount, startCount, recordCounts, submitCount } from './count.service.js';
-import { DEFAULT_REASON_CODE } from './adjustment.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { allowedBrands, ALL_BRANDS } from '../../utils/brandAccess.js';
 import { normaliseSeason, normaliseStatus } from '../../utils/productFields.js';
@@ -719,134 +717,6 @@ const processMovements = (movementType) => async ({ rows, job, chunkIndex, actor
 };
 
 /**
- * Bulk stock update — the sheet says what stock SHOULD be; this works out what
- * changed.
- *
- * The uploader gives an absolute figure per SKU. Writing that figure into the
- * balance would break the one rule the whole design rests on, so each row is
- * turned into the DIFFERENCE against the current position and posted as an
- * ADJUSTMENT. The result the user sees is "stock is now 250"; what the ledger
- * records is "+37 on the 1st, by this person, from this file".
- *
- * The current figure is read HERE, at processing time, not when the file was
- * staged. A file validated an hour ago against a SKU that has since been sold
- * from must adjust against the figure that is true now, or the sale would be
- * silently reversed.
- */
-const processStockUpdate = async ({ rows, job, chunkIndex, actor, req }) => {
-  const successes = [];
-  const failures = [];
-
-  // One query for the whole chunk rather than one per row.
-  const balances = await StockBalance.find({
-    $or: rows.map((r) => ({
-      skuCode: r.data.skuCode, brand: r.data.brand, locationCode: r.data.locationCode,
-    })),
-  }).lean();
-  const byKey = new Map(balances.map((b) => [`${b.skuCode}::${b.brand}::${b.locationCode}`, b]));
-
-  const lines = [];
-  const lineRows = [];
-  const unchanged = [];
-
-  for (const row of rows) {
-    const d = row.data;
-    const current = byKey.get(`${d.skuCode}::${d.brand}::${d.locationCode}`);
-    const before = current?.onHand ?? 0;
-    const reserved = current?.reserved ?? 0;
-    const delta = d.quantity - before;
-
-    // A row that states the figure stock is already at is not an error — on a
-    // full stock-take sheet most rows will say exactly that. It is reported as
-    // processed-but-unchanged so the summary can distinguish "nothing to do"
-    // from "did not run".
-    if (delta === 0) {
-      unchanged.push(row);
-      continue;
-    }
-
-    // Reserved stock is committed to live bookings; cutting below it creates an
-    // oversell that only surfaces at dispatch. One bad row fails alone.
-    if (d.quantity < reserved) {
-      failures.push({
-        rowNumber: row.rowNumber,
-        reason: `${reserved} unit${reserved === 1 ? ' is' : 's are'} reserved against live bookings, so stock cannot be set to ${d.quantity}.`,
-      });
-      continue;
-    }
-
-    lines.push({
-      movementType: 'ADJUSTMENT',
-      skuCode: d.skuCode,
-      brand: d.brand,
-      locationCode: d.locationCode,
-      quantity: delta,
-      beforeQuantity: before,
-      afterQuantity: d.quantity,
-      reasonCode: d.reasonCode || DEFAULT_REASON_CODE,
-      note: d.note ?? null,
-    });
-    lineRows.push(row);
-  }
-
-  // Every row in the chunk already matched, so there is nothing to post. Going
-  // ahead would hand postBatch an empty batch, which it correctly refuses.
-  if (lines.length === 0) {
-    for (const row of unchanged) {
-      successes.push({ rowNumber: row.rowNumber, result: { unchanged: true, quantity: row.data.quantity } });
-    }
-    return { successes, failures, refs: [] };
-  }
-
-  let result;
-  try {
-    result = await postBatch({
-      idempotencyKey: `import-${job.jobId}-${chunkIndex}`,
-      workflowType: 'stock-update',
-      referenceType: 'import',
-      referenceId: job.jobId,
-      actor,
-      note: `Stock Update import ${job.jobId} (chunk ${chunkIndex + 1})`,
-      lines,
-    }, req);
-  } catch (error) {
-    if (isRetryable(error)) throw error;
-    for (const row of lineRows) failures.push({ rowNumber: row.rowNumber, reason: error.message });
-    for (const row of unchanged) {
-      successes.push({ rowNumber: row.rowNumber, result: { unchanged: true, quantity: row.data.quantity } });
-    }
-    return { successes, failures, refs: [] };
-  }
-
-  const posted = await StockMovement.find({ batchId: result.batch.batchId }).lean();
-  if (!result.replayed && posted.length) await applyMovements(posted);
-  await recomputeHealthForSkus([...new Set(lineRows.map((r) => r.data.skuCode))]);
-
-  const txnBySku = new Map(posted.map((mv) => [`${mv.skuCode}::${mv.brand}`, mv.transactionId]));
-  for (const [i, row] of lineRows.entries()) {
-    successes.push({
-      rowNumber: row.rowNumber,
-      result: {
-        batchId: result.batch.batchId,
-        transactionId: txnBySku.get(`${row.data.skuCode}::${row.data.brand}`) ?? null,
-        before: lines[i].beforeQuantity,
-        after: lines[i].afterQuantity,
-        delta: lines[i].quantity,
-        replayed: result.replayed,
-      },
-    });
-  }
-  for (const row of unchanged) {
-    successes.push({ rowNumber: row.rowNumber, result: { unchanged: true, quantity: row.data.quantity } });
-  }
-
-  return {
-    successes, failures,
-    refs: [{ kind: 'ledgerBatch', id: result.batch.batchId, chunkIndex }],
-  };
-};
-
-/**
  * Counted quantities go INTO a count session; they do not become adjustments.
  *
  * The session is created once for the whole job, filled chunk by chunk, and
@@ -876,43 +746,12 @@ const processCount = async ({ rows, job, actor, req }) => {
   return { successes, failures, refs: [] };
 };
 
-const processLocations = async ({ rows }) => {
-  const successes = [];
-  const failures = [];
-
-  for (const row of rows) {
-    const d = row.data;
-    try {
-      await Location.updateOne(
-        { code: d.code },
-        {
-          $set: {
-            name: d.name,
-            ...(d.type ? { type: d.type } : {}),
-            ...(d.address !== null && d.address !== undefined ? { address: d.address } : {}),
-            ...(d.active !== null && d.active !== undefined ? { active: d.active } : {}),
-          },
-          $setOnInsert: { code: d.code },
-        },
-        { upsert: true, runValidators: true },
-      );
-      successes.push({ rowNumber: row.rowNumber, result: { code: d.code } });
-    } catch (error) {
-      failures.push({ rowNumber: row.rowNumber, reason: error.message });
-    }
-  }
-
-  return { successes, failures, refs: [] };
-};
-
 const PROCESSORS = {
   'inventory-master': processMaster,
   planning: processPlanning,
   'opening-stock': processMovements('OPENING'),
-  'stock-update': processStockUpdate,
   'stock-movements': processMovements(null),
   'physical-count': processCount,
-  locations: processLocations,
 };
 
 // ─── Confirm and process ─────────────────────────────────────────────────────

@@ -145,7 +145,7 @@ export const adjustStock = async ({
   if (delta === 0) {
     fail(
       mode === 'set'
-        ? `Stock is already ${before} at ${location.code} — nothing to change.`
+        ? `Stock is already ${before} — nothing to change.`
         : 'A delta of zero would not change anything.',
       409,
       'NO_CHANGE',
@@ -157,7 +157,7 @@ export const adjustStock = async ({
   // -30 against 10 on hand is only visible after the arithmetic.
   if (after < 0) {
     fail(
-      `That would take ${sku} to ${after} at ${location.code}. Stock cannot go negative — ` +
+      `That would take ${sku} to ${after}. Stock cannot go negative — ` +
       `there ${before === 1 ? 'is' : 'are'} ${before} on hand.`,
       409,
       'NEGATIVE_RESULT',

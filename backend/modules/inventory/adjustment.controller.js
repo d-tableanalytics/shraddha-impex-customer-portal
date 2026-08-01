@@ -117,7 +117,7 @@ export const postAdjustment = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message:
-        `${result.skuCode} at ${result.locationCode}: ${result.before} → ${result.after} ` +
+        `${result.skuCode}: ${result.before} → ${result.after} ` +
         `(${result.delta > 0 ? '+' : ''}${result.delta}).`,
       data: result,
     });

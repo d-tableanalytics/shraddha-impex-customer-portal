@@ -92,7 +92,7 @@ export const StockCounts = () => {
   const { config, fetchAll } = useInventoryConfigStore();
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ scope: 'spot', brand: '', locationCode: '', category: '', skuCodes: '', includeZeroStock: false, notes: '' });
+  const [form, setForm] = useState({ scope: 'spot', brand: '', category: '', skuCodes: '', includeZeroStock: false, notes: '' });
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
 
@@ -126,7 +126,6 @@ export const StockCounts = () => {
     const payload = {
       scope: form.scope,
       brand: form.brand || null,
-      locationCode: form.locationCode || null,
       category: form.category || null,
       includeZeroStock: form.includeZeroStock,
       notes: form.notes || null,
@@ -275,7 +274,6 @@ export const StockCounts = () => {
                     className="hover:bg-slate-50 transition-colors cursor-pointer">
                     <td className="px-5 py-4">
                       <span className="font-mono text-xs font-bold text-primary-700">{c.countId}</span>
-                      <span className="block text-[11px] text-slate-400">{c.locationCode}</span>
                     </td>
                     <td className="px-5 py-4 text-slate-600">
                       {c.scope}{c.brand && ` · ${c.brand}`}
@@ -330,7 +328,7 @@ export const StockCounts = () => {
                   <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-                        {session.scope} count · {session.locationCode}
+                        {session.scope} count
                       </p>
                       <h3 className="text-lg font-black text-slate-900 font-mono">{session.countId}</h3>
                       <div className="mt-1.5 flex items-center gap-2">

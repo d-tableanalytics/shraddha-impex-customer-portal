@@ -327,7 +327,7 @@ export const StockLedger = () => {
                     <td className="px-5 py-4">
                       <span className="font-bold text-slate-900">{m.skuCode}</span>
                       <span className="block text-[11px] text-slate-400 font-medium">
-                        {m.brand} · {m.locationCode}
+                        {m.brand}
                       </span>
                     </td>
                     <td className="px-5 py-4">

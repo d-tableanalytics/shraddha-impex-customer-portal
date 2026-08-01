@@ -171,9 +171,8 @@ export const InventoryDashboard = () => {
         }
       />
 
-      {/* Filters. No Location control: one location exists, so the choice was
-          between "All" and the only option. It returns when there is a second
-          location to choose. */}
+      {/* Filters. Stock is not split by storage location in this portal, so
+          there is no location control here or anywhere else in Inventory. */}
       <Card>
         <CardContent className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {brands.length > 1 && (

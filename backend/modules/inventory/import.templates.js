@@ -30,8 +30,6 @@ import { PERMISSIONS } from '../../middlewares/rbac.js';
 //              reference in a blank sheet.
 export const IMPORTABLE_MOVEMENT_TYPES = ['RECEIPT', 'ISSUE', 'ADJUSTMENT', 'TRANSFER_IN', 'TRANSFER_OUT'];
 
-const LOCATION_TYPES = ['Warehouse', 'Store', 'Transit', 'Virtual'];
-
 /* ── Cell coercion ──────────────────────────────────────────────────────────
  *
  * Every coercer returns { ok, value, error }. A blank cell is never an error
@@ -113,7 +111,6 @@ export const coerce = (spec, value) => {
 
 const SKU = { header: 'SKU Code', field: 'skuCode', type: 'string', required: true, note: 'Must already exist unless this is a master import.' };
 const BRAND = { header: 'Brand', field: 'brand', type: 'string', required: true, note: 'Koken, BIX or IMADA.' };
-const LOCATION = { header: 'Location Code', field: 'locationCode', type: 'upper', required: false, note: 'Blank uses the default location.' };
 const NOTE = { header: 'Note', field: 'note', type: 'string', required: false };
 
 /* ── The registry ───────────────────────────────────────────────────────── */
@@ -194,46 +191,11 @@ export const IMPORT_TEMPLATES = {
     columns: [
       SKU,
       BRAND,
-      LOCATION,
       { header: 'Quantity', field: 'quantity', type: 'number', required: true, min: 0, note: 'Opening stock cannot be negative.' },
       { header: 'Unit Cost', field: 'unitCost', type: 'number', required: false, min: 0 },
       NOTE,
     ],
-    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', 'Location Code': 'DEFAULT', Quantity: 250, 'Unit Cost': 180, Note: 'Go-live balance' },
-  },
-
-  'stock-update': {
-    label: 'Stock Update',
-    description:
-      'Set on-hand stock from a sheet of SKU and quantity. Each row posts the DIFFERENCE ' +
-      'against the current figure as an adjustment — balances are never overwritten.',
-    permissions: [PERMISSIONS.ADJUST_STOCK],
-    // The same SKU twice at one location would mean the second row silently
-    // wins, and nobody could tell which figure survived.
-    keyFields: ['skuCode', 'locationCode'],
-    requireExistingSku: true,
-    requireLocation: true,
-    // No Brand column. SKU codes are unique across the whole catalogue, so
-    // asking for the brand as well is only a second chance to get it wrong;
-    // it is looked up from the SKU during validation instead.
-    resolveBrandFromSku: true,
-    // MSIL is not used to find the product — it is checked against what the
-    // catalogue already holds. That turns the optional column into a guard
-    // against the failure this sheet is most prone to: a column pasted one row
-    // out, where every SKU still exists and every quantity lands on the wrong
-    // part.
-    verifyMsil: true,
-    columns: [
-      { header: 'SKU Code', field: 'skuCode', type: 'string', required: true, note: 'Must already exist. The brand is taken from the catalogue.' },
-      { header: 'MSIL Code', field: 'msilCode', type: 'string', required: false, note: 'Optional. Checked against the catalogue if given.' },
-      {
-        header: 'Stock Quantity', field: 'quantity', type: 'int', required: true, min: 0,
-        note: 'The figure stock should END at, not the change. Whole units, zero or more.',
-      },
-      LOCATION,
-      NOTE,
-    ],
-    sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', 'Stock Quantity': 250, 'Location Code': '', Note: 'Stock take 01/08' },
+    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', Quantity: 250, 'Unit Cost': 180, Note: 'Go-live balance' },
   },
 
   'stock-movements': {
@@ -249,7 +211,6 @@ export const IMPORT_TEMPLATES = {
     columns: [
       SKU,
       BRAND,
-      LOCATION,
       { header: 'Movement Type', field: 'movementType', type: 'upper', required: true, enumOf: IMPORTABLE_MOVEMENT_TYPES },
       { header: 'Quantity', field: 'quantity', type: 'number', required: true, note: 'Sign is set by the movement type; enter a positive figure.' },
       { header: 'Reason Code', field: 'reasonCode', type: 'upper', required: false },
@@ -284,7 +245,7 @@ export const IMPORT_TEMPLATES = {
       ...row,
       quantity: MOVEMENT_TYPES[row.movementType]?.sign === 'negative' ? -Math.abs(row.quantity) : Math.abs(row.quantity),
     }),
-    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', 'Location Code': 'DEFAULT', 'Movement Type': 'RECEIPT', Quantity: 100, 'Reason Code': '', 'Effective Date': '', Note: 'PO-4471' },
+    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', 'Movement Type': 'RECEIPT', Quantity: 100, 'Reason Code': '', 'Effective Date': '', Note: 'PO-4471' },
   },
 
   'physical-count': {
@@ -298,28 +259,13 @@ export const IMPORT_TEMPLATES = {
     columns: [
       SKU,
       BRAND,
-      LOCATION,
       { header: 'Counted Quantity', field: 'countedQuantity', type: 'number', required: true, min: 0 },
       { header: 'Reason Code', field: 'reasonCode', type: 'upper', required: false, note: 'Required by the count service when a variance needs explaining.' },
       NOTE,
     ],
-    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', 'Location Code': 'DEFAULT', 'Counted Quantity': 248, 'Reason Code': 'MISCOUNT', Note: '' },
+    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', 'Counted Quantity': 248, 'Reason Code': 'MISCOUNT', Note: '' },
   },
 
-  locations: {
-    label: 'Locations',
-    description: 'Create or update stock locations.',
-    permissions: [PERMISSIONS.CONFIGURE_INVENTORY],
-    keyFields: ['code'],
-    columns: [
-      { header: 'Code', field: 'code', type: 'upper', required: true },
-      { header: 'Name', field: 'name', type: 'string', required: true },
-      { header: 'Type', field: 'type', type: 'string', required: false, enumOf: LOCATION_TYPES },
-      { header: 'Address', field: 'address', type: 'string', required: false },
-      { header: 'Active', field: 'active', type: 'boolean', required: false },
-    ],
-    sample: { Code: 'WH-02', Name: 'Secondary Warehouse', Type: 'Warehouse', Address: '', Active: 'Yes' },
-  },
 };
 
 export const IMPORT_TYPE_NAMES = Object.keys(IMPORT_TEMPLATES);

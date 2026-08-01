@@ -133,7 +133,7 @@ export const UpdateStockModal = ({ open, skuCode, brand, onClose, onDone }) => {
         <div className="flex flex-col gap-4">
           <div>
             <p className="text-xs text-slate-500">
-              {preview.itemDescription || preview.skuCode} · {preview.brand} · {preview.locationCode}
+              {preview.itemDescription || preview.skuCode} · {preview.brand}
             </p>
           </div>
 
