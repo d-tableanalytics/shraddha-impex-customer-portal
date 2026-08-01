@@ -1,4 +1,3 @@
-import { MOVEMENT_TYPES } from '../../models/StockMovement.js';
 import { VALID_SEASONS, VALID_STATUSES } from '../../utils/productFields.js';
 import { PERMISSIONS } from '../../middlewares/rbac.js';
 
@@ -17,18 +16,6 @@ import { PERMISSIONS } from '../../middlewares/rbac.js';
  * that own them, so an import can never accept a value the model would reject,
  * and can never invent one it would not.
  */
-
-// Types a bulk file may post. The full ledger set is deliberately NOT offered:
-//
-//   OPENING  — has its own import, so an opening balance is never filed as an
-//              ordinary receipt and lost among them.
-//   COUNT    — belongs to Module M7. A variance must come from a counted,
-//              approved session, not from a spreadsheet asserting the answer.
-//   RESERVE  — allocation movements are produced by the booking flow. Letting a
-//   RELEASE    file write them would let stock be promised without an order.
-//   REVERSAL — must reference the movement it reverses; there is nothing to
-//              reference in a blank sheet.
-export const IMPORTABLE_MOVEMENT_TYPES = ['RECEIPT', 'ISSUE', 'ADJUSTMENT', 'TRANSFER_IN', 'TRANSFER_OUT'];
 
 /* ── Cell coercion ──────────────────────────────────────────────────────────
  *
@@ -118,154 +105,85 @@ const NOTE = { header: 'Note', field: 'note', type: 'string', required: false };
 export const IMPORT_TEMPLATES = {
   'inventory-master': {
     label: 'Inventory Master',
-    description: 'Create or update SKUs, categories and planning parameters.',
-    // Writing the master is the same act as editing a planning parameter by
-    // hand, so it carries the same permission rather than a new one.
+    description: 'Update SKUs by code. Fill Quantity to set stock; leave it blank to change details only.',
     permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
-    // The key that makes a row unique within the file. Duplicate detection and
-    // the "already exists" check both use it.
-    keyFields: ['skuCode', 'brand'],
+    keyFields: ['skuCode'],
+    requireExistingSku: true,
+    requireLocation: true,
+    // No Brand column: SKU codes are unique across the catalogue, so asking for
+    // the brand again is only a second chance to get it wrong.
+    resolveBrandFromSku: true,
+    // MSIL is never used to FIND the product — only to confirm the row is the
+    // SKU the uploader meant. It catches the failure this sheet is most prone
+    // to: a column pasted one row out, where every code still exists and every
+    // quantity lands on the wrong part.
+    verifyMsil: true,
     columns: [
       SKU,
-      BRAND,
-      { header: 'MSIL Code', field: 'msilCode', type: 'string', required: false },
-      { header: 'Description', field: 'description', type: 'string', required: false },
-      { header: 'Category', field: 'category', type: 'list', required: false, note: 'Comma-separated for multiple.' },
-      { header: 'UOM', field: 'uom', type: 'string', required: false, note: 'Defaults to PCS.' },
-      { header: 'Status', field: 'status', type: 'string', required: false, enumOf: VALID_STATUSES },
-      { header: 'Current Season', field: 'currentSeason', type: 'string', required: false, enumOf: VALID_SEASONS },
-      // Three columns, matching the workbook's own E/F/G. A single figure
-      // cannot say WHICH season it belongs to, and writing it to the field
-      // wholesale replaces the per-season object with a bare number — which
-      // reads back as no consumption at all.
+      { header: 'MSIL Code', field: 'msilCode', type: 'string', required: false, note: 'Optional. Checked against the catalogue if given.' },
+      {
+        header: 'Quantity', field: 'quantity', type: 'int', required: false, min: 0,
+        note: 'The figure stock should END at. Leave blank to leave stock alone.',
+      },
+    ],
+    sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 250 },
+  },
+
+  planning: {
+    label: 'Planning Parameters',
+    description: 'Bulk-update consumption, lead time and safety factor for existing SKUs.',
+    permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
+    keyFields: ['skuCode'],
+    requireExistingSku: true,
+    // Brand is accepted but not required — the SKU already identifies the
+    // product, and a supplied brand is validated like any other.
+    resolveBrandFromSku: true,
+    columns: [
+      SKU,
+      { header: 'Brand', field: 'brand', type: 'string', required: false, note: 'Optional — taken from the SKU when blank.' },
       { header: 'Daily Avg Consumption (Low)', field: 'dacLow', type: 'number', required: false, min: 0 },
       { header: 'Daily Avg Consumption (Normal)', field: 'dacNormal', type: 'number', required: false, min: 0 },
       { header: 'Daily Avg Consumption (Peak)', field: 'dacPeak', type: 'number', required: false, min: 0 },
       { header: 'Lead Time', field: 'leadTime', type: 'number', required: false, min: 0, note: 'Days.' },
       { header: 'Safety Factor', field: 'safetyFactor', type: 'number', required: false, min: 0 },
     ],
-    sample: {
-      'SKU Code': '14405M-10', Brand: 'Koken', 'MSIL Code': 'M-14405-10',
-      Description: '10mm Socket', Category: 'Sockets', UOM: 'PCS', Status: 'Active',
-      'Current Season': 'Normal', 'Daily Avg Consumption (Normal)': 4.5, 'Lead Time': 45, 'Safety Factor': 1.2,
-    },
-  },
-
-  planning: {
-    label: 'Planning Parameters',
-    description: 'Bulk-update consumption, lead time, safety factor and season for existing SKUs.',
-    permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
-    keyFields: ['skuCode', 'brand'],
-    requireExistingSku: true,
-    columns: [
-      SKU,
-      BRAND,
-      // Three columns, matching the workbook's own E/F/G. A single figure
-      // cannot say WHICH season it belongs to, and writing it to the field
-      // wholesale replaces the per-season object with a bare number — which
-      // reads back as no consumption at all.
-      { header: 'Daily Avg Consumption (Low)', field: 'dacLow', type: 'number', required: false, min: 0 },
-      { header: 'Daily Avg Consumption (Normal)', field: 'dacNormal', type: 'number', required: false, min: 0 },
-      { header: 'Daily Avg Consumption (Peak)', field: 'dacPeak', type: 'number', required: false, min: 0 },
-      { header: 'Lead Time', field: 'leadTime', type: 'number', required: false, min: 0 },
-      { header: 'Safety Factor', field: 'safetyFactor', type: 'number', required: false, min: 0 },
-      { header: 'Current Season', field: 'currentSeason', type: 'string', required: false, enumOf: VALID_SEASONS },
-    ],
     // A row that changes nothing is a mistake worth reporting — usually a
     // column pasted into the wrong place.
     validate: (row) => {
-      const touched = ['dacLow', 'dacNormal', 'dacPeak', 'leadTime', 'safetyFactor', 'currentSeason']
+      const touched = ['dacLow', 'dacNormal', 'dacPeak', 'leadTime', 'safetyFactor']
         .some((f) => row[f] !== null && row[f] !== undefined);
       return touched ? [] : [{ category: 'required', message: 'No planning value given — the row would change nothing.' }];
     },
-    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', 'Daily Avg Consumption (Low)': 0, 'Daily Avg Consumption (Normal)': 4.5, 'Daily Avg Consumption (Peak)': 0, 'Lead Time': 45, 'Safety Factor': 1.2, 'Current Season': 'Normal' },
+    sample: {
+      'SKU Code': '14405M-10', Brand: '', 'Daily Avg Consumption (Low)': 0,
+      'Daily Avg Consumption (Normal)': 4.5, 'Daily Avg Consumption (Peak)': 0,
+      'Lead Time': 45, 'Safety Factor': 1.2,
+    },
   },
 
   'opening-stock': {
     label: 'Opening Stock',
     description: 'Set opening balances. Posted as OPENING movements through the ledger.',
     permissions: [PERMISSIONS.POST_STOCK_IN],
-    keyFields: ['skuCode', 'brand', 'locationCode'],
+    keyFields: ['skuCode'],
     requireExistingSku: true,
     requireLocation: true,
+    resolveBrandFromSku: true,
+    verifyMsil: true,
+    // An opening balance is the FIRST position for a SKU, so a row for one that
+    // already holds stock is refused rather than added on top. Without this the
+    // sheet reads as "set stock to 98" and silently means "add 98" — and since
+    // this template and Inventory Master now have the identical SKU / MSIL /
+    // Quantity shape, the wrong one is easy to reach for.
+    refuseIfStocked: true,
+    // Column order is A / B / C exactly as laid out below.
     columns: [
       SKU,
-      BRAND,
-      { header: 'Quantity', field: 'quantity', type: 'number', required: true, min: 0, note: 'Opening stock cannot be negative.' },
-      { header: 'Unit Cost', field: 'unitCost', type: 'number', required: false, min: 0 },
-      NOTE,
+      { header: 'MSIL Code', field: 'msilCode', type: 'string', required: false, note: 'Optional. Checked against the catalogue if given.' },
+      { header: 'Quantity', field: 'quantity', type: 'int', required: true, min: 0, note: 'Opening stock cannot be negative.' },
     ],
-    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', Quantity: 250, 'Unit Cost': 180, Note: 'Go-live balance' },
+    sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 250 },
   },
-
-  'stock-movements': {
-    label: 'Stock Movements',
-    description: 'Bulk receipts, issues, adjustments and transfers. Every line posts through the ledger.',
-    permissions: [PERMISSIONS.POST_STOCK_IN, PERMISSIONS.POST_STOCK_OUT, PERMISSIONS.ADJUST_STOCK],
-    // Movements are events, not state — the same SKU legitimately appears many
-    // times in one file, so there is no duplicate key to enforce.
-    keyFields: null,
-    requireExistingSku: true,
-    requireLocation: true,
-    requireReasonCode: 'optional',
-    columns: [
-      SKU,
-      BRAND,
-      { header: 'Movement Type', field: 'movementType', type: 'upper', required: true, enumOf: IMPORTABLE_MOVEMENT_TYPES },
-      { header: 'Quantity', field: 'quantity', type: 'number', required: true, note: 'Sign is set by the movement type; enter a positive figure.' },
-      { header: 'Reason Code', field: 'reasonCode', type: 'upper', required: false },
-      { header: 'Effective Date', field: 'effectiveDate', type: 'date', required: false, note: 'Blank means now. Cannot be in the future.' },
-      NOTE,
-    ],
-    /**
-     * The sign belongs to the movement type, not to the person filling in the
-     * sheet. Asking for "-5" on an ISSUE invites both "-5" and "5" in the same
-     * file, half of which then post backwards. The quantity is entered as a
-     * magnitude and signed here, exactly as the ledger's own rules require.
-     */
-    validate: (row) => {
-      const errors = [];
-      const spec = MOVEMENT_TYPES[row.movementType];
-      if (!spec) return errors; // enum validation already reported it
-      if (row.quantity === 0) {
-        errors.push({ category: 'range', column: 'Quantity', message: 'Quantity cannot be zero.' });
-      } else if (row.quantity < 0) {
-        errors.push({
-          category: 'range', column: 'Quantity',
-          message: `Enter a positive quantity — ${row.movementType} already means ${spec.sign === 'negative' ? 'stock out' : 'stock in'}.`,
-        });
-      }
-      if (row.effectiveDate && row.effectiveDate.getTime() > Date.now() + 60_000) {
-        errors.push({ category: 'range', column: 'Effective Date', message: 'Effective date cannot be in the future.' });
-      }
-      return errors;
-    },
-    /** Apply the type's sign once the row is known good. */
-    transform: (row) => ({
-      ...row,
-      quantity: MOVEMENT_TYPES[row.movementType]?.sign === 'negative' ? -Math.abs(row.quantity) : Math.abs(row.quantity),
-    }),
-    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', 'Movement Type': 'RECEIPT', Quantity: 100, 'Reason Code': '', 'Effective Date': '', Note: 'PO-4471' },
-  },
-
-  'physical-count': {
-    label: 'Physical Count Sheet',
-    description: 'Load counted quantities into a count session. Variances still require approval before they post.',
-    permissions: [PERMISSIONS.PERFORM_COUNT],
-    keyFields: ['skuCode', 'brand'],
-    requireExistingSku: true,
-    requireLocation: true,
-    requireReasonCode: 'optional',
-    columns: [
-      SKU,
-      BRAND,
-      { header: 'Counted Quantity', field: 'countedQuantity', type: 'number', required: true, min: 0 },
-      { header: 'Reason Code', field: 'reasonCode', type: 'upper', required: false, note: 'Required by the count service when a variance needs explaining.' },
-      NOTE,
-    ],
-    sample: { 'SKU Code': '14405M-10', Brand: 'Koken', 'Counted Quantity': 248, 'Reason Code': 'MISCOUNT', Note: '' },
-  },
-
 };
 
 export const IMPORT_TYPE_NAMES = Object.keys(IMPORT_TEMPLATES);
@@ -316,4 +234,4 @@ export const matchHeaders = (importType, headerRow) => {
   return { mapping, missing, unexpected, matched: Object.keys(mapping).length };
 };
 
-export default { IMPORT_TEMPLATES, IMPORT_TYPE_NAMES, headersFor, matchHeaders, coerce, IMPORTABLE_MOVEMENT_TYPES };
+export default { IMPORT_TEMPLATES, IMPORT_TYPE_NAMES, headersFor, matchHeaders, coerce };

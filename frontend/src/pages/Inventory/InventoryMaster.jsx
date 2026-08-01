@@ -12,6 +12,7 @@ import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { PageHeader } from '../../components/common/PageHeader';
 import { BulkPlanningEditor } from '../../components/inventory/BulkPlanningEditor';
 import { UpdateStockModal } from '../../components/inventory/UpdateStockModal';
+import { inventoryApi } from '../../services/inventory';
 import { useInventoryStore } from '../../store/inventoryStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
@@ -274,15 +275,32 @@ export const InventoryMaster = () => {
   const pageSkus = items.map((i) => i.skuCode);
   const allOnPagePicked = pageSkus.length > 0 && pageSkus.every((s) => picked.has(s));
 
-  // Select-all applies to THIS PAGE only, and says so in the toolbar. Silently
-  // selecting 8,566 rows behind a single checkbox is how someone retires the
-  // catalogue by accident.
-  const togglePage = () => setPicked((prev) => {
-    const next = new Set(prev);
-    if (allOnPagePicked) pageSkus.forEach((s) => next.delete(s));
-    else pageSkus.forEach((s) => next.add(s));
-    return next;
-  });
+  // The header checkbox selects EVERY SKU matching the current filter, not just
+  // the rows on screen — the filter is what the user has already told us they
+  // mean. It fetches the matching codes rather than assuming the page is all
+  // there is, so a selection of 8,000 is real rather than a promise the bulk
+  // editor would have to make good on later.
+  //
+  // The count is stated in the toolbar before any action is possible, and the
+  // server refuses a filter matching more than 10,000.
+  const [selectingAll, setSelectingAll] = useState(false);
+
+  const toggleAllMatching = async () => {
+    if (picked.size > 0) { setPicked(new Set()); return; }
+    setSelectingAll(true);
+    try {
+      const { skuCodes } = await inventoryApi.listItemCodes({
+        search: filters.search, brand: filters.brand,
+        category: filters.category, status: filters.status,
+      });
+      setPicked(new Set(skuCodes));
+      if (skuCodes.length) toast.success(`${skuCodes.length.toLocaleString()} SKU(s) selected.`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not select every matching SKU.');
+    } finally {
+      setSelectingAll(false);
+    }
+  };
 
   // One fetch on mount, then one per settled search term.
   //
@@ -446,10 +464,12 @@ export const InventoryMaster = () => {
             <div className="flex flex-wrap items-center gap-3 px-6 py-3 bg-primary-50 border-y border-primary-100">
               <Layers size={16} className="text-primary-700 shrink-0" />
               <span className="text-sm font-bold text-primary-900">
-                {picked.size} SKU{picked.size === 1 ? '' : 's'} selected
+                {picked.size.toLocaleString()} SKU{picked.size === 1 ? '' : 's'} selected
               </span>
               <span className="text-[11px] text-primary-700/70">
-                Selection is by SKU, so it survives sorting and paging.
+                {picked.size > items.length
+                  ? 'Everything matching the current filter, across all pages.'
+                  : 'Selection is by SKU, so it survives sorting and paging.'}
               </span>
               <div className="ml-auto flex gap-2">
                 <Button size="xs" variant="secondary" onClick={() => setPicked(new Set())}>
@@ -470,10 +490,12 @@ export const InventoryMaster = () => {
                     <th className="pl-6 pr-2 py-4 w-10">
                       <input
                         type="checkbox"
-                        aria-label="Select every SKU on this page"
                         className="w-4 h-4 accent-primary-600 cursor-pointer"
-                        checked={allOnPagePicked}
-                        onChange={togglePage}
+                        aria-label="Select every SKU matching the current filter"
+                        checked={picked.size > 0}
+                        ref={(el) => { if (el) el.indeterminate = picked.size > 0 && !allOnPagePicked; }}
+                        disabled={selectingAll}
+                        onChange={toggleAllMatching}
                       />
                     </th>
                   )}

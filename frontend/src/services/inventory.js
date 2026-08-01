@@ -79,12 +79,28 @@ export const inventoryApi = {
    * touches fewer rows than were selected has to say which ones it left alone
    * and why, or the caller is left comparing two numbers and guessing.
    */
-  bulkUpdatePlanning: async (skuCodes, updates) => {
-    const response = await api.patch("/inventory/items/planning/bulk", {
-      skuCodes,
-      ...updates,
-    });
-    return response.data.data;
+  bulkUpdatePlanning: async (skuCodes, updates, onProgress) => {
+    // The endpoint accepts 500 SKUs per call, deliberately — a single unbounded
+    // write across the catalogue is not something to expose. Selecting a whole
+    // filter can exceed that, so the work is split here and the results summed,
+    // which keeps the server contract intact.
+    const CHUNK = 500;
+    const merged = { matched: 0, modified: 0, blocked: [], skipped: [] };
+
+    for (let i = 0; i < skuCodes.length; i += CHUNK) {
+      const slice = skuCodes.slice(i, i + CHUNK);
+      const response = await api.patch("/inventory/items/planning/bulk", {
+        skuCodes: slice,
+        ...updates,
+      });
+      const d = response.data.data || {};
+      merged.matched += d.matched || 0;
+      merged.modified += d.modified || 0;
+      if (d.blocked?.length) merged.blocked.push(...d.blocked);
+      if (d.skipped?.length) merged.skipped.push(...d.skipped);
+      onProgress?.(Math.min(i + CHUNK, skuCodes.length), skuCodes.length);
+    }
+    return merged;
   },
 
   /**
@@ -114,6 +130,19 @@ export const inventoryApi = {
       { brand, locationCode, mode, quantity, reasonCode, note },
     );
     return response.data;
+  },
+
+  /**
+   * Every SKU code matching a filter — what select-all needs.
+   *
+   * The list pages at 200, so asking it for "everything matching" would be
+   * dozens of round trips for a question the filter already answers once.
+   */
+  listItemCodes: async (filters = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) if (v) qs.append(k, v);
+    const r = await api.get(`/inventory/items/codes?${qs.toString()}`);
+    return { skuCodes: r.data.data || [], total: r.data.total || 0 };
   },
 
   getCategories: async () => {

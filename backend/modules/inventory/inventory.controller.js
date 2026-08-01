@@ -173,12 +173,96 @@ const shapeItem = (doc, { showMsil, balance = null }) => {
  * GET /api/v1/inventory/items
  * Paginated, filtered inventory list across every brand the caller may see.
  */
+/**
+ * Build the product query from the request's filters.
+ *
+ * Shared by the list and the select-all codes endpoint, so "everything matching
+ * my filter" can never mean something different from what the table is showing.
+ *
+ * Returns { query } on success, or { error } describing what to send back.
+ */
+const buildItemQuery = (req) => {
+  const brands = allowedBrands(req.user);
+  // A user with no brand access matches nothing rather than everything — the
+  // same deliberate choice brandFilter() makes.
+  if (brands.length === 0) return { empty: true };
+
+  const showMsil = msilAppliesTo(req.user);
+  const query = { brand: { $in: brands } };
+
+  const brandParam = asString(req.query.brand);
+  if (brandParam) {
+    // Reject rather than silently ignore a brand the caller cannot see.
+    if (!canAccessBrand(req.user, brandParam)) {
+      return { error: { status: 403, message: 'Access to this brand is restricted for your account.' } };
+    }
+    query.brand = brandParam;
+  }
+
+  const category = asString(req.query.category);
+  if (category) query.category = category;
+
+  // Enum-constrained, so validate rather than trust — an unrecognised value is
+  // a client error, not something to silently ignore.
+  const status = asString(req.query.status);
+  if (status) {
+    if (!PRODUCT_STATUSES.includes(status)) {
+      return { error: { status: 400, message: `Status must be one of: ${PRODUCT_STATUSES.join(', ')}.` } };
+    }
+    query.status = status;
+  }
+
+  const search = asString(req.query.search);
+  const anchored = prefixMatch(search);
+  if (anchored) {
+    query.$or = [{ skuCode: anchored }];
+    if (showMsil) query.$or.push({ msilCode: anchored });
+  }
+
+  return { query, showMsil, filtered: Boolean(search || category || status || brandParam) };
+};
+
+/**
+ * GET /api/v1/inventory/items/codes
+ *
+ * Every SKU code matching the current filter, and nothing else. This is what
+ * the table's select-all checkbox uses: the list endpoint pages at 200, so
+ * without this "select everything matching" would mean 40+ round trips to
+ * learn what the user already asked for in one filter.
+ */
+export const listItemCodes = async (req, res, next) => {
+  try {
+    const built = buildItemQuery(req);
+    if (built.empty) return res.status(200).json({ success: true, data: [], total: 0 });
+    if (built.error) {
+      return res.status(built.error.status).json({ success: false, message: built.error.message });
+    }
+
+    const total = await Product.countDocuments(built.query);
+    if (total > SELECT_ALL_MAX) {
+      return res.status(413).json({
+        success: false,
+        code: 'TOO_MANY_MATCHES',
+        message: `${total.toLocaleString()} SKUs match this filter, which is more than the `
+          + `${SELECT_ALL_MAX.toLocaleString()} that can be selected at once. Narrow the filter first.`,
+      });
+    }
+
+    const rows = await Product.find(built.query, 'skuCode').sort({ skuCode: 1 }).lean();
+    res.status(200).json({
+      success: true,
+      data: rows.map((r) => r.skuCode).filter(Boolean),
+      total,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const listItems = async (req, res, next) => {
   try {
-    const brands = allowedBrands(req.user);
-    // A user with no brand access matches nothing rather than everything — the
-    // same deliberate choice brandFilter() makes.
-    if (brands.length === 0) {
+    const built = buildItemQuery(req);
+    if (built.empty) {
       return res.status(200).json({
         success: true,
         data: [],
@@ -186,50 +270,17 @@ export const listItems = async (req, res, next) => {
         totals: { catalogue: 0 },
       });
     }
+    if (built.error) {
+      return res.status(built.error.status).json({ success: false, message: built.error.message });
+    }
+    const { query, showMsil } = built;
+    const brands = allowedBrands(req.user);
 
     const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 200);
     const page = Math.max(Number(req.query.page) || 1, 1);
     // Allow-listed: an unknown or object-valued sort falls back to the default
     // rather than reaching the database.
     const sortSpec = SORT_SPECS[asString(req.query.sort)] || SORT_SPECS['sku-asc'];
-    const showMsil = msilAppliesTo(req.user);
-
-    const query = { brand: { $in: brands } };
-
-    const brandParam = asString(req.query.brand);
-    if (brandParam) {
-      // Reject rather than silently ignore a brand the caller cannot see.
-      if (!canAccessBrand(req.user, brandParam)) {
-        return res.status(403).json({
-          success: false,
-          message: 'Access to this brand is restricted for your account.',
-        });
-      }
-      query.brand = brandParam;
-    }
-
-    const category = asString(req.query.category);
-    if (category) query.category = category;
-
-    // Enum-constrained, so validate rather than trust — an unrecognised value
-    // is a client error, not something to silently ignore.
-    const status = asString(req.query.status);
-    if (status) {
-      if (!PRODUCT_STATUSES.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: `Status must be one of: ${PRODUCT_STATUSES.join(', ')}.`,
-        });
-      }
-      query.status = status;
-    }
-
-    const search = asString(req.query.search);
-    const anchored = prefixMatch(search);
-    if (anchored) {
-      query.$or = [{ skuCode: anchored }];
-      if (showMsil) query.$or.push({ msilCode: anchored });
-    }
 
     // Sorting by stock cannot use a product field any more — the quantities
     // live in the balance projection. Those two sorts join to it and order on
@@ -273,7 +324,7 @@ export const listItems = async (req, res, next) => {
       // Unfiltered count for the KPI tile — describes the catalogue, not the
       // current search. Skipped when there is no filter, since it is the same
       // number we already have.
-      search || category || status || brandParam
+      built.filtered
         ? Product.countDocuments({ brand: { $in: brands } })
         : Promise.resolve(null),
     ]);
@@ -507,6 +558,9 @@ const BULK_FIELDS = ['currentSeason', 'leadTime', 'safetyFactor', 'moq', 'status
 
 /** How many SKUs one call may touch. Beyond this, use an import. */
 const BULK_MAX = 500;
+
+/** Ceiling on a single select-all, so one checkbox cannot pull the whole catalogue. */
+const SELECT_ALL_MAX = 10000;
 
 export const bulkUpdatePlanning = async (req, res, next) => {
   try {

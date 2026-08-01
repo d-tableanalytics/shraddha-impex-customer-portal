@@ -1,5 +1,5 @@
 import express from 'express';
-import { listItems, getItem, updatePlanning, bulkUpdatePlanning, listCategories } from './inventory.controller.js';
+import { listItems, listItemCodes, getItem, updatePlanning, bulkUpdatePlanning, listCategories } from './inventory.controller.js';
 import { postAdjustment, getAdjustmentPreview, getReasonCodes } from './adjustment.controller.js';
 import { listLocations, createLocation, updateLocation, setDefaultLocation } from './location.controller.js';
 import { getConfig, getConfigHistory, updateConfig } from './config.controller.js';
@@ -62,6 +62,9 @@ router.use(protect);
 // Static paths first, or Express matches '/categories' as a :sku.
 router.get('/categories', authorize(PERMISSIONS.VIEW_INVENTORY), listCategories);
 router.get('/items', authorize(PERMISSIONS.VIEW_INVENTORY), listItems);
+// Before '/items/:sku', or 'codes' is read as a SKU. Backs the table's
+// select-all, which needs every matching code rather than one page of them.
+router.get('/items/codes', authorize(PERMISSIONS.VIEW_INVENTORY), listItemCodes);
 router.get('/items/:sku', authorize(PERMISSIONS.VIEW_INVENTORY), getItem);
 
 // Planning-parameter maintenance (M1). These are the ONLY write paths into the

@@ -6,6 +6,7 @@ import ImportJob, { JOB_TRANSITIONS } from '../../models/ImportJob.js';
 import ImportRow from '../../models/ImportRow.js';
 import ImportError from '../../models/ImportError.js';
 import StockMovement from '../../models/StockMovement.js';
+import StockBalance from '../../models/StockBalance.js';
 import Location from '../../models/Location.js';
 import { Product, createProductModel } from '../../models/Product.js';
 import { nextSequence } from '../../models/Counter.js';
@@ -16,7 +17,7 @@ import { postBatch } from './ledger.service.js';
 import { applyMovements } from './balance.service.js';
 import { recomputeHealthForSkus } from './health.service.js';
 import { resolveConfig } from './config.service.js';
-import { createCount, startCount, recordCounts, submitCount } from './count.service.js';
+import { DEFAULT_REASON_CODE } from './adjustment.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { allowedBrands, ALL_BRANDS } from '../../utils/brandAccess.js';
 import { normaliseSeason, normaliseStatus } from '../../utils/productFields.js';
@@ -129,6 +130,12 @@ const buildContext = async (importType, { user }) => {
       context.skuToMsil = new Map();
       for (const p of rows) if (p.skuCode && p.msilCode) context.skuToMsil.set(p.skuCode, p.msilCode);
     }
+  }
+
+  // Which SKUs already hold stock, for a template that must refuse them.
+  if (template.refuseIfStocked) {
+    const rows = await StockBalance.find({ onHand: { $gt: 0 } }, 'skuCode brand onHand').lean();
+    context.stocked = new Map(rows.map((b) => [`${b.skuCode}::${b.brand}`, b.onHand]));
   }
 
   if (template.requireLocation) {
@@ -275,6 +282,19 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
         category: 'reference', column: 'Reason Code',
         message: `"${data.reasonCode}" is not an active reason code.`,
         value: data.reasonCode,
+      });
+    }
+  }
+
+  // ── Already holding stock ────────────────────────────────────────────────
+  if (template.refuseIfStocked && data.skuCode && data.brand) {
+    const held = context.stocked?.get(`${data.skuCode}::${data.brand}`);
+    if (held) {
+      errors.push({
+        category: 'reference', column: 'Quantity',
+        message: `${data.skuCode} already holds ${held} in stock, so it has no opening position to set. `
+          + 'Use the Inventory Master sheet to set a stock figure.',
+        value: data.quantity,
       });
     }
   }
@@ -560,7 +580,7 @@ export const errorReport = async (jobId, { page = 1, limit = 100, category = nul
 // and NEVER writes to a projection itself.
 
 /** Products are the master itself — written directly, with M1's own normalisers. */
-const processMaster = async ({ rows, actor }) => {
+const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
   const successes = [];
   const failures = [];
   const ops = new Map(); // brand → bulk ops, so each discriminator writes once
@@ -603,8 +623,12 @@ const processMaster = async ({ rows, actor }) => {
           filter: { skuCode: d.skuCode },
           // Upsert: the same import creates new SKUs and updates existing ones,
           // which is what "master import" means to the people running it.
-          update: { $set: set, $setOnInsert: { skuCode: d.skuCode } },
-          upsert: true,
+          update: { $set: set },
+          // NOT an upsert. This sheet carries only a SKU, an MSIL code and a
+          // quantity, which is not enough to create a usable product — and an
+          // unknown SKU is already rejected at validation, so the only thing an
+          // upsert could produce here is a junk record.
+          upsert: false,
         },
       },
     });
@@ -641,10 +665,105 @@ const processMaster = async ({ rows, actor }) => {
   // alerts in M8, through the event the health service emits.
   if (affectedSkus.length) await recomputeHealthForSkus(affectedSkus);
 
-  return { successes, failures, refs: [] };
+  // Quantity, where the sheet carries one, is a STOCK figure and cannot be
+  // written to the product — it goes through the ledger like any other stock
+  // change. Rows without one are untouched by this step.
+  const stock = await postQuantities({ rows, job, chunkIndex, actor, req });
+  successes.push(...stock.successes);
+  failures.push(...stock.failures);
+
+  return { successes, failures, refs: stock.refs };
 };
 
-/** Planning is the master import narrowed to four fields. */
+/**
+ * Turn a sheet's absolute Quantity into ledger movements.
+ *
+ * The uploader states the figure stock SHOULD be. Writing that into the balance
+ * would break the rule the whole design rests on, so each row is turned into
+ * the DIFFERENCE against the current position and posted as an ADJUSTMENT.
+ *
+ * The current figure is read HERE, at processing time, not when the file was
+ * staged — a file validated an hour ago against a SKU that has since been sold
+ * from must adjust against the figure that is true now.
+ */
+const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
+  const successes = [];
+  const failures = [];
+  const wanted = rows.filter((r) => r.data.quantity !== null && r.data.quantity !== undefined);
+  if (wanted.length === 0) return { successes, failures, refs: [] };
+
+  const balances = await StockBalance.find({
+    $or: wanted.map((r) => ({
+      skuCode: r.data.skuCode, brand: r.data.brand, locationCode: r.data.locationCode,
+    })),
+  }).lean();
+  const byKey = new Map(balances.map((b) => [`${b.skuCode}::${b.brand}::${b.locationCode}`, b]));
+
+  const lines = [];
+  const lineRows = [];
+  for (const row of wanted) {
+    const d = row.data;
+    const cur = byKey.get(`${d.skuCode}::${d.brand}::${d.locationCode}`);
+    const before = cur?.onHand ?? 0;
+    const reserved = cur?.reserved ?? 0;
+    const delta = d.quantity - before;
+
+    // A row stating the figure stock is already at is not an error — on a full
+    // sheet most rows will say exactly that.
+    if (delta === 0) continue;
+
+    if (d.quantity < reserved) {
+      failures.push({
+        rowNumber: row.rowNumber,
+        reason: `${reserved} unit${reserved === 1 ? ' is' : 's are'} reserved against live bookings, so stock cannot be set to ${d.quantity}.`,
+      });
+      continue;
+    }
+
+    lines.push({
+      movementType: 'ADJUSTMENT',
+      skuCode: d.skuCode,
+      brand: d.brand,
+      locationCode: d.locationCode,
+      quantity: delta,
+      beforeQuantity: before,
+      afterQuantity: d.quantity,
+      reasonCode: DEFAULT_REASON_CODE,
+      note: `Set from ${job.fileName}`,
+    });
+    lineRows.push(row);
+  }
+
+  if (lines.length === 0) return { successes, failures, refs: [] };
+
+  let result;
+  try {
+    result = await postBatch({
+      idempotencyKey: `import-${job.jobId}-${chunkIndex}-qty`,
+      workflowType: 'import',
+      referenceType: 'import',
+      referenceId: job.jobId,
+      actor,
+      note: `${IMPORT_TEMPLATES[job.importType].label} import ${job.jobId} (chunk ${chunkIndex + 1})`,
+      lines,
+    }, req);
+  } catch (error) {
+    if (isRetryable(error)) throw error;
+    for (const row of lineRows) failures.push({ rowNumber: row.rowNumber, reason: error.message });
+    return { successes, failures, refs: [] };
+  }
+
+  const posted = await StockMovement.find({ batchId: result.batch.batchId }).lean();
+  if (!result.replayed && posted.length) await applyMovements(posted);
+  await recomputeHealthForSkus([...new Set(lineRows.map((r) => r.data.skuCode))]);
+
+  return {
+    successes, failures,
+    refs: [{ kind: 'ledgerBatch', id: result.batch.batchId, chunkIndex }],
+  };
+};
+
+/** Planning carries no Quantity column, so no stock step ever runs for it. */
 const processPlanning = (args) => processMaster(args);
 
 /** Opening balances and movements both post through the ledger, unchanged. */
@@ -716,42 +835,10 @@ const processMovements = (movementType) => async ({ rows, job, chunkIndex, actor
   };
 };
 
-/**
- * Counted quantities go INTO a count session; they do not become adjustments.
- *
- * The session is created once for the whole job, filled chunk by chunk, and
- * submitted at the end — leaving it exactly where a hand-counted session would
- * be: awaiting an approver. Nothing posts to the ledger here. Module M7 decides
- * whether these variances are real, and M7's separation-of-duties rule still
- * applies, so whoever uploaded the sheet cannot also approve it.
- */
-const processCount = async ({ rows, job, actor, req }) => {
-  const successes = [];
-  const failures = [];
-
-  const lines = rows.map((row) => ({
-    skuCode: row.data.skuCode,
-    countedQuantity: row.data.countedQuantity,
-    reasonCode: row.data.reasonCode ?? null,
-    note: row.data.note ?? null,
-  }));
-
-  try {
-    await recordCounts({ countId: job.options.countId, lines, actor, req });
-    for (const row of rows) successes.push({ rowNumber: row.rowNumber, result: { countId: job.options.countId } });
-  } catch (error) {
-    for (const row of rows) failures.push({ rowNumber: row.rowNumber, reason: error.message });
-  }
-
-  return { successes, failures, refs: [] };
-};
-
 const PROCESSORS = {
   'inventory-master': processMaster,
   planning: processPlanning,
   'opening-stock': processMovements('OPENING'),
-  'stock-movements': processMovements(null),
-  'physical-count': processCount,
 };
 
 // ─── Confirm and process ─────────────────────────────────────────────────────
@@ -770,38 +857,6 @@ export const confirmJob = async ({ jobId, actor, req }) => {
   assertTransition(job.status, 'Processing');
   if (job.validRows === 0) fail('There are no valid rows to import.', 400, 'NOTHING_TO_IMPORT');
 
-  // A physical-count import needs its session to exist before any row lands,
-  // and it is created ONCE for the job rather than per chunk.
-  if (job.importType === 'physical-count') {
-    const skuCodes = await ImportRow.distinct('data.skuCode', { jobId, valid: true });
-    try {
-      const created = await createCount({
-        scope: 'spot',
-        brand: job.brand || null,
-        locationCode: job.locationCode || null,
-        skuCodes,
-        // A SKU counted at zero must be countable, so the session cannot be
-        // limited to SKUs that already show stock.
-        includeZeroStock: true,
-        notes: `Imported from ${job.fileName} (${job.jobId}).`,
-        actor, req,
-      });
-      await startCount({ countId: created.countId, actor, req });
-      job.options = { ...(job.options || {}), countId: created.countId };
-      job.producedRefs.push({ kind: 'count', id: created.countId, chunkIndex: -1 });
-    } catch (error) {
-      // The count service refused the scope — most often because a SKU has no
-      // balance row at that location and so has never held stock there. Recorded
-      // on the job rather than thrown, so the user gets the reason on the screen
-      // they are looking at instead of a 500.
-      job.status = 'Failed';
-      job.fileErrors.push(`A count session could not be opened: ${error.message}`);
-      job.completedAt = new Date();
-      await job.save();
-      fail(`A count session could not be opened: ${error.message}`, error.status || 400, error.code || 'COUNT_SCOPE_REJECTED');
-    }
-  }
-
   job.status = 'Processing';
   job.confirmedBy = actor._id;
   job.confirmedAt = new Date();
@@ -809,7 +864,7 @@ export const confirmJob = async ({ jobId, actor, req }) => {
 
   await recordAudit(actor, 'Inventory Import Confirmed',
     `Import ${jobId} confirmed: ${job.validRows} row(s) queued for processing.`,
-    req, { meta: { jobId, importType: job.importType, validRows: job.validRows, countId: job.options?.countId } });
+    req, { meta: { jobId, importType: job.importType, validRows: job.validRows } });
 
   // Detached. A failure inside is recorded on the job, never thrown at the
   // caller, who has already been told the import started.
@@ -935,16 +990,6 @@ export const runJob = async (jobId, actor, req = null) => {
 
     // ── Finish ────────────────────────────────────────────────────────────
     const fresh = await ImportJob.findOne({ jobId });
-
-    // A submitted count is where an imported count sheet belongs: filled in and
-    // waiting for an approver, exactly like one entered by hand.
-    if (fresh.importType === 'physical-count' && fresh.options?.countId && fresh.successfulRows > 0) {
-      try {
-        await submitCount({ countId: fresh.options.countId, allowUncounted: true, actor, req });
-      } catch (error) {
-        fresh.fileErrors.push(`Rows loaded, but the count could not be submitted: ${error.message}`);
-      }
-    }
 
     // Partial covers rows rejected at VALIDATION as well as rows the services
     // refused. A file where 7 of 8 rows never made it reporting "Completed"

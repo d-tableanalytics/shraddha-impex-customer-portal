@@ -48,10 +48,11 @@ export const BulkPlanningEditor = ({ open, skuCodes = [], onClose, onDone }) => 
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
+  const [progress, setProgress] = useState(null);
 
   // Reopening must not carry the previous edit's values or its outcome.
   useEffect(() => {
-    if (open) { setForm({}); setResult(null); }
+    if (open) { setForm({}); setResult(null); setProgress(null); }
   }, [open]);
 
   // Clearing a field REMOVES it from the payload rather than sending an empty
@@ -77,9 +78,10 @@ export const BulkPlanningEditor = ({ open, skuCodes = [], onClose, onDone }) => 
       const payload = { ...form };
       for (const n of NUMERIC) if (n in payload) payload[n] = Number(payload[n]);
 
-      const data = await inventoryApi.bulkUpdatePlanning(skuCodes, payload);
+      const data = await inventoryApi.bulkUpdatePlanning(skuCodes, payload,
+        (done, total) => setProgress(total > 500 ? { done, total } : null));
       setResult(data);
-      toast.success(`Updated ${data.modified} of ${skuCodes.length} SKU(s).`);
+      toast.success(`Updated ${data.modified.toLocaleString()} of ${skuCodes.length.toLocaleString()} SKU(s).`);
       onDone?.();
     } catch (err) {
       toast.error(err.response?.data?.message || 'The bulk update failed.');
@@ -165,7 +167,9 @@ export const BulkPlanningEditor = ({ open, skuCodes = [], onClose, onDone }) => 
           <Button variant="secondary" onClick={onClose}>{result ? 'Close' : 'Cancel'}</Button>
           <Button onClick={save} disabled={saving || !touched.length}>
             {saving ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Save size={15} className="mr-2" />}
-            Apply to {skuCodes.length}
+            {progress
+              ? `${progress.done.toLocaleString()} / ${progress.total.toLocaleString()}`
+              : `Apply to ${skuCodes.length.toLocaleString()}`}
           </Button>
         </div>
       </div>
