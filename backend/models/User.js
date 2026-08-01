@@ -13,8 +13,21 @@ const userSchema = new mongoose.Schema({
     pushNotifications: { type: Boolean, default: false },
   },
   // 'Sales' reviews confirmed bookings, may edit them until the PO is raised,
-  // and raises the PO itself. Permissions live in middlewares/rbac.js.
-  role: { type: String, enum: ['Admin', 'Sales', 'Customer'], default: 'Customer' },
+  // and raises the PO itself.
+  //
+  // The three inventory roles were added for the IMS (Module M1). Without them
+  // the inventory permissions in rbac.js could be declared but never assigned to
+  // anyone, so 'Inventory Manager' and the rest would have been unusable:
+  //   Inventory Manager — owns stock: master data, receipts, counts, adjustments
+  //   Warehouse User    — floor operator: receives and counts at their own site
+  //   Management        — oversight: reads everything, approves, creates nothing
+  //
+  // Permissions live in middlewares/rbac.js — never inline in a controller.
+  role: {
+    type: String,
+    enum: ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Customer'],
+    default: 'Customer',
+  },
   // Customer categorisation — drives which bulk-import template applies.
   customerCategory: { type: String, enum: ['MSIL', 'Non-MSIL'], default: 'Non-MSIL' },
   brandAccess: {

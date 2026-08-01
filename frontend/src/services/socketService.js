@@ -46,3 +46,17 @@ export const refreshSocketAuth = () => {
 };
 
 export const getSocket = () => socket;
+
+/**
+ * Subscribe to stock changes posted anywhere in the system.
+ *
+ * Screens that show a stock figure use this so a correction made by someone
+ * else does not leave them displaying a number that is now wrong. Returns an
+ * unsubscribe function for the effect's cleanup — without it, remounting the
+ * page would stack duplicate handlers and refetch once per mount.
+ */
+export const onStockUpdated = (handler) => {
+  const s = socket || initSocket();
+  s.on('inventory:stock-updated', handler);
+  return () => s.off('inventory:stock-updated', handler);
+};

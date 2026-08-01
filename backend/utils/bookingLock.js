@@ -14,6 +14,20 @@ import { PERMISSIONS, hasPermission } from '../middlewares/rbac.js';
  *      poGeneratedAt existed are still correctly detected by this branch.
  */
 
+/**
+ * How long a confirmed booking may sit without a PO before it is auto-cancelled
+ * and its reserved stock returned. Lives here so the settlement job, the API and
+ * the UI countdown all read one number.
+ */
+export const PO_DEADLINE_DAYS = 7;
+
+/** When the PO must be raised by, given the booking date. */
+export const poDueAt = (bookingDate) => {
+  if (!bookingDate) return null;
+  const t = new Date(bookingDate).getTime();
+  return Number.isNaN(t) ? null : new Date(t + PO_DEADLINE_DAYS * 24 * 60 * 60 * 1000);
+};
+
 /** A poNumber that means "not raised yet": null, blank, or the '-' placeholder. */
 export const isPlaceholderPo = (po) => {
   const v = String(po ?? '').trim();
@@ -65,6 +79,8 @@ export const lockState = (orders = []) => {
 };
 
 export default {
+  PO_DEADLINE_DAYS,
+  poDueAt,
   isPlaceholderPo,
   isPoGenerated,
   isBookingLocked,

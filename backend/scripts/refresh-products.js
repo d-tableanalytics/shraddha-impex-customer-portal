@@ -29,6 +29,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { ProductKoken, ProductBIX, ProductIMADA } from '../models/Product.js';
+import { normaliseSeason, describeSeasonIssues } from '../utils/productFields.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -107,6 +108,7 @@ const run = async () => {
     const dbMap = new Map(existing.map(d => [String(d.skuCode).trim().toUpperCase(), d]));
 
     const ops = [];
+    const seasonIssues = [];
     let julyWins = 0, sheetStock = 0, inserts = 0, fieldChanges = 0;
     const stockChanges = [];
 
@@ -133,7 +135,14 @@ const run = async () => {
           normal: toNum(r['Daily Avg Consumption (Normal)']),
           peak: toNum(r['Daily Avg Consumption (Peak)']),
         },
-        currentSeason: toStr(r['Current Season']),
+        currentSeason: (() => {
+          // Validated against the schema enum rather than written blind:
+          // bulkWrite skips validators, so an unmapped value would otherwise
+          // land in the database silently.
+          const season = normaliseSeason(r['Current Season']);
+          if (!season.ok) seasonIssues.push({ sku, raw: season.raw });
+          return season.value;
+        })(),
         leadTime: toNum(r['Lead Time']),
         safetyFactor: toNum(r['Safety Factor']),
         maxLevel,
@@ -182,10 +191,27 @@ const run = async () => {
     console.log(`   stock values changing   : ${stockChanges.length}`);
     console.log(`   metadata changing       : ${fieldChanges}`);
     console.log(`   in db but not in sheet  : ${orphans.length} (kept, not deleted)${orphans.length && orphans.length <= 6 ? ' → ' + orphans.join(', ') : ''}`);
+
+    const seasonReport = describeSeasonIssues(seasonIssues);
+    if (seasonReport) {
+      console.log(`
+   ❌  ${seasonReport}`);
+      seasonIssues.slice(0, 10).forEach(i => console.log(`      ${i.sku}: "${i.raw}"`));
+      if (seasonIssues.length > 10) console.log(`      ...and ${seasonIssues.length - 10} more`);
+    }
     if (stockChanges.length) {
       console.log('   stock diffs:');
       stockChanges.slice(0, 15).forEach(c => console.log(`      ${c.sku.padEnd(18)} ${c.from} → ${c.to}`));
       if (stockChanges.length > 15) console.log(`      ...and ${stockChanges.length - 15} more`);
+    }
+
+    // Refuse to write a brand whose sheet carries values the schema rejects —
+    // a partial import is harder to unpick than a refused one.
+    if (APPLY && seasonIssues.length) {
+      console.log(`
+   🚫  Skipping ${b.key.toUpperCase()} — fix the season values above first.
+`);
+      continue;
     }
 
     if (APPLY && ops.length) {

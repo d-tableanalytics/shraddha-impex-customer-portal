@@ -1,5 +1,7 @@
 import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
 import { canAccessBrand, allowedBrandModels } from '../../utils/brandAccess.js';
+import { msilAppliesTo } from '../../utils/msilVisibility.js';
+import { prefixMatch } from '../../utils/searchQuery.js';
 
 // Map brand param → correct Mongoose model
 const getModel = (brand) => {
@@ -64,17 +66,17 @@ export const getInventory = async (req, res, next) => {
     // so it is only run for the users who actually see it.
     const wantsLowStock = req.user?.role === 'Admin';
 
-    // MSIL Codes are only searchable by users they are shown to — the same rule
-    // as msilAppliesTo() in the reservations controller.
-    const msilApplies =
-      req.user?.role === 'Admin' ||
-      req.user?.customerCategory === 'MSIL' ||
-      req.user?.showMsilCode === true;
+    // MSIL Codes are only searchable by users they are shown to. Shared rule —
+    // see utils/msilVisibility.js.
+    const msilApplies = msilAppliesTo(req.user);
 
     const query = {};
-    if (search) {
-      query.$or = [{ skuCode: { $regex: search, $options: 'i' } }];
-      if (msilApplies) query.$or.push({ msilCode: { $regex: search, $options: 'i' } });
+    // Prefix-anchored so an index can serve it, and escaped so SKU
+    // metacharacters match literally — see utils/searchQuery.js.
+    const anchored = prefixMatch(search);
+    if (anchored) {
+      query.$or = [{ skuCode: anchored }];
+      if (msilApplies) query.$or.push({ msilCode: anchored });
     }
     if (category) {
       query.category = category;
@@ -154,11 +156,9 @@ export const getProducts = async (req, res, next) => {
     }
 
     const query = {};
-    if (search) {
-      query.$or = [
-        { skuCode: { $regex: search, $options: 'i' } },
-        { msilCode: { $regex: search, $options: 'i' } }
-      ];
+    const anchored = prefixMatch(search);
+    if (anchored) {
+      query.$or = [{ skuCode: anchored }, { msilCode: anchored }];
     }
     if (category) query.category = category;
 

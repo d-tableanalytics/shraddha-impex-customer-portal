@@ -10,6 +10,8 @@ import { allowedBrandModels, canAccessBrand, brandFilter } from '../../utils/bra
 import { isBookingLocked, canOverrideLock } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { findProductBySku, consumeStock } from '../../utils/stockLedger.js';
+import { recordAudit } from '../../utils/auditLog.js';
+import { recordStockMovement } from '../../utils/dualWrite.js';
 
 // Product is stored one-collection-per-brand; brand is implied by the collection.
 const BRAND_MODELS = [
@@ -32,7 +34,7 @@ const findProductById = async (productId, session = null, user = null) => {
 
 // Atomically deduct up to wantQty from live stock without overselling.
 // Returns the quantity actually taken and updates product.availableForSale.
-const deductStockAtomic = async (product, wantQty, session = null) => {
+const deductStockAtomic = async (product, wantQty, session = null, ctx = null) => {
   const Model = product.constructor;
   const opts = session ? { session } : {};
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -51,27 +53,27 @@ const deductStockAtomic = async (product, wantQty, session = null) => {
     );
     if (updated) {
       product.availableForSale = updated.availableForSale;
+      // Dual-write: a partial fill is still an allocation. `take` rather than
+      // `wantQty` — the ledger records what actually moved.
+      await recordStockMovement({
+        product,
+        workflow: ctx?.workflow || 'deduct',
+        referenceType: ctx?.referenceType, referenceId: ctx?.referenceId,
+        actor: ctx?.actor, req: ctx?.req,
+        movements: [{
+          movementType: 'RESERVE',
+          quantity: take,
+          beforeQuantity: updated.bookedQuantity - take,
+          afterQuantity: updated.bookedQuantity,
+        }],
+      });
       return take;
     }
   }
   return 0;
 };
 
-const logEvent = async (user, action, remarks, req, session = null) => {
-  try {
-    await AuditLog.create([{
-      user: user._id,
-      action,
-      method: req?.method || 'SYSTEM',
-      endpoint: req?.originalUrl || 'N/A',
-      ipAddress: req?.ip || '127.0.0.1',
-      userAgent: req?.headers?.['user-agent'] || 'ERP SYSTEM',
-      remarks,
-    }], session ? { session } : {});
-  } catch (error) {
-    console.error('[Order audit log error]', error);
-  }
-};
+// Audit writing lives in utils/auditLog.js — see recordAudit().
 
 export const getOrders = async (req, res, next) => {
   try {
@@ -143,7 +145,13 @@ export const createOrder = async (req, res, next) => {
         throw new Error(`Product ${item.productId} not found`);
       }
 
-      const confirmedQty = await deductStockAtomic(product, requestedQty, session);
+      const confirmedQty = await deductStockAtomic(product, requestedQty, session, {
+        workflow: 'order-create',
+        referenceType: 'order',
+        referenceId: orderNumber,
+        actor: req.user,
+        req,
+      });
       const pendingQty = requestedQty - confirmedQty;
 
       if (confirmedQty > 0) {
@@ -186,7 +194,7 @@ export const createOrder = async (req, res, next) => {
       ? await Order.insertMany(ordersToCreate, { session })
       : [];
 
-    await logEvent(req.user, 'Booking Created', `Booking ${orderNumber} created with ${items.length} line item(s).`, req, session);
+    await recordAudit(req.user, 'Booking Created', `Booking ${orderNumber} created with ${items.length} line item(s).`, req, { session });
 
     await session.commitTransaction();
 
@@ -297,7 +305,15 @@ export const updateOrderPO = async (req, res, next) => {
     for (const row of rows) {
       if ((row.stockState ?? 'reserved') !== 'reserved') continue;
       const product = await findProductBySku(row.skuCode);
-      if (product) await consumeStock(product, row.confirmedQty || 0);
+      if (product) {
+        await consumeStock(product, row.confirmedQty || 0, null, {
+          workflow: 'po-raise',
+          referenceType: 'booking',
+          referenceId: orderNumber,
+          actor: req.user,
+          req,
+        });
+      }
       await Order.updateOne(
         { _id: row._id },
         { $set: { stockState: 'consumed', stockSettledAt: now } },
@@ -307,7 +323,7 @@ export const updateOrderPO = async (req, res, next) => {
     const indentNumber = orderNumber.replace(/^SO-|^BO-/, 'PI-');
     await Reservation.updateMany({ indentNumber }, { poNumber });
 
-    await logEvent(
+    await recordAudit(
       req.user,
       'PO Generated',
       `PO ${poNumber} raised for booking ${orderNumber}. Booking is now locked.`,

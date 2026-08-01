@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  X, User, Hash, Calendar as CalendarIcon, Package, Lock,
+  X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
   Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -9,6 +9,7 @@ import { useSalesStore } from "../../store/salesStore";
 import { useUserStore } from "../../store/userStore";
 import { ERPButton } from "../ui/ERPButton";
 import { PoStatusBadge } from "../ui/PoStatusBadge";
+import { PoCountdown } from "../ui/PoCountdown";
 import { ProductSearchDropdown } from "../ui/ProductSearchDropdown";
 import { canEditBooking, canRaisePo, hasPermission, PERMISSIONS } from "../../utils/permissions";
 
@@ -103,6 +104,7 @@ export const SalesBookingDrawer = () => {
             <div className="flex items-center gap-3">
               <h2 className="text-xl font-black text-slate-800">{selected.orderId}</h2>
               <PoStatusBadge locked={locked} poNumber={selected.poNumber} />
+              {!locked && <PoCountdown dueAt={selected.poDueAt} />}
             </div>
             <button
               onClick={close}
@@ -114,6 +116,21 @@ export const SalesBookingDrawer = () => {
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+            {!locked && selected.poDueAt && (
+              <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-200 bg-amber-50/60">
+                <Timer size={18} className="text-amber-600 mt-0.5 shrink-0" />
+                <div className="text-sm text-amber-900">
+                  <p className="font-bold">
+                    PO must be raised by {new Date(selected.poDueAt).toLocaleString()}
+                  </p>
+                  <p className="text-amber-800 mt-0.5">
+                    If no PO is raised within {selected.poDeadlineDays ?? 7} days of the booking date,
+                    this booking is cancelled automatically and the reserved stock returns to inventory.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {locked && (
               <div className="flex items-start gap-3 p-4 rounded-xl border border-slate-300 bg-slate-100">
                 <Lock size={18} className="text-slate-500 mt-0.5 shrink-0" />

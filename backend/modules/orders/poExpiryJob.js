@@ -4,7 +4,7 @@ import AuditLog from '../../models/AuditLog.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
-import { isPoGenerated } from '../../utils/bookingLock.js';
+import { isPoGenerated, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { findProductBySku, releaseStock, consumeStock } from '../../utils/stockLedger.js';
 
 /**
@@ -22,7 +22,8 @@ import { findProductBySku, releaseStock, consumeStock } from '../../utils/stockL
  * double-release or double-deduct. Rows predating that field read as 'reserved'.
  */
 
-export const PO_DEADLINE_DAYS = 7;
+// Re-exported for callers that already import it from the job.
+export { PO_DEADLINE_DAYS };
 
 const isReserved = (row) => (row.stockState ?? 'reserved') === 'reserved';
 
@@ -115,7 +116,13 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
         if (!dryRun) {
           for (const row of lines) {
             const product = await findProductBySku(row.skuCode);
-            if (product) await consumeStock(product, row.confirmedQty || 0);
+            if (product) {
+              await consumeStock(product, row.confirmedQty || 0, null, {
+                workflow: 'po-settlement-consume',
+                referenceType: 'booking',
+                referenceId: orderId,
+              });
+            }
             row.stockState = 'consumed';
             row.stockSettledAt = new Date();
             await row.save();
@@ -146,7 +153,14 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
         const now = new Date();
         for (const row of lines) {
           const product = await findProductBySku(row.skuCode);
-          if (product) await releaseStock(product, row.confirmedQty || 0);
+          if (product) {
+            await releaseStock(product, row.confirmedQty || 0, null, {
+              workflow: 'po-settlement-release',
+              referenceType: 'booking',
+              referenceId: orderId,
+              reasonCode: 'REVERSAL',
+            });
+          }
           row.stockState = 'released';
           row.stockSettledAt = now;
           row.status = 'Cancelled';

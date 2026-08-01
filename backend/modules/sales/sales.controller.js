@@ -7,11 +7,15 @@ import { io } from '../../server.js';
 import { notifyUser } from '../../utils/notify.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
-import { assertBookingEditable, lockState, isPlaceholderPo } from '../../utils/bookingLock.js';
+import {
+  assertBookingEditable, lockState, isPlaceholderPo, poDueAt, PO_DEADLINE_DAYS,
+} from '../../utils/bookingLock.js';
 import {
   findProductBySku, reserveStock, releaseStock, consumeStock,
   adjustReservedQty, adjustConsumedQty,
 } from '../../utils/stockLedger.js';
+import { recordAudit } from '../../utils/auditLog.js';
+import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 
 /**
  * Sales desk: review confirmed bookings, amend them while the PO is pending,
@@ -28,38 +32,29 @@ const loadBooking = async (orderId, session = null) => {
   return Order.find({ orderId }, null, opts).sort({ createdAt: 1 });
 };
 
-const logEvent = async (user, action, remarks, req, meta = null, session = null) => {
-  try {
-    await AuditLog.create([{
-      user: user?._id || null,
-      action,
-      method: req?.method || 'SYSTEM',
-      endpoint: req?.originalUrl || 'N/A',
-      ipAddress: req?.ip || '127.0.0.1',
-      userAgent: req?.headers?.['user-agent'] || 'ERP SYSTEM',
-      remarks,
-      meta,
-    }], session ? { session } : {});
-  } catch (error) {
-    // Never let an audit write failure roll back the business operation.
-    console.error('[Sales audit log error]', error);
-  }
-};
+// Audit writing lives in utils/auditLog.js — see recordAudit().
 
 // Collapse the flat Order rows into one booking object for the review screen.
 const shapeBooking = (rows) => {
   const first = rows[0];
+  const bookingDate = first.date || first.orderTimestamp || first.createdAt;
+  const lock = lockState(rows);
   return {
     orderId: first.orderId,
     customer: first.company || null,
     user: first.user,
     brand: first.brand,
-    date: first.date || first.createdAt,
+    date: bookingDate,
+    // Deadline for raising the PO. Sent as an absolute timestamp so the UI can
+    // tick a live countdown without refetching; null once the PO exists, since
+    // the booking is no longer at risk of auto-cancellation.
+    poDueAt: lock.locked ? null : poDueAt(bookingDate),
+    poDeadlineDays: PO_DEADLINE_DAYS,
     status: first.status,
     remarks: first.remarks || null,
     emailId: first.emailId || null,
     phoneNumber: first.phoneNumber || null,
-    ...lockState(rows),
+    ...lock,
     totalQuantity: rows.reduce((n, r) => n + (r.confirmedQty || 0), 0),
     lineCount: rows.length,
     lines: rows.map((r) => ({
@@ -313,14 +308,21 @@ const runUpdateItems = async (req, session) => {
   // still awaiting a PO is merely held ('reserved'). The two need different
   // ledger operations, so dispatch on the row's state rather than assuming.
   const isConsumed = (row) => (row?.stockState ?? 'reserved') === 'consumed';
+  const ledgerCtx = {
+    workflow: 'sales-desk-edit',
+    referenceType: 'booking',
+    referenceId: orderId,
+    actor: req.user,
+    req,
+  };
   const giveBack = (product, row, qty) =>
     isConsumed(row)
-      ? adjustConsumedQty(product, qty, 0, session).then((r) => r.ok)
-      : releaseStock(product, qty, session);
+      ? adjustConsumedQty(product, qty, 0, session, ledgerCtx).then((r) => r.ok)
+      : releaseStock(product, qty, session, ledgerCtx);
   const takeFor = (product, row, qty) =>
     isConsumed(row)
-      ? adjustConsumedQty(product, 0, qty, session).then((r) => r.ok)
-      : reserveStock(product, qty, session);
+      ? adjustConsumedQty(product, 0, qty, session, ledgerCtx).then((r) => r.ok)
+      : reserveStock(product, qty, session, ledgerCtx);
 
   const template = existing[0];
   const byId = new Map(existing.map((r) => [String(r._id), r]));
@@ -397,8 +399,8 @@ const runUpdateItems = async (req, session) => {
     if (oldSku === skuCode) {
       if (oldQty === qty) continue; // untouched
       const { ok } = isConsumed(row)
-        ? await adjustConsumedQty(product, oldQty, qty, session)
-        : await adjustReservedQty(product, oldQty, qty, session);
+        ? await adjustConsumedQty(product, oldQty, qty, session, ledgerCtx)
+        : await adjustReservedQty(product, oldQty, qty, session, ledgerCtx);
       if (!ok) {
         throw Object.assign(
           new Error(`Not enough stock for ${skuCode}. Available: ${Math.max(0, product.availableForSale)}, additional needed: ${qty - oldQty}.`),
@@ -445,12 +447,7 @@ export const updateBookingItems = async (req, res, next) => {
       await session.abortTransaction();
       // Standalone MongoDB has no transactions; nothing was committed, so a
       // re-run without a session is safe. Mirrors confirmBooking's fallback.
-      const unsupported =
-        txErr?.code === 20 ||
-        txErr?.codeName === 'IllegalOperation' ||
-        /Transaction numbers are only allowed on a replica set/i.test(txErr?.message || '') ||
-        /Transactions are not supported/i.test(txErr?.message || '');
-      if (unsupported) {
+      if (isTransactionUnsupported(txErr)) {
         console.warn('[updateBookingItems] Transactions unsupported — running without one.');
         result = await runUpdateItems(req, null);
       } else {
@@ -463,7 +460,7 @@ export const updateBookingItems = async (req, res, next) => {
     const { updated, changes } = result;
 
     if (changes.length) {
-      await logEvent(
+      await recordAudit(
         req.user,
         'Booking Edited (Sales)',
         `Booking ${req.params.orderId}: ` +
@@ -474,7 +471,7 @@ export const updateBookingItems = async (req, res, next) => {
               : `removed ${c.skuCode} x${c.fromQty}`,
           ).join('; '),
         req,
-        { orderId: req.params.orderId, changes },
+        { meta: { orderId: req.params.orderId, changes } },
       );
 
       io.emit('booking-updated', { orderId: req.params.orderId });
@@ -536,7 +533,15 @@ export const raisePo = async (req, res, next) => {
     for (const row of rows) {
       if ((row.stockState ?? 'reserved') !== 'reserved') continue;
       const product = await findProductBySku(row.skuCode);
-      if (product) await consumeStock(product, row.confirmedQty || 0);
+      if (product) {
+        await consumeStock(product, row.confirmedQty || 0, null, {
+          workflow: 'po-raise',
+          referenceType: 'booking',
+          referenceId: orderId,
+          actor: req.user,
+          req,
+        });
+      }
       await Order.updateOne(
         { _id: row._id },
         { $set: { stockState: 'consumed', stockSettledAt: now } },
@@ -545,12 +550,12 @@ export const raisePo = async (req, res, next) => {
 
     const updated = await loadBooking(orderId);
 
-    await logEvent(
+    await recordAudit(
       req.user,
       'PO Generated',
       `PO ${poNumber} raised for booking ${orderId} by ${req.user.user || req.user.email}. Booking is now locked.`,
       req,
-      { orderId, poNumber, poGeneratedAt: now },
+      { meta: { orderId, poNumber, poGeneratedAt: now } },
     );
 
     // Tell the customer their PO is through — in-app, and by email with a

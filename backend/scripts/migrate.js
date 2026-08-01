@@ -14,6 +14,7 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 // ─── Import Mongoose Models ───────────────────────────────────────────────────
 import { ProductKoken, ProductBIX, ProductIMADA } from '../models/Product.js';
+import { normaliseSeason, describeSeasonIssues } from '../utils/productFields.js';
 import User  from '../models/User.js';
 import Order from '../models/Order.js';
 
@@ -170,6 +171,7 @@ export const migrateProducts = async (filePath, sheetName, Model, brandLabel) =>
   const rows = XLSX.utils.sheet_to_json(ws, { range: 1, defval: null });
 
   const docs = [];
+  const seasonIssues = [];
   let skipped = 0;
 
   for (const row of rows) {
@@ -189,7 +191,13 @@ export const migrateProducts = async (filePath, sheetName, Model, brandLabel) =>
         normal: toNum(row['Daily Avg Consumption (Normal)']),
         peak:   toNum(row['Daily Avg Consumption (Peak)']),
       },
-      currentSeason:         toStr(row['Current Season']),
+      currentSeason:         (() => {
+        // insertMany runs validators, so an unmapped value would throw partway
+        // through the insert. Validate first and report the whole set instead.
+        const season = normaliseSeason(row['Current Season']);
+        if (!season.ok) seasonIssues.push({ sku: skuCode, raw: season.raw });
+        return season.value;
+      })(),
       leadTime:              toNum(row['Lead Time']),
       safetyFactor:          toNum(row['Safety Factor']),
       maxLevel:              toNum(row['Max Level']),
@@ -205,6 +213,13 @@ export const migrateProducts = async (filePath, sheetName, Model, brandLabel) =>
       inTransitQty:          toNum(row['In-Transit Qty']),
       vendorName:            toStr(row['Vendor Name']),
     });
+  }
+
+  const seasonReport = describeSeasonIssues(seasonIssues);
+  if (seasonReport) {
+    console.log(`   ❌  ${seasonReport}`);
+    seasonIssues.slice(0, 10).forEach(i => console.log(`      ${i.sku}: "${i.raw}"`));
+    throw new Error(`${brandLabel}: invalid "Current Season" values — nothing was imported.`);
   }
 
   // Deduplicate by skuCode — keep the last occurrence when the Excel data has repeats
@@ -245,6 +260,7 @@ export const migrateUsers = async (filePath) => {
   const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
 
   const docs = [];
+  const seasonIssues = [];
   let skipped = 0;
 
   for (const row of rows) {

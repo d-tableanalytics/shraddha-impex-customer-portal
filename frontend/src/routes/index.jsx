@@ -15,6 +15,14 @@ const PermissionMatrix = lazy(() => import("../pages/Admin/Settings/PermissionMa
 const AuthLayout = lazy(() => import("../pages/Auth/AuthLayout").then(m => ({ default: m.AuthLayout })));
 const Login = lazy(() => import("../pages/Auth/Login").then(m => ({ default: m.Login })));
 const Inventory = lazy(() => import("../pages/Inventory/Inventory").then(m => ({ default: m.Inventory })));
+// IMS Module M1 — the internal stock master, distinct from the customer-facing
+// Inventory view above. Both pages re-check their permission themselves.
+const InventoryMaster = lazy(() => import("../pages/Inventory/InventoryMaster").then(m => ({ default: m.InventoryMaster })));
+const StockLedger = lazy(() => import("../pages/Inventory/StockLedger").then(m => ({ default: m.StockLedger })));
+const InventoryHealth = lazy(() => import("../pages/Inventory/InventoryHealth").then(m => ({ default: m.InventoryHealth })));
+const InventoryDashboard = lazy(() => import("../pages/Inventory/InventoryDashboard").then(m => ({ default: m.InventoryDashboard })));
+const StockCounts = lazy(() => import("../pages/Inventory/StockCounts").then(m => ({ default: m.StockCounts })));
+const InventoryImport = lazy(() => import("../pages/Inventory/InventoryImport").then(m => ({ default: m.InventoryImport })));
 const Reports = lazy(() => import("../pages/Reports/Reports").then(m => ({ default: m.Reports })));
 const Settings = lazy(() => import("../pages/Settings/Settings").then(m => ({ default: m.Settings })));
 const Help = lazy(() => import("../pages/Help/Help").then(m => ({ default: m.Help })));
@@ -75,6 +83,38 @@ export const router = createBrowserRouter([
           {
             path: "inventory",
             element: <Inventory />,
+          },
+          {
+            // IMS master. The page re-checks the permission itself, and every
+            // underlying API is guarded server-side.
+            path: "inventory/master",
+            element: <InventoryMaster />,
+          },
+          {
+            // Stock ledger (M2). Read-only movement history.
+            path: "inventory/ledger",
+            element: <StockLedger />,
+          },
+          {
+            // Stock health (M4). Classification projected from balances.
+            path: "inventory/health",
+            element: <InventoryHealth />,
+          },
+          {
+            // Inventory dashboard (M5). A read model over the projections.
+            path: "inventory/dashboard",
+            element: <InventoryDashboard />,
+          },
+          {
+            // Stock verification (M7). Counts post ledger adjustments.
+            path: "inventory/counts",
+            element: <StockCounts />,
+          },
+          {
+            // Import (M9). Files flow through the approved services; nothing
+            // here writes to a projection.
+            path: "inventory/import",
+            element: <InventoryImport />,
           },
           {
             path: "reports",

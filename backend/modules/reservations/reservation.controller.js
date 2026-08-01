@@ -10,6 +10,10 @@ import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { allowedBrandModels, canAccessBrand } from '../../utils/brandAccess.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
+import { recordAudit } from '../../utils/auditLog.js';
+import { isTransactionUnsupported } from '../../utils/mongoSession.js';
+import { recordStockMovement } from '../../utils/dualWrite.js';
+import { msilAppliesTo } from '../../utils/msilVisibility.js';
 
 // The product collection is split one-per-brand; the brand is implied by which
 // collection a doc lives in (there is no brand field on the schema).
@@ -61,7 +65,7 @@ const findProductWithBrand = async (productId, user = null) => {
 // $inc so two concurrent confirmations can never oversell (drive stock < 0).
 // Mutates product.availableForSale to the fresh post-decrement value and
 // returns the quantity actually deducted (0..wantQty).
-const deductStockAtomic = async (product, wantQty, session = null) => {
+const deductStockAtomic = async (product, wantQty, session = null, ctx = null) => {
   const Model = product.constructor;
   const opts = session ? { session } : {};
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -80,6 +84,20 @@ const deductStockAtomic = async (product, wantQty, session = null) => {
     );
     if (updated) {
       product.availableForSale = updated.availableForSale;
+      // Dual-write: a partial fill is still an allocation. `take` rather than
+      // `wantQty` — the ledger records what actually moved.
+      await recordStockMovement({
+        product,
+        workflow: ctx?.workflow || 'deduct',
+        referenceType: ctx?.referenceType, referenceId: ctx?.referenceId,
+        actor: ctx?.actor, req: ctx?.req,
+        movements: [{
+          movementType: 'RESERVE',
+          quantity: take,
+          beforeQuantity: updated.bookedQuantity - take,
+          afterQuantity: updated.bookedQuantity,
+        }],
+      });
       return take;
     }
     // Stock changed underneath us between read and write — retry with fresh value.
@@ -87,35 +105,9 @@ const deductStockAtomic = async (product, wantQty, session = null) => {
   return 0;
 };
 
-// Detects the "transactions not supported" error thrown by a standalone
-// (non-replica-set) MongoDB, so we can gracefully fall back to a non-transactional run.
-const isTransactionUnsupported = (err) => {
-  if (!err) return false;
-  const msg = err.message || '';
-  return (
-    err.code === 20 || // IllegalOperation
-    err.codeName === 'IllegalOperation' ||
-    /Transaction numbers are only allowed on a replica set member or mongos/i.test(msg) ||
-    /Transactions are not supported/i.test(msg)
-  );
-};
+// Transaction-support detection lives in utils/mongoSession.js.
 
-// Helper to create audit logs
-const logEvent = async (user, action, remarks, req, session = null) => {
-  try {
-    await AuditLog.create([{
-      user: user._id,
-      action: action,
-      method: req?.method || 'SYSTEM',
-      endpoint: req?.originalUrl || 'N/A',
-      ipAddress: req?.ip || '127.0.0.1',
-      userAgent: req?.headers?.['user-agent'] || 'ERP SYSTEM',
-      remarks: remarks // If schema has remarks
-    }], session ? { session } : {});
-  } catch (error) {
-    console.error('[Audit Log helper error]', error);
-  }
-};
+// Audit writing lives in utils/auditLog.js — see recordAudit().
 
 // Persist + deliver a notification to a single user (their own room only).
 const sendNotification = (userId, title, message, type = 'reservation') => {
@@ -133,14 +125,7 @@ const enforceMoq = (user, product, quantity) => {
   }
 };
 
-// MSIL Codes are only meaningful to Admins, MSIL customers (who order by them),
-// and anyone explicitly flagged. For everyone else the code is ignored entirely:
-// a Non-MSIL customer is never failed on an MSIL Code being missing, unknown,
-// mismatched, or inactive, because it does not apply to them.
-const msilAppliesTo = (user) =>
-  user?.role === 'Admin' ||
-  user?.customerCategory === 'MSIL' ||
-  user?.showMsilCode === true;
+// MSIL Code visibility lives in utils/msilVisibility.js — see msilAppliesTo().
 
 export const getReservations = async (req, res, next) => {
   try {
@@ -245,7 +230,7 @@ export const restoreBackorder = async (req, res, next) => {
     const customer = reservation.customerId || {};
     const customerName = customer.user || customer.company || 'Customer';
 
-    await logEvent(
+    await recordAudit(
       req.user,
       'Indent Restored',
       `Moved indent ${reservation.reservationId} (${reservation.skuCode} x${reservation.quantity}) back to selection list.`,
@@ -352,7 +337,7 @@ export const createReservation = async (req, res, next) => {
       );
 
       if (updated) {
-        await logEvent(req.user, 'Reservation Updated', `Added ${quantity} units of ${product.skuCode} to an existing reservation (now ${updated.quantity})`, req);
+        await recordAudit(req.user, 'Reservation Updated', `Added ${quantity} units of ${product.skuCode} to an existing reservation (now ${updated.quantity})`, req);
         sendNotification(req.user._id, 'Item Booked', `${product.skuCode} updated to ${updated.quantity} units in your selection list. Confirm within 7 days — it is auto-cancelled after that.`, 'reservation');
         notifyAdmins({ title: 'New Booking', message: `${who} added ${quantity} more of ${product.skuCode} (now ${updated.quantity} units in their selection list).`, type: 'reservation' });
         return res.status(200).json({ success: true, data: updated });
@@ -378,7 +363,7 @@ export const createReservation = async (req, res, next) => {
       reservedBy: req.user._id
     }]);
 
-    await logEvent(req.user, 'Reservation Created', `Reserved ${quantity} units of ${product.skuCode}`, req);
+    await recordAudit(req.user, 'Reservation Created', `Reserved ${quantity} units of ${product.skuCode}`, req);
     sendNotification(req.user._id, 'Item Booked', `${product.skuCode} (${quantity} units) added to your selection list. Confirm within 7 days — it is auto-cancelled after that.`, 'reservation');
     notifyAdmins({ title: 'New Booking', message: `${who} booked ${product.skuCode} (${quantity} units). It is now in their selection list.`, type: 'reservation' });
 
@@ -417,7 +402,7 @@ export const updateReservationQuantity = async (req, res, next) => {
     reservation.quantity = quantity;
     await reservation.save();
 
-    await logEvent(req.user, 'Reservation Updated', `Adjusted quantity of reservation ${reservation.reservationId} to ${quantity}`, req);
+    await recordAudit(req.user, 'Reservation Updated', `Adjusted quantity of reservation ${reservation.reservationId} to ${quantity}`, req);
 
     res.status(200).json({ success: true, data: reservation });
   } catch (error) {
@@ -441,7 +426,7 @@ export const cancelReservation = async (req, res, next) => {
     reservation.expiredAt = new Date();
     await reservation.save();
 
-    await logEvent(req.user, 'Reservation Cancelled', `Cancelled reservation ${reservation.reservationId}`, req);
+    await recordAudit(req.user, 'Reservation Cancelled', `Cancelled reservation ${reservation.reservationId}`, req);
     sendNotification(req.user._id, 'Reservation Cancelled', `Reservation ${reservation.reservationId} has been cancelled and removed from your selection list.`, 'reservation');
 
     res.status(200).json({ success: true, data: reservation });
@@ -492,7 +477,13 @@ const runConfirmBooking = async (req, session) => {
 
     // Fulfill as much as live stock allows (atomically, so concurrent
     // confirmations cannot oversell); the rest becomes a Pending backorder.
-    const confirmedQty = await deductStockAtomic(product, requestedQty, session);
+    const confirmedQty = await deductStockAtomic(product, requestedQty, session, {
+      workflow: 'booking-confirm',
+      referenceType: 'booking',
+      referenceId: orderNumber,
+      actor: req.user,
+      req,
+    });
     const pendingQty = requestedQty - confirmedQty;
 
     if (confirmedQty > 0) {
@@ -541,12 +532,12 @@ const runConfirmBooking = async (req, session) => {
     }
     await resItem.save({ session });
 
-    await logEvent(
+    await recordAudit(
       req.user,
       'Reservation Confirmed',
       `Reservation ${resItem.reservationId}: confirmed ${confirmedQty}, pending ${pendingQty} (requested ${requestedQty})`,
       req,
-      session
+      { session },
     );
 
     summary.push({

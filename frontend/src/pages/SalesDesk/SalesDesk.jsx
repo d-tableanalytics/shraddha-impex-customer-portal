@@ -5,6 +5,7 @@ import { Card, CardContent } from "../../components/ui/Card";
 import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
 import { TableSkeleton } from "../../components/ui/TableSkeleton";
 import { PoStatusBadge } from "../../components/ui/PoStatusBadge";
+import { PoCountdown } from "../../components/ui/PoCountdown";
 import { SalesBookingDrawer } from "../../components/drawer/SalesBookingDrawer";
 import { useSalesStore } from "../../store/salesStore";
 import { useUserStore } from "../../store/userStore";
@@ -149,6 +150,7 @@ export const SalesDesk = () => {
               <th className="px-5 py-3 border-b border-slate-200">Customer</th>
               <th className="px-5 py-3 border-b border-slate-200">Date</th>
               <th className="px-5 py-3 border-b border-slate-200">PO Status</th>
+              <th className="px-5 py-3 border-b border-slate-200">PO Deadline</th>
               <th className="px-5 py-3 border-b border-slate-200">PO Number</th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">Items</th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">Qty</th>
@@ -157,7 +159,7 @@ export const SalesDesk = () => {
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
             {loading ? (
-              <TableSkeleton rows={8} columns={8} cellClass="px-5 py-4" />
+              <TableSkeleton rows={8} columns={9} cellClass="px-5 py-4" />
             ) : bookings.length > 0 ? (
               bookings.map((b) => (
                 <tr
@@ -174,6 +176,13 @@ export const SalesDesk = () => {
                   </td>
                   <td className="px-5 py-4">
                     <PoStatusBadge locked={b.locked} poNumber={b.poNumber} />
+                  </td>
+                  <td className="px-5 py-4">
+                    {b.locked ? (
+                      <span className="text-slate-400">—</span>
+                    ) : (
+                      <PoCountdown dueAt={b.poDueAt} />
+                    )}
                   </td>
                   <td className="px-5 py-4 font-medium text-slate-600">{b.poNumber || "—"}</td>
                   <td className="px-5 py-4 text-center font-bold text-slate-700">{b.lineCount}</td>
@@ -194,7 +203,7 @@ export const SalesDesk = () => {
               ))
             ) : (
               <tr>
-                <td colSpan={8} className="px-5 py-10 text-center text-slate-400">
+                <td colSpan={9} className="px-5 py-10 text-center text-slate-400">
                   {scope === "pending"
                     ? "No bookings are waiting for a PO."
                     : "No bookings found matching your criteria."}

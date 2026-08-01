@@ -1,6 +1,13 @@
 import User from '../../models/User.js';
 import ArchivedUser from '../../models/ArchivedUser.js';
 
+/**
+ * Roles an admin may assign. Derived from the User schema enum so the two can
+ * never drift — adding a role to the model makes it assignable, and nothing
+ * else has to change.
+ */
+const ASSIGNABLE_ROLES = User.schema.path('role').enumValues;
+
 // Suspended accounts live in `archivedusers`, not `users`. The admin list has to
 // show them anyway — otherwise there is no way to bring one back — so both
 // collections are merged here and archived rows are flagged for the UI.
@@ -58,7 +65,10 @@ export const createUser = async (req, res, next) => {
       company: company || null,
       // Only recognised roles are accepted; anything else falls back to Customer
       // so an unexpected value can never grant privileges.
-      role: ['Admin', 'Sales', 'Customer'].includes(role) ? role : 'Customer',
+      // Only recognised roles are accepted; anything else falls back to Customer
+      // so an unexpected value can never grant privileges. Kept in step with the
+      // enum on the User model.
+      role: ASSIGNABLE_ROLES.includes(role) ? role : 'Customer',
       customerCategory: customerCategory === 'MSIL' ? 'MSIL' : 'Non-MSIL',
       status: status || 'Active',
       ...(brandAccess ? { brandAccess } : {}),

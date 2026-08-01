@@ -8,6 +8,11 @@ import { connectDatabase } from './config/database.js';
 import { runReservationExpiryChecks } from './modules/reservations/reservationExpiryJob.js';
 import { runPoSettlement } from './modules/orders/poExpiryJob.js';
 import { seedDefaultRoles } from './config/seedRoles.js';
+import { seedInventoryDefaults } from './config/seedInventory.js';
+import { seedAlertRules } from './config/seedAlertRules.js';
+import { subscribeAlerts } from './modules/inventory/alert.subscriber.js';
+import { onEvent, EVENTS } from './utils/eventBus.js';
+import { sweepUploads } from './middlewares/importUpload.js';
 import cron from 'node-cron';
 
 dotenv.config();
@@ -60,12 +65,50 @@ io.on('connection', (socket) => {
   });
 });
 
+/**
+ * Alert → socket bridge (Module M8).
+ *
+ * The alert engine writes notifications and announces them on the event bus; it
+ * does not know sockets exist. This is the ONLY place the two meet, and it lives
+ * here because `io` is created here.
+ *
+ * That direction is deliberate. The audit found `utils/notify.js` importing `io`
+ * from this file, which drags HTTP startup into every module that touches a
+ * notification and makes those modules untestable without booting a server. The
+ * bus inverts it: modules depend on a leaf that depends on nothing.
+ */
+onEvent(EVENTS.NOTIFICATION_CREATED, ({ notifications, title, message, severity, alertId }) => {
+  for (const n of notifications || []) {
+    io.to(`user:${n.user}`).emit('inventory:alert', {
+      id: n.id, alertId, severity, title, message, at: new Date().toISOString(),
+    });
+  }
+});
+
 // Start Application
 const startServer = async () => {
   await connectDatabase();
 
   // Seed the default RBAC roles if the collection is empty.
   await seedDefaultRoles();
+
+  // Seed the IMS master data (default stock location, global inventory
+  // configuration). Idempotent — only fires when the collections are empty.
+  await seedInventoryDefaults();
+
+  // Seed one alert rule per declared type. Idempotent per type, so a newly
+  // added type is seeded on the next boot without touching tuned rules.
+  await seedAlertRules();
+
+  // Bind the alert engine to the event bus. Until this runs, the projection
+  // modules still emit — nobody is listening, so nothing is alerted. Deliberate:
+  // a script or migration importing a service gets no alerts as a side effect.
+  subscribeAlerts();
+
+  // Clear import uploads left behind by requests that died mid-flight. The
+  // service deletes each file once its rows are staged, so anything still on
+  // disk is debris — and debris nobody reads accumulates until the disk fills.
+  await sweepUploads();
 
   // Initial check on boot
   await runReservationExpiryChecks();
@@ -78,6 +121,7 @@ const startServer = async () => {
     console.log('[Cron] Running daily reservation expiry checks...');
     runReservationExpiryChecks();
     runPoSettlement();
+    sweepUploads();
   });
   
   server.listen(PORT, () => {

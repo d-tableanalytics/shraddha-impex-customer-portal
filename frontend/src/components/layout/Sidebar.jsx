@@ -13,12 +13,24 @@ import {
   ChevronRight,
   FileCheck2,
   LogOut,
+  Warehouse,
+  ScrollText,
+  Activity,
+  GaugeCircle,
+  ClipboardCheck,
+  Upload,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useUIStore } from "../../store/uiStore";
 import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
-import { canUseSalesDesk } from "../../utils/permissions";
+import {
+  canUseSalesDesk,
+  canUseInventoryMaster,
+  hasPermission,
+  PERMISSIONS,
+  INVENTORY_ROLES,
+} from "../../utils/permissions";
 
 export const Sidebar = () => {
   const { sidebarOpen, toggleSidebar } = useUIStore();
@@ -39,18 +51,47 @@ export const Sidebar = () => {
       .filter(Boolean)
       .join(" · ") || "System Account";
 
+  // The three inventory roles work stock, not orders — they hold no
+  // create_order permission, so offering them the ordering flow would only lead
+  // to screens they cannot use. Admin and Sales are unaffected.
+  const worksOrders = !INVENTORY_ROLES.includes(user?.role);
+
   const menuItems = [
     { name: "Dashboard", path: "/", icon: LayoutDashboard },
-    {
-      name: "Create Booking",
-      path: "/orders/new",
-      icon: PlusCircle,
-      badge: cartItems.length > 0 ? cartItems.length : undefined,
-    },
-    { name: "Bulk Upload", path: "/orders/bulk-upload", icon: UploadCloud },
-    { name: "Booking History", path: "/orders/history", icon: History },
-    { name: "Indent History", path: "/orders/indent-history", icon: PackageX },
-    { name: "Inventory", path: "/inventory", icon: Boxes },
+    ...(worksOrders ? [
+      {
+        name: "Create Booking",
+        path: "/orders/new",
+        icon: PlusCircle,
+        badge: cartItems.length > 0 ? cartItems.length : undefined,
+      },
+      { name: "Bulk Upload", path: "/orders/bulk-upload", icon: UploadCloud },
+      { name: "Booking History", path: "/orders/history", icon: History },
+      { name: "Indent History", path: "/orders/indent-history", icon: PackageX },
+      { name: "Inventory", path: "/inventory", icon: Boxes },
+    ] : []),
+    // IMS master — internal stock roles and Admin.
+    ...(canUseInventoryMaster(user) ? [
+      { name: "Inventory Dashboard", path: "/inventory/dashboard", icon: GaugeCircle },
+      { name: "Inventory Master", path: "/inventory/master", icon: Warehouse },
+    ] : []),
+    // Stock health — anyone who may see inventory.
+    ...(hasPermission(user, PERMISSIONS.VIEW_INVENTORY) && canUseInventoryMaster(user) ? [
+      { name: "Inventory Health", path: "/inventory/health", icon: Activity },
+    ] : []),
+    // Stock ledger — anyone who may read movement history.
+    ...(hasPermission(user, PERMISSIONS.VIEW_STOCK_LEDGER) ? [
+      { name: "Stock Ledger", path: "/inventory/ledger", icon: ScrollText },
+    ] : []),
+    // Stock verification — counting and approval.
+    ...(canUseInventoryMaster(user) ? [
+      { name: "Stock Verification", path: "/inventory/counts", icon: ClipboardCheck },
+    ] : []),
+    // Import — the history is readable by anyone who sees inventory; the
+    // upload controls inside are gated per import type.
+    ...(canUseInventoryMaster(user) ? [
+      { name: "Inventory Import", path: "/inventory/import", icon: Upload },
+    ] : []),
     // Sales desk: Sales users and Admins (via the '*' wildcard).
     ...(canUseSalesDesk(user) ? [
       { name: "Sales Desk", path: "/sales", icon: FileCheck2 },
@@ -63,6 +104,34 @@ export const Sidebar = () => {
     { name: "Settings", path: "/settings", icon: Settings },
     { name: "Help", path: "/help", icon: HelpCircle },
   ];
+
+  /**
+   * Exactly ONE item is highlighted, and it is the most specific match.
+   *
+   * Previously each item decided for itself with `pathname.startsWith(basePath)`.
+   * Where one nav path is a prefix of another — "/inventory" and
+   * "/inventory/master" — that is true for both, so opening a sub-page lit up
+   * two rows at once. Choosing a single winner by longest matching path is what
+   * makes that impossible rather than merely unlikely.
+   *
+   * The match is on a SEGMENT boundary, so "/inventory" claims "/inventory/master"
+   * but never "/inventory-config".
+   */
+  const matches = (item) => {
+    const [basePath, searchStr] = item.path.split('?');
+    if (item.path === '/') return location.pathname === '/';
+    if (searchStr) return location.pathname === basePath && location.search.includes(searchStr);
+    // Booking History and Indent History share a path and differ by query
+    // string, so the bare path must not claim a filtered view.
+    if (item.path === '/orders/history') return location.pathname === basePath && !location.search;
+    return location.pathname === basePath || location.pathname.startsWith(`${basePath}/`);
+  };
+
+  const activeItemName = menuItems.reduce((best, item) => {
+    if (!matches(item)) return best;
+    const len = item.path.split('?')[0].length;
+    return !best || len > best.len ? { name: item.name, len } : best;
+  }, null)?.name ?? null;
 
   return (
     <aside
@@ -88,19 +157,7 @@ export const Sidebar = () => {
 
       <nav className="flex-1 overflow-y-auto py-6 px-3 space-y-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent]">
         {menuItems.map((item) => {
-          const [basePath, searchStr] = item.path.split('?');
-          const isActivePath = location.pathname === basePath;
-          let isActuallyActive = false;
-          
-          if (item.path === "/") {
-             isActuallyActive = location.pathname === "/";
-          } else if (searchStr) {
-             isActuallyActive = isActivePath && location.search.includes(searchStr);
-          } else if (item.path === "/orders/history") {
-             isActuallyActive = isActivePath && !location.search;
-          } else {
-             isActuallyActive = location.pathname.startsWith(basePath);
-          }
+          const isActuallyActive = item.name === activeItemName;
 
           return (
           <NavLink

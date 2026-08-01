@@ -17,6 +17,21 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+
+    // A file upload must NOT go out as application/json.
+    //
+    // Axios sets multipart/form-data with a generated boundary when it sees a
+    // FormData body — but only if no Content-Type is already set, and the
+    // instance default above always is. The request then arrives claiming to be
+    // JSON with no boundary, multer parses nothing, and the server correctly
+    // reports "No file was uploaded" for a request that did contain one.
+    //
+    // Deleting the header here lets axios put back the right one, with the
+    // boundary the browser generates.
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+    }
+
     return config;
   },
   (error) => {

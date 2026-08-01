@@ -1,11 +1,12 @@
 import { ProductKoken, ProductBIX, ProductIMADA } from '../models/Product.js';
+import { INVENTORY_ROLES } from '../middlewares/rbac.js';
 
 /**
  * Central brand-access rules.
  *
  * A customer only ever sees the brands ticked in their `brandAccess` flags.
  * Two standing rules on top of that:
- *   • Admins always see every brand.
+ *   • Admins and internal inventory staff always see every brand.
  *   • MSIL customers never carry IMADA, regardless of the flag — this mirrors
  *     the rule already applied in the inventory and dashboard endpoints.
  *
@@ -21,14 +22,25 @@ const MODEL_BY_BRAND = {
   imada: ProductIMADA,
 };
 
-const isAdmin = (user) => user?.role === 'Admin';
-const isMsilCustomer = (user) => !isAdmin(user) && user?.customerCategory === 'MSIL';
+/**
+ * Roles that act on the business's own stock rather than their own orders, so
+ * the per-user brandAccess flags — which exist to scope CUSTOMERS — do not
+ * apply to them.
+ *
+ * Sales is deliberately NOT in this list. Its brand visibility is already
+ * decided by the sales-desk rules, and widening it here would silently change
+ * what existing Sales users see on the dashboard and in their booking lists.
+ */
+const seesAllBrands = (user) =>
+  user?.role === 'Admin' || INVENTORY_ROLES.includes(user?.role);
+
+const isMsilCustomer = (user) => !seesAllBrands(user) && user?.customerCategory === 'MSIL';
 
 /**
  * Canonical brand names this user may see, e.g. ['Koken', 'BIX'].
  */
 export const allowedBrands = (user) => {
-  if (isAdmin(user)) return [...ALL_BRANDS];
+  if (seesAllBrands(user)) return [...ALL_BRANDS];
   const out = [];
   if (user?.brandAccess?.koken) out.push('Koken');
   if (user?.brandAccess?.bix) out.push('BIX');
@@ -62,6 +74,6 @@ export const allowedBrandModels = (user) =>
  * matches nothing rather than silently matching everything.
  */
 export const brandFilter = (user) =>
-  isAdmin(user) ? {} : { brand: { $in: allowedBrands(user) } };
+  seesAllBrands(user) ? {} : { brand: { $in: allowedBrands(user) } };
 
 export default { ALL_BRANDS, allowedBrands, canAccessBrand, allowedBrandModels, brandFilter };

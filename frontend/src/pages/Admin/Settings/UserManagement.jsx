@@ -383,6 +383,12 @@ export const UserManagement = () => {
               <select value={form.role} onChange={setField('role')} className={inputCls}>
                 <option value="Customer">Customer</option>
                 <option value="Sales">Sales User</option>
+                {/* Inventory roles work the business's own stock rather than
+                    their own orders, so they see every brand and none of the
+                    ordering screens. */}
+                <option value="Inventory Manager">Inventory Manager</option>
+                <option value="Warehouse User">Warehouse User</option>
+                <option value="Management">Management</option>
                 <option value="Admin">Admin</option>
               </select>
             </Field>

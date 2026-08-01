@@ -47,7 +47,11 @@ const BOOKING_AUDIT_ACTIONS = [
   'Final Reminder Sent',
 ];
 
-const PRODUCT_COLLECTIONS = ['products_koken', 'products_bix', 'products_imada'];
+// The unified `products` collection replaced the three per-brand ones in IMS
+// Module M1. The old names are kept so this script still works against a
+// database that has not been migrated yet; only collections that actually exist
+// are touched, so listing both shapes is safe either way.
+const PRODUCT_COLLECTIONS = ['products', 'products_koken', 'products_bix', 'products_imada'];
 
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
