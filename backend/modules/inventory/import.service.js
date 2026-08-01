@@ -14,11 +14,12 @@ import { nextSequence } from '../../models/Counter.js';
 import { IMPORT_TEMPLATES, matchHeaders, coerce } from './import.templates.js';
 import { readerFor, MAX_ROWS } from './import.parser.js';
 import { postBatch } from './ledger.service.js';
-import { applyMovements } from './balance.service.js';
+import { applyMovements, syncLegacyStock } from './balance.service.js';
 import { recomputeHealthForSkus } from './health.service.js';
 import { resolveConfig } from './config.service.js';
 import { DEFAULT_REASON_CODE } from './adjustment.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
+import { emitStockUpdated } from '../../utils/stockEvents.js';
 import { allowedBrands, ALL_BRANDS } from '../../utils/brandAccess.js';
 import { normaliseSeason, normaliseStatus } from '../../utils/productFields.js';
 
@@ -743,7 +744,10 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
 
   const posted = await StockMovement.find({ batchId: result.batch.batchId }).lean();
   if (!result.replayed && posted.length) await applyMovements(posted);
-  await recomputeHealthForSkus([...new Set(wanted.map((r) => r.data.skuCode))]);
+  const touched = [...new Set(wanted.map((r) => r.data.skuCode))];
+  await recomputeHealthForSkus(touched);
+  await syncLegacyStock(touched);
+  emitStockUpdated(req, touched, { source: 'import', jobId: job.jobId });
 
   return {
     successes, failures,
@@ -804,6 +808,8 @@ const processMovements = (movementType) => async ({ rows, job, chunkIndex, actor
   if (!result.replayed && posted.length) await applyMovements(posted);
   const affected = [...new Set(rows.map((r) => r.data.skuCode))];
   await recomputeHealthForSkus(affected);
+  await syncLegacyStock(affected);
+  emitStockUpdated(req, affected, { source: 'import', jobId: job.jobId });
 
   const txnBySku = new Map(posted.map((m) => [`${m.skuCode}::${m.brand}`, m.transactionId]));
   for (const row of rows) {

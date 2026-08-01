@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '../../components/ui/Card';
 import { Boxes, AlertTriangle, Search, Download, Loader2 } from 'lucide-react';
 import { useProductStore } from '../../store/productStore';
+import { onStockUpdated } from '../../services/socketService';
 import { useUserStore } from '../../store/userStore';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
 import { allowedBrands } from '../../utils/brandAccess';
@@ -38,15 +39,26 @@ export const Inventory = () => {
 
   // Search, sort and paging all run server-side, so this covers the whole
   // catalogue instead of whatever subset was downloaded.
+  // Held in a ref so the socket listener below can re-run the CURRENT query
+  // without being torn down and re-subscribed every time a filter changes.
+  const load = useRef(() => {});
+  load.current = () => fetchInventory({
+    search: debouncedSearch,
+    sort: sortBy,
+    page,
+    limit: PAGE_SIZE,
+    brand: selectedBrand,
+  });
+
   useEffect(() => {
-    fetchInventory({
-      search: debouncedSearch,
-      sort: sortBy,
-      page,
-      limit: PAGE_SIZE,
-      brand: selectedBrand
-    });
+    load.current();
   }, [fetchInventory, debouncedSearch, sortBy, page, selectedBrand]);
+
+  // Stock arriving anywhere — an inward import, an adjustment, a posted count —
+  // refreshes this list. Without it a customer kept looking at the figures as
+  // they were when the page opened, and inward stock stayed invisible until
+  // they happened to reload.
+  useEffect(() => onStockUpdated(() => load.current()), []);
 
   const { items, total, pages, catalogueTotal, lowStockCount } = inventory;
 

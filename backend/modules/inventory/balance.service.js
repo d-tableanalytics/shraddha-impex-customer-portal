@@ -411,3 +411,80 @@ export default {
   getAvailability,
   shapeBalance,
 };
+
+/**
+ * Push the ledger's position back onto the product's legacy stock fields.
+ *
+ * WHY THIS EXISTS. Two things read stock and they read different places. The
+ * IMS screens read this projection; the customer portal (`/products`) and the
+ * booking guard in `utils/stockLedger.js` still read the product's own
+ * `availableForSale` / `totalAvailableQuantity`. Stock arriving through the
+ * ledger — an adjustment, an import, a counted variance — updated the
+ * projection and nothing else, so inward stock was visible to Admin and
+ * invisible to customers, and could not be booked even once they saw it.
+ *
+ * The projection stays the source of truth. This mirrors it outward so the
+ * older readers agree, holding the invariant those fields carry:
+ *
+ *     availableForSale + bookedQuantity === totalAvailableQuantity
+ *
+ * NOT CALLED FROM THE BOOKING FLOW. Confirming a booking decrements
+ * `availableForSale` itself, atomically, and that atomicity is what stops an
+ * oversell — mirroring over it from a projection read a moment earlier would
+ * reintroduce the race it exists to prevent.
+ */
+export const syncLegacyStock = async (skuCodes) => {
+  const skus = [...new Set((skuCodes || []).filter(Boolean))];
+  if (skus.length === 0) return { synced: 0 };
+
+  const totals = await StockBalance.aggregate([
+    { $match: { skuCode: { $in: skus } } },
+    {
+      $group: {
+        _id: { skuCode: '$skuCode', brand: '$brand' },
+        onHand: { $sum: '$onHand' },
+        reserved: { $sum: '$reserved' },
+        incoming: { $sum: '$incoming' },
+      },
+    },
+  ]);
+
+  const ops = totals.map((t) => ({
+    updateOne: {
+      filter: { skuCode: t._id.skuCode },
+      update: {
+        $set: {
+          totalAvailableQuantity: t.onHand,
+          bookedQuantity: t.reserved,
+          availableForSale: t.onHand - t.reserved,
+          inTransitQty: t.incoming,
+        },
+      },
+    },
+  }));
+
+  // A SKU the ledger has no position for holds nothing, and must be written as
+  // zero rather than skipped. Skipping leaves whatever the legacy field last
+  // said — so stock cleared down to nothing would keep showing its old figure
+  // to customers, which is the exact failure this function exists to end.
+  const withBalance = new Set(totals.map((t) => t._id.skuCode));
+  for (const sku of skus) {
+    if (withBalance.has(sku)) continue;
+    ops.push({
+      updateOne: {
+        filter: { skuCode: sku },
+        update: {
+          $set: {
+            totalAvailableQuantity: 0, bookedQuantity: 0, availableForSale: 0, inTransitQty: 0,
+          },
+        },
+      },
+    });
+  }
+  if (ops.length === 0) return { synced: 0 };
+
+  // Through the raw driver: `brand` is the schema's discriminatorKey, and a
+  // bulkWrite cast on the base model strips it out of the filter.
+  const res = await Product.collection.bulkWrite(ops, { ordered: false });
+  return { synced: res.modifiedCount ?? 0 };
+};

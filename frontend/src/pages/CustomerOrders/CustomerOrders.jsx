@@ -2,9 +2,10 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { useCartStore } from "../../store/cartStore";
+import { ReviewIndentModal } from "../../components/booking/ReviewIndentModal";
+import { computeReview } from "../../utils/bookingReview";
 import { useUserStore } from "../../store/userStore";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
-import { usePagination } from "../../hooks/usePagination";
 import toast from "react-hot-toast";
 
 import { OrderTable } from "../../components/tables/OrderTable";
@@ -13,8 +14,6 @@ import { Modal } from "../../components/ui/Modal";
 import { Button } from "../../components/ui/Button";
 import { Pagination } from "../../components/ui/Pagination";
 import { Package, Hash, Tag, MessageSquare, Receipt, ArrowRight, AlertTriangle, Clock, PackageCheck } from "lucide-react";
-
-const REVIEW_PAGE_SIZE = 10;
 
 const ValidityNotice = () => (
   <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
@@ -147,32 +146,8 @@ export const CustomerOrders = () => {
     }
   };
 
-  // Split each cart line into the quantity that can be booked from stock now
-  // and the shortfall that becomes a Indent at confirmation.
-  const computeReview = (items) => {
-    const available = [];
-    const pending = [];
-    items.forEach((item) => {
-      const avl = item.product.availableStock ?? 0;
-      const req = item.orderQuantity;
-      const bookNow = Math.min(req, avl);
-      const short = Math.max(0, req - avl);
-      if (bookNow > 0) {
-        available.push({ code: item.product.code, requested: req, bookable: bookNow });
-      }
-      if (short > 0) {
-        pending.push({ code: item.product.code, requested: req, available: avl, pending: short });
-      }
-    });
-    return { available, pending };
-  };
-
   const review = computeReview(cartItems);
   const indentLines = review.pending;
-
-  // Review Indent popup can list a whole bulk upload — page both breakdowns.
-  const availablePaging = usePagination(review.available, REVIEW_PAGE_SIZE);
-  const indentPaging = usePagination(indentLines, REVIEW_PAGE_SIZE);
 
   // "Raise Indent" from a Selection List row: opens the Review Indent popup so
   // the user can confirm the booking (the shortfall becomes a Indent).
@@ -456,143 +431,18 @@ export const CustomerOrders = () => {
         </div>
       </div>
 
-      {/* REVIEW INDENT POPUP — available-for-booking vs pending-indent items */}
-      <Modal
-        isOpen={showIndentConfirm}
-        onClose={() => setShowIndentConfirm(false)}
-        title="Review Indent"
-        size="lg"
-      >
-        <div className="flex flex-col gap-5">
-          <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-            <AlertTriangle size={20} className="text-amber-500 shrink-0 mt-0.5" />
-            <p className="text-sm text-slate-700 leading-relaxed">
-              Some items exceed the available quantity. Review what will be booked now versus
-              what becomes a <span className="font-bold">Indent</span> (fulfilled when
-              fresh stock arrives), then continue.
-            </p>
-          </div>
-
-          {/* Available for booking */}
-          <div>
-            <h4 className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <PackageCheck size={14} /> Available for booking ({review.available.length})
-            </h4>
-            {review.available.length === 0 ? (
-              <p className="text-xs text-slate-400 italic px-1">No stock available for these items right now.</p>
-            ) : (
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    <tr>
-                      <th className="px-4 py-2.5">SKU Code</th>
-                      <th className="px-4 py-2.5 text-center">Requested</th>
-                      <th className="px-4 py-2.5 text-center">Booking Now</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {availablePaging.pageItems.map((l) => (
-                      <tr key={l.code}>
-                        <td className="px-4 py-2.5 font-bold text-slate-800">{l.code}</td>
-                        <td className="px-4 py-2.5 text-center text-slate-600">{l.requested}</td>
-                        <td className="px-4 py-2.5 text-center font-bold text-emerald-600">{l.bookable}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="px-3 py-2.5 border-t border-slate-200 bg-slate-50/50">
-                  <Pagination
-                    page={availablePaging.page}
-                    pageSize={REVIEW_PAGE_SIZE}
-                    totalItems={availablePaging.total}
-                    onPageChange={availablePaging.setPage}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* indent */}
-          <div>
-            <h4 className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <AlertTriangle size={14} /> Converts to Indent ({review.pending.length})
-            </h4>
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  <tr>
-                    <th className="px-4 py-2.5">SKU Code</th>
-                    <th className="px-4 py-2.5 text-center">Requested</th>
-                    <th className="px-4 py-2.5 text-center">AVL</th>
-                    <th className="px-4 py-2.5 text-center">Indent</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {indentPaging.pageItems.map((l) => (
-                    <tr key={l.code}>
-                      <td className="px-4 py-2.5 font-bold text-slate-800">{l.code}</td>
-                      <td className="px-4 py-2.5 text-center text-slate-600">{l.requested}</td>
-                      <td className="px-4 py-2.5 text-center text-slate-600">{l.available}</td>
-                      <td className="px-4 py-2.5 text-center font-bold text-amber-600">{l.pending}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="px-3 py-2.5 border-t border-slate-200 bg-slate-50/50">
-                <Pagination
-                  page={indentPaging.page}
-                  pageSize={REVIEW_PAGE_SIZE}
-                  totalItems={indentPaging.total}
-                  onPageChange={indentPaging.setPage}
-                />
-              </div>
-            </div>
-          </div>
-
-          <ValidityNotice />
-
-          <div className="flex items-center justify-between gap-3 mt-2">
-            <p className="text-[11px] text-slate-500 font-medium">
-              Confirming raises {review.pending.length} indent{review.pending.length === 1 ? "" : "s"} in one step.
-            </p>
-            <div className="flex gap-3">
-              <Button variant="secondary" onClick={() => setShowIndentConfirm(false)} disabled={loading}>
-                Cancel
-              </Button>
-              <Button variant="primary" onClick={runConfirmBooking} disabled={loading}>
-                <AlertTriangle size={16} className="mr-2" />
-                Raise All Indents & Confirm
-              </Button>
-            </div>
-          </div>
-        </div>
-      </Modal>
-
-      {/* PLAIN BOOKING CONFIRMATION POPUP — shown when there is no indent */}
-      <Modal
-        isOpen={showBookingConfirm}
-        onClose={() => setShowBookingConfirm(false)}
-        title="Confirm Booking"
-        size="sm"
-      >
-        <div className="flex flex-col gap-4">
-          <p className="text-sm text-slate-700 leading-relaxed">
-            You're about to confirm {cartItems.length} item{cartItems.length === 1 ? "" : "s"}
-            {" "}({getTotalQuantity()} units) from your Selection List.
-          </p>
-
-          <ValidityNotice />
-
-          <div className="flex justify-end gap-3 mt-2">
-            <Button variant="secondary" onClick={() => setShowBookingConfirm(false)} disabled={loading}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={runConfirmBooking} disabled={loading}>
-              Confirm Booking
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      {/* Review Indent / Confirm Booking — the shared popup. It decides which
+          of the two it is from whether anything is short, so this screen and
+          Bulk Upload cannot drift apart. */}
+      <ReviewIndentModal
+        isOpen={showIndentConfirm || showBookingConfirm}
+        onClose={() => { setShowIndentConfirm(false); setShowBookingConfirm(false); }}
+        onConfirm={runConfirmBooking}
+        review={review}
+        loading={loading}
+        itemCount={cartItems.length}
+        unitCount={getTotalQuantity()}
+      />
 
       {/* BOOKING CONFIRMATION SUMMARY POPUP */}
       <Modal

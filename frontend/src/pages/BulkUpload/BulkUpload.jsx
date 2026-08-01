@@ -5,7 +5,7 @@ import { BulkUploadCard } from "../../components/upload/BulkUploadCard";
 import { ExcelPreviewTable } from "../../components/tables/ExcelPreviewTable";
 import { ImportSummaryCard } from "../../components/cards/ImportSummaryCard";
 import { ErrorPanel } from "../../components/cards/ErrorPanel";
-import { ERPButton, ConfirmationDialog } from "../../components/ui";
+import { ERPButton } from "../../components/ui";
 import { useBulkImportStore } from "../../store/bulkImportStore";
 import { useCartStore } from "../../store/cartStore";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
@@ -17,7 +17,9 @@ import {
 import { api } from "../../services/api";
 import { reservationsApi } from "../../services/reservations";
 import toast from "react-hot-toast";
-import { Play, Download, AlertTriangle, Check, RefreshCw } from "lucide-react";
+import { Download, AlertTriangle, Check, RefreshCw } from "lucide-react";
+import { ReviewIndentModal } from "../../components/booking/ReviewIndentModal";
+import { computeReview, linesFromBulkRows } from "../../utils/bookingReview";
 
 export const BulkUpload = () => {
   const navigate = useNavigate();
@@ -27,9 +29,8 @@ export const BulkUpload = () => {
   // Non-MSIL customers upload by SKU Code alone.
   const showMsilCode = useShowMsilCode();
   const [isParsing, setIsParsing] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
+  const [showReview, setShowReview] = useState(false);
   const [excludedRowIds, setExcludedRowIds] = useState([]);
 
   // Clearing the session also clears row exclusions.
@@ -88,14 +89,22 @@ export const BulkUpload = () => {
   // Rows edited after upload lose their server validation ('pending' status)
   // until they go through validate-bulk again.
   const hasPendingRows = rows.some((r) => r.status === "pending");
-  const warningCount = rows.filter((r) => r.status === "warning").length;
   const selectedCount = rows.filter(
     (r) => (r.status === "valid" || r.status === "warning") && selectedRowIds.includes(r.id),
   ).length;
   const canConfirm =
-    summary.invalidRows === 0 && selectedCount > 0 && !hasPendingRows && !isConfirming && !isImporting;
+    summary.invalidRows === 0 && selectedCount > 0 && !hasPendingRows && !isConfirming;
   // A "clean" import (no warnings) gets the highlighted primary confirm.
-  const isClean = warningCount === 0;
+
+  // The rows that will actually be booked, in the shape the shared review
+  // popup expects — so the bulk shortfall is worked out by the same code as an
+  // individual booking's, against the same stock figure.
+  const reviewLines = linesFromBulkRows(
+    rows.filter((r) => (r.status === "valid" || r.status === "warning")
+      && !excludedRowIds.includes(r.id)),
+  );
+  const bulkReview = computeReview(reviewLines);
+
 
   const handleRevalidate = async () => {
     setIsParsing(true);
@@ -133,39 +142,8 @@ export const BulkUpload = () => {
     return { attempted: validRows.length, failures };
   };
 
-  const handleImportToCart = async () => {
-    // Guard against a second submit: the import runs row-by-row and a repeat
-    // click would reserve every row twice.
-    if (isImporting) return;
-    setIsImporting(true);
-    try {
-      const { attempted, failures } = await importValidRows();
-      const successCount = attempted - failures.length;
-
-      if (failures.length > 0) {
-        toast.error(
-          `${successCount} of ${attempted} items imported. Failed: ${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "…" : ""}`,
-          { duration: 8000 },
-        );
-        setShowConfirm(false);
-        return;
-      }
-
-      toast.success(`Successfully imported ${successCount} items to selection list`);
-      reset();
-      setShowConfirm(false);
-      navigate("/orders/new");
-    } catch (err) {
-      toast.error(
-        err.response?.data?.message || err.message || "Failed to import rows to the selection list.",
-      );
-      setShowConfirm(false);
-    } finally {
-      setIsImporting(false);
-    }
-  };
-
   const handleDirectConfirm = async () => {
+    setShowReview(false);
     setIsConfirming(true);
     try {
       // 1. Create reservations for every valid row.
@@ -279,41 +257,18 @@ export const BulkUpload = () => {
                     Re-validate Edited Rows
                   </ERPButton>
                 )}
-                {/* When any row is a warning, steer the user to "Add to Selection
-                    List" (highlighted) so they can review before booking. When
-                    every row is valid, highlight "Confirm Booking" instead. */}
-                <ERPButton
-                  variant="outline"
-                  size="lg"
-                  disabled={!canConfirm}
-                  onClick={() => setShowConfirm(true)}
-                  className={`w-full md:w-auto px-6 ${
-                    !isClean
-                      ? "bg-primary-600 hover:bg-primary-700 text-white border-primary-600 ring-2 ring-primary-300"
-                      : "border-slate-300 text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  <Play size={16} className="mr-2" />
-                  Add to Selection List ({selectedCount})
-                </ERPButton>
-
+                {/* One button, and it opens the same review popup the
+                    individual flow opens — the shortfall is reviewed before
+                    anything is reserved, not announced afterwards. */}
                 <ERPButton
                   variant="success"
                   size="lg"
                   disabled={!canConfirm}
-                  onClick={handleDirectConfirm}
-                  className={`w-full md:w-auto px-8 shadow-md ${
-                    isClean
-                      ? "bg-green-600 hover:bg-green-700 ring-2 ring-green-300"
-                      : "bg-green-600/70 hover:bg-green-700"
-                  }`}
+                  onClick={() => setShowReview(true)}
+                  className="w-full md:w-auto px-8 shadow-md bg-green-600 hover:bg-green-700 ring-2 ring-green-300"
                 >
                   <Check size={18} className="mr-2 text-white" />
-                  {isConfirming
-                    ? "Confirming..."
-                    : isClean
-                    ? "Confirm Booking Directly"
-                    : `Confirm with ${warningCount} warning${warningCount === 1 ? "" : "s"}`}
+                  {isConfirming ? "Confirming..." : `Confirm Booking (${selectedCount})`}
                 </ERPButton>
               </div>
             </>
@@ -325,15 +280,17 @@ export const BulkUpload = () => {
         </div>
       </div>
 
-      <ConfirmationDialog
-        isOpen={showConfirm}
-        onClose={() => setShowConfirm(false)}
-        onConfirm={handleImportToCart}
-        title="Confirm Bulk Upload"
-        description={`You are about to import ${selectedCount} selected row${selectedCount === 1 ? "" : "s"} to the Selection List. Existing manual entries will not be overwritten, duplicate products will be merged.`}
-        confirmText={isImporting ? "Uploading" : "Confirm upload"}
-        loading={isImporting}
+      {/* The individual flow's popup, driven by the uploaded rows. */}
+      <ReviewIndentModal
+        isOpen={showReview}
+        onClose={() => setShowReview(false)}
+        onConfirm={handleDirectConfirm}
+        review={bulkReview}
+        loading={isConfirming}
+        itemCount={reviewLines.length}
+        unitCount={reviewLines.reduce((n, l) => n + l.orderQuantity, 0)}
       />
+
     </div>
   );
 };

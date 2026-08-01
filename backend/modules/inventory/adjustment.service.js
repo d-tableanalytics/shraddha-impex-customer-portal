@@ -31,7 +31,7 @@ import StockHealth from '../../models/StockHealth.js';
 import StockMovement from '../../models/StockMovement.js';
 
 import { postBatch } from './ledger.service.js';
-import { applyMovements, shapeBalance } from './balance.service.js';
+import { applyMovements, shapeBalance, syncLegacyStock } from './balance.service.js';
 import { recomputeHealthForSkus } from './health.service.js';
 import { resolveConfig } from './config.service.js';
 
@@ -236,6 +236,9 @@ export const adjustStock = async ({
     await applyMovements(posted);
   }
   await recomputeHealthForSkus([sku], { brand });
+  // Mirror outward, so the customer portal and the booking guard see this
+  // stock too rather than only the IMS screens.
+  await syncLegacyStock([sku]);
 
   // ── Report the new position, read back rather than assumed ───────────────
   const updated = await StockBalance.findOne({ skuCode: sku, brand, locationCode: location.code }).lean();
