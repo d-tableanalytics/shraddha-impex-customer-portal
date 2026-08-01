@@ -676,20 +676,30 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
 };
 
 /**
- * Turn a sheet's absolute Quantity into ledger movements.
+ * Post the sheet's Quantity as stock RECEIVED.
  *
- * The uploader states the figure stock SHOULD be. Writing that into the balance
- * would break the rule the whole design rests on, so each row is turned into
- * the DIFFERENCE against the current position and posted as an ADJUSTMENT.
+ * The figure is an amount COMING IN, not the level stock should end at: a SKU
+ * holding 444 with a sheet saying 10 finishes at 454. Each row therefore posts
+ * its quantity directly as a RECEIPT — no difference is calculated, because the
+ * uploader is describing an intake rather than correcting a count.
  *
- * The current figure is read HERE, at processing time, not when the file was
- * staged — a file validated an hour ago against a SKU that has since been sold
- * from must adjust against the figure that is true now.
+ * The consequence is worth stating plainly: this import is CUMULATIVE. Running
+ * the same file twice adds the quantities twice. The duplicate-file check
+ * catches a byte-identical re-upload, but a sheet re-saved in Excel is a
+ * different file, so it will not catch every case.
+ *
+ * To correct a figure rather than add to it, use Update stock on the Inventory
+ * Master row, which sets the level and posts the difference.
  */
 const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
   const successes = [];
   const failures = [];
-  const wanted = rows.filter((r) => r.data.quantity !== null && r.data.quantity !== undefined);
+  // A blank cell means "leave stock alone"; a zero means "nothing received".
+  // Neither is a movement.
+  const wanted = rows.filter((r) => {
+    const q = r.data.quantity;
+    return q !== null && q !== undefined && q !== 0;
+  });
   if (wanted.length === 0) return { successes, failures, refs: [] };
 
   const balances = await StockBalance.find({
@@ -699,42 +709,20 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
   }).lean();
   const byKey = new Map(balances.map((b) => [`${b.skuCode}::${b.brand}::${b.locationCode}`, b]));
 
-  const lines = [];
-  const lineRows = [];
-  for (const row of wanted) {
+  const lines = wanted.map((row) => {
     const d = row.data;
-    const cur = byKey.get(`${d.skuCode}::${d.brand}::${d.locationCode}`);
-    const before = cur?.onHand ?? 0;
-    const reserved = cur?.reserved ?? 0;
-    const delta = d.quantity - before;
-
-    // A row stating the figure stock is already at is not an error — on a full
-    // sheet most rows will say exactly that.
-    if (delta === 0) continue;
-
-    if (d.quantity < reserved) {
-      failures.push({
-        rowNumber: row.rowNumber,
-        reason: `${reserved} unit${reserved === 1 ? ' is' : 's are'} reserved against live bookings, so stock cannot be set to ${d.quantity}.`,
-      });
-      continue;
-    }
-
-    lines.push({
-      movementType: 'ADJUSTMENT',
+    const before = byKey.get(`${d.skuCode}::${d.brand}::${d.locationCode}`)?.onHand ?? 0;
+    return {
+      movementType: 'RECEIPT',
       skuCode: d.skuCode,
       brand: d.brand,
       locationCode: d.locationCode,
-      quantity: delta,
+      quantity: d.quantity,
       beforeQuantity: before,
-      afterQuantity: d.quantity,
-      reasonCode: DEFAULT_REASON_CODE,
-      note: `Set from ${job.fileName}`,
-    });
-    lineRows.push(row);
-  }
-
-  if (lines.length === 0) return { successes, failures, refs: [] };
+      afterQuantity: before + d.quantity,
+      note: `Received via ${job.fileName}`,
+    };
+  });
 
   let result;
   try {
@@ -749,13 +737,13 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
     }, req);
   } catch (error) {
     if (isRetryable(error)) throw error;
-    for (const row of lineRows) failures.push({ rowNumber: row.rowNumber, reason: error.message });
+    for (const row of wanted) failures.push({ rowNumber: row.rowNumber, reason: error.message });
     return { successes, failures, refs: [] };
   }
 
   const posted = await StockMovement.find({ batchId: result.batch.batchId }).lean();
   if (!result.replayed && posted.length) await applyMovements(posted);
-  await recomputeHealthForSkus([...new Set(lineRows.map((r) => r.data.skuCode))]);
+  await recomputeHealthForSkus([...new Set(wanted.map((r) => r.data.skuCode))]);
 
   return {
     successes, failures,

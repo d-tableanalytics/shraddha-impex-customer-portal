@@ -105,7 +105,7 @@ const NOTE = { header: 'Note', field: 'note', type: 'string', required: false };
 export const IMPORT_TEMPLATES = {
   'inventory-master': {
     label: 'Inventory Master',
-    description: 'Update SKUs by code. Fill Quantity to set stock; leave it blank to change details only.',
+    description: 'Update SKUs by code. Quantity is stock RECEIVED and is added to what is already there; leave it blank to change details only.',
     permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
     keyFields: ['skuCode'],
     requireExistingSku: true,
@@ -123,7 +123,7 @@ export const IMPORT_TEMPLATES = {
       { header: 'MSIL Code', field: 'msilCode', type: 'string', required: false, note: 'Optional. Checked against the catalogue if given.' },
       {
         header: 'Quantity', field: 'quantity', type: 'int', required: false, min: 0,
-        note: 'The figure stock should END at. Leave blank to leave stock alone.',
+        note: 'Stock RECEIVED — added to the current figure. Blank leaves stock alone.',
       },
     ],
     sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 250 },
@@ -171,10 +171,10 @@ export const IMPORT_TEMPLATES = {
     resolveBrandFromSku: true,
     verifyMsil: true,
     // An opening balance is the FIRST position for a SKU, so a row for one that
-    // already holds stock is refused rather than added on top. Without this the
-    // sheet reads as "set stock to 98" and silently means "add 98" — and since
-    // this template and Inventory Master now have the identical SKU / MSIL /
-    // Quantity shape, the wrong one is easy to reach for.
+    // already holds stock is refused. Both this sheet and Inventory Master add
+    // their quantity, and both carry the identical SKU / MSIL / Quantity shape —
+    // so without this guard a go-live file replayed by mistake would quietly
+    // inflate stock that already has a history.
     refuseIfStocked: true,
     // Column order is A / B / C exactly as laid out below.
     columns: [
