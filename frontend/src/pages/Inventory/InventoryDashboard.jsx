@@ -350,7 +350,7 @@ export const InventoryDashboard = () => {
                         <th className="py-2 pr-3 font-bold text-slate-500 uppercase text-[10px]">SKU</th>
                         <th className="py-2 pr-3 font-bold text-slate-500 uppercase text-[10px] text-right">On Hand</th>
                         <th className="py-2 pr-3 font-bold text-slate-500 uppercase text-[10px] text-right">Target</th>
-                        <th className="py-2 font-bold text-slate-500 uppercase text-[10px] text-right">Cover</th>
+                        <th className="py-2 font-bold text-slate-500 uppercase text-[10px] text-right">Avail %</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -389,7 +389,7 @@ export const InventoryDashboard = () => {
                         <th className="py-2 pr-3 font-bold text-slate-500 uppercase text-[10px]">SKU</th>
                         <th className="py-2 pr-3 font-bold text-slate-500 uppercase text-[10px] text-right">On Hand</th>
                         <th className="py-2 pr-3 font-bold text-slate-500 uppercase text-[10px] text-right">Target</th>
-                        <th className="py-2 font-bold text-slate-500 uppercase text-[10px] text-right">Cover</th>
+                        <th className="py-2 font-bold text-slate-500 uppercase text-[10px] text-right">Avail %</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">

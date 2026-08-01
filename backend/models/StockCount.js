@@ -100,11 +100,30 @@ stockCountSchema.index({ locationCode: 1, status: 1 });
 stockCountSchema.index({ brand: 1, createdAt: -1 });
 
 /**
+ * Remember the status the document was LOADED with.
+ *
+ * The immutability guard below has to tell "this session was already posted"
+ * apart from "this save is what posts it", and `this.status` cannot answer that
+ * — by the time `save()` runs it already holds the new value.
+ */
+stockCountSchema.post('init', function rememberStatus() {
+  this.$locals.priorStatus = this.status;
+});
+
+/**
  * A posted count is history. The status guard in the service prevents the
  * transition; this blocks any other write path from editing a posted session.
+ *
+ * Keyed on the PRIOR status, not the current one. Testing `this.status ===
+ * 'Posted'` blocked the very save that performs the Approved -> Posted
+ * transition: the ledger movement had already been written and the stock had
+ * already moved, then this threw, so the session stayed "Approved" with
+ * postedAt, adjustmentId and ledgerBatchId all null — a count that had posted
+ * but did not know it, and an HTTP 500 for an operation that had in fact
+ * succeeded.
  */
 stockCountSchema.pre('save', function guard(next) {
-  if (!this.isNew && this.status === 'Posted' && this.isModified() && !this.$locals.allowPostedWrite) {
+  if (!this.isNew && this.$locals.priorStatus === 'Posted' && !this.$locals.allowPostedWrite) {
     const changed = this.modifiedPaths().filter((p) => p !== 'updatedAt');
     if (changed.length) {
       return next(new Error(
