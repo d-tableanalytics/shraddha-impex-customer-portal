@@ -38,7 +38,9 @@ const BAND_COLOURS = {
   Critical: '#ef4444',
   Low: '#f59e0b',
   Healthy: '#22c55e',
-  Overstock: '#3b82f6',
+  // The workbook's own 'Greater then 100%' fill, so the ERP and the sheet
+  // read the same. It was blue here, which said nothing about the source.
+  Overstock: '#c48aa6',
   Unknown: '#cbd5e1',
 };
 

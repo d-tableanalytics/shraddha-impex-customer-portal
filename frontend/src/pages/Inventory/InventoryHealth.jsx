@@ -28,17 +28,21 @@ import { formatAvailablePercent, exactPercent, bandLabel } from '../../utils/inv
  */
 
 /**
- * Band presentation. Overstock is blue rather than the workbook's mauve: it
- * needs attention but is not urgent, and mauve beside red reads as a second
- * severity level. Unknown is deliberately neutral — grey, never alarming red —
- * because a SKU with missing inputs is a data gap, not a shortage.
+ * Band presentation, matching the source workbook's own legend fills: red
+ * below 33%, yellow to 66%, green to 100%, and its dusty pink above that.
+ * Overstock was blue here, which told the reader nothing about where the band
+ * came from. The hues are toned from the workbook's pure FF0000/FFFF00/00FF00,
+ * which are unreadable behind text at this size, but the mapping is identical.
+ *
+ * No Planning Data is deliberately neutral grey, never alarming red — a SKU
+ * with missing inputs is a data gap, not a shortage.
  */
 const BANDS = {
   'Out of Stock': { dot: 'bg-error-600', chip: 'bg-error-100 text-error-800', mark: '■' },
   Critical: { dot: 'bg-error-500', chip: 'bg-error-50 text-error-700', mark: '▲' },
   Low: { dot: 'bg-warning-500', chip: 'bg-warning-50 text-warning-700', mark: '◆' },
   Healthy: { dot: 'bg-success-500', chip: 'bg-success-50 text-success-700', mark: '●' },
-  Overstock: { dot: 'bg-primary-500', chip: 'bg-primary-50 text-primary-700', mark: '◤' },
+  Overstock: { dot: 'bg-[#c48aa6]', chip: 'bg-[#f6e9ef] text-[#8a4d68]', mark: '◤' },
   Unknown: { dot: 'bg-slate-300', chip: 'bg-slate-100 text-slate-600', mark: '○' },
 };
 

@@ -36,7 +36,7 @@ const REPORTS = [
 
 const BAND_DOT = {
   'Out of Stock': 'bg-error-600', Critical: 'bg-error-500', Low: 'bg-warning-500',
-  Healthy: 'bg-success-500', Overstock: 'bg-primary-500', Unknown: 'bg-slate-300',
+  Healthy: 'bg-success-500', Overstock: 'bg-[#c48aa6]', Unknown: 'bg-slate-300',
 };
 
 const REASON_LABELS = {

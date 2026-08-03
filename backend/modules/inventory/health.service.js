@@ -86,12 +86,28 @@ const consumptionForSeason = (planning) => {
  * operationally different from "very low" and the workbook gives it its own
  * higher-priority rule.
  */
+
+/**
+ * Tolerance on a threshold comparison.
+ *
+ * Consumption rates arrive from the workbook already truncated — 1/3 is stored
+ * as 0.3333333333 — so a Max Level that should be exactly 30 computes to
+ * 29.999999997. A SKU holding exactly 30 then lands at 100.00000001% and was
+ * classified Overstock: sitting precisely ON target, reported as above it.
+ *
+ * A hundred-millionth of a percent is never a real difference in stock, so a
+ * value within this distance of a threshold is treated as being on it. Applied
+ * to every band, not just the top one, so 33% and 66% behave the same way.
+ */
+const THRESHOLD_EPSILON = 1e-6;
+
 export const classify = ({ plannable, onHand, percent, thresholds }) => {
   if (!plannable) return HEALTH_BANDS.UNKNOWN;
   if (onHand === 0) return HEALTH_BANDS.OUT_OF_STOCK;
-  if (percent <= thresholds.critical) return HEALTH_BANDS.CRITICAL;
-  if (percent <= thresholds.low) return HEALTH_BANDS.LOW;
-  if (percent <= thresholds.healthy) return HEALTH_BANDS.HEALTHY;
+  const atMost = (limit) => percent <= limit + THRESHOLD_EPSILON;
+  if (atMost(thresholds.critical)) return HEALTH_BANDS.CRITICAL;
+  if (atMost(thresholds.low)) return HEALTH_BANDS.LOW;
+  if (atMost(thresholds.healthy)) return HEALTH_BANDS.HEALTHY;
   return HEALTH_BANDS.OVERSTOCK;
 };
 
