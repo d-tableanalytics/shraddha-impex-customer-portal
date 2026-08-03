@@ -249,7 +249,7 @@ export const InventoryMaster = () => {
   const { user } = useUserStore();
   const {
     items, total, catalogueTotal, loading, error,
-    categories, filters, setFilters, fetchItems, fetchCategories,
+    filters, setFilters, fetchItems,
     selected, detailLoading, openItem, closeItem, savePlanning,
   } = useInventoryStore();
 
@@ -292,7 +292,7 @@ export const InventoryMaster = () => {
     try {
       const { skuCodes } = await inventoryApi.listItemCodes({
         search: filters.search, brand: filters.brand,
-        category: filters.category, status: filters.status,
+        status: filters.status,
       });
       setPicked(new Set(skuCodes));
       if (skuCodes.length) toast.success(`${skuCodes.length.toLocaleString()} SKU(s) selected.`);
@@ -323,8 +323,7 @@ export const InventoryMaster = () => {
 
   useEffect(() => {
     fetchItems();
-    fetchCategories();
-  }, [fetchItems, fetchCategories]);
+  }, [fetchItems]);
 
   // A stock correction posted by anyone — this tab or another user's — refreshes
   // the list, so an on-hand figure on screen is never one someone has already
@@ -357,7 +356,7 @@ export const InventoryMaster = () => {
             exportType="inventory-master"
             filters={{
               search: filters.search, brand: filters.brand,
-              category: filters.category, status: filters.status,
+              status: filters.status,
             }}
             selected={[...picked]}
           />
@@ -434,15 +433,6 @@ export const InventoryMaster = () => {
                   {brands.map((b) => <option key={b} value={b}>{b}</option>)}
                 </select>
               )}
-
-              <select
-                value={filters.category}
-                onChange={(e) => setFilters({ category: e.target.value })}
-                className="px-3 py-1.5 border border-slate-300 rounded-md text-sm font-medium text-slate-700 bg-white outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer max-w-44"
-              >
-                <option value="">All Categories</option>
-                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
 
               <select
                 value={filters.status}

@@ -18,12 +18,10 @@ export const useInventoryStore = create((set, get) => ({
   loading: true,
   error: null,
 
-  categories: [],
 
   filters: {
     search: "",
     brand: "",
-    category: "",
     status: "",
     sort: "sku-asc",
     page: 1,
@@ -53,16 +51,7 @@ export const useInventoryStore = create((set, get) => ({
     }
   },
 
-  fetchCategories: async () => {
-    try {
-      set({ categories: await inventoryApi.getCategories() });
-    } catch {
-      // Non-blocking: the filter simply stays empty.
-      set({ categories: [] });
-    }
-  },
-
-  // ── Detail ──────────────────────────────────────────────────────────────
+// ── Detail ──────────────────────────────────────────────────────────────
   selected: null,
   detailLoading: false,
 

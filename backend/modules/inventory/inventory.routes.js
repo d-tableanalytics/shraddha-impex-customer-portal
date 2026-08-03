@@ -1,6 +1,7 @@
 import express from 'express';
 import { listItems, listItemCodes, getItem, updatePlanning, bulkUpdatePlanning, listCategories } from './inventory.controller.js';
 import { postAdjustment, getAdjustmentPreview, getReasonCodes } from './adjustment.controller.js';
+import { recalculate as recalculateConsumption } from './consumption.controller.js';
 import { listLocations, createLocation, updateLocation, setDefaultLocation } from './location.controller.js';
 import { getConfig, getConfigHistory, updateConfig } from './config.controller.js';
 import {
@@ -61,6 +62,10 @@ router.use(protect);
 // ── Inventory master ──────────────────────────────────────────────────────
 // Static paths first, or Express matches '/categories' as a :sku.
 router.get('/categories', authorize(PERMISSIONS.VIEW_INVENTORY), listCategories);
+
+// Daily average measured from sales. Rewrites a planning input across the
+// catalogue, so it is a system operation, not a master edit.
+router.post('/consumption/recalculate', authorize(PERMISSIONS.CONFIGURE_INVENTORY), recalculateConsumption);
 router.get('/items', authorize(PERMISSIONS.VIEW_INVENTORY), listItems);
 // Before '/items/:sku', or 'codes' is read as a SKU. Backs the table's
 // select-all, which needs every matching code rather than one page of them.
