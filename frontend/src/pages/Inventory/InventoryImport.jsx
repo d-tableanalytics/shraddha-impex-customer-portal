@@ -235,11 +235,21 @@ export const InventoryImport = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
                       {brands.length > 1 && (
                         <div className="flex flex-col gap-1.5">
-                          <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">Brand (optional)</label>
+                          <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">
+                            Brand {importType === 'inventory-master' ? '' : '(optional)'}
+                          </label>
                           <select className={inputCls} value={brand} onChange={(e) => setBrand(e.target.value)}>
                             <option value="">From the file</option>
                             {brands.map((b) => <option key={b} value={b}>{b}</option>)}
                           </select>
+                          {/* The master sheet has no Brand column, so a SKU it
+                              has to CREATE can only get its brand from here. */}
+                          {importType === 'inventory-master' && (
+                            <p className="text-[11px] text-slate-400 leading-relaxed">
+                              Needed only if the file contains SKUs that do not exist yet — they are
+                              created under this brand. Existing SKUs take their own.
+                            </p>
+                          )}
                         </div>
                       )}
 

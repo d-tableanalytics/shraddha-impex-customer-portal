@@ -105,15 +105,21 @@ const NOTE = { header: 'Note', field: 'note', type: 'string', required: false };
 export const IMPORT_TEMPLATES = {
   'inventory-master': {
     label: 'Inventory Master',
-    description: 'Update SKUs by code. Quantity is stock RECEIVED and is added to what is already there; leave it blank to change details only.',
+    description:
+      'SKU and quantity. A SKU already in the catalogue has its Quantity ADDED to stock; a SKU '
+      + 'that is new is created, and its Quantity becomes the opening stock.',
     permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
     keyFields: ['skuCode'],
-    requireExistingSku: true,
+    // Deliberately NOT requireExistingSku: creating what is missing is half of
+    // what this sheet is for.
     requireLocation: true,
-    // No Brand column: SKU codes are unique across the catalogue, so asking for
-    // the brand again is only a second chance to get it wrong.
+    // Brand is resolved from the SKU when the SKU is already known. A NEW SKU
+    // has nothing to resolve from, and this sheet has no Brand column — so it
+    // comes from the Brand chosen on the upload form, and validation says so
+    // when a new SKU turns up without one.
     resolveBrandFromSku: true,
-    // MSIL is never used to FIND the product — only to confirm the row is the
+    brandFromJobForNewSku: true,
+    // MSIL is never used to FIND the product, only to confirm the row is the
     // SKU the uploader meant. It catches the failure this sheet is most prone
     // to: a column pasted one row out, where every code still exists and every
     // quantity lands on the wrong part.
@@ -123,7 +129,7 @@ export const IMPORT_TEMPLATES = {
       { header: 'MSIL Code', field: 'msilCode', type: 'string', required: false, note: 'Optional. Checked against the catalogue if given.' },
       {
         header: 'Quantity', field: 'quantity', type: 'int', required: false, min: 0,
-        note: 'Stock RECEIVED — added to the current figure. Blank leaves stock alone.',
+        note: 'Added to stock for an existing SKU; recorded as opening stock for a new one. Blank leaves stock alone.',
       },
     ],
     sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 250 },
@@ -161,29 +167,6 @@ export const IMPORT_TEMPLATES = {
     },
   },
 
-  'opening-stock': {
-    label: 'Opening Stock',
-    description: 'Set opening balances. Posted as OPENING movements through the ledger.',
-    permissions: [PERMISSIONS.POST_STOCK_IN],
-    keyFields: ['skuCode'],
-    requireExistingSku: true,
-    requireLocation: true,
-    resolveBrandFromSku: true,
-    verifyMsil: true,
-    // An opening balance is the FIRST position for a SKU, so a row for one that
-    // already holds stock is refused. Both this sheet and Inventory Master add
-    // their quantity, and both carry the identical SKU / MSIL / Quantity shape —
-    // so without this guard a go-live file replayed by mistake would quietly
-    // inflate stock that already has a history.
-    refuseIfStocked: true,
-    // Column order is A / B / C exactly as laid out below.
-    columns: [
-      SKU,
-      { header: 'MSIL Code', field: 'msilCode', type: 'string', required: false, note: 'Optional. Checked against the catalogue if given.' },
-      { header: 'Quantity', field: 'quantity', type: 'int', required: true, min: 0, note: 'Opening stock cannot be negative.' },
-    ],
-    sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 250 },
-  },
 };
 
 export const IMPORT_TYPE_NAMES = Object.keys(IMPORT_TEMPLATES);

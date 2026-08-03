@@ -97,7 +97,7 @@ const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
  * for an 8,000-row file. The sets below are built from one query each and
  * answered in memory.
  */
-const buildContext = async (importType, { user }) => {
+const buildContext = async (importType, { user, jobBrand = null }) => {
   const template = IMPORT_TEMPLATES[importType];
   const context = {
     brands: new Set(ALL_BRANDS),
@@ -105,11 +105,14 @@ const buildContext = async (importType, { user }) => {
     // per row rather than per file, because one bad row must not fail the rest.
     allowedBrands: new Set(allowedBrands(user)),
     skus: null,
+    // The Brand chosen on the upload form. A sheet with no Brand column relies
+    // on it to create a SKU the catalogue does not have yet.
+    jobBrand,
     locations: new Map(),
     reasonCodes: new Set(),
   };
 
-  if (template.requireExistingSku) {
+  if (template.requireExistingSku || template.resolveBrandFromSku || template.verifyMsil) {
     // skuCode::brand, so the same code under two brands stays two SKUs.
     const needsMsil = Boolean(template.verifyMsil);
     const rows = await Product.find({}, `skuCode brand${needsMsil ? ' msilCode' : ''}`).lean();
@@ -202,11 +205,36 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
   if (template.resolveBrandFromSku && data.skuCode && !data.brand) {
     const resolved = context.skuToBrand?.get(data.skuCode);
     if (!resolved) {
-      errors.push({
-        category: 'reference', column: 'SKU Code',
-        message: `${data.skuCode} is not in the catalogue.`,
-        value: data.skuCode,
-      });
+      // Not an error when the sheet may create SKUs — it just means this row is
+      // a new one, and a new one has no brand to resolve from, so it must say.
+      if (template.brandFromJobForNewSku) {
+        // New SKU: take the Brand selected for the whole upload. Without one
+        // there is nothing to create the product under, and guessing would file
+        // it against the wrong brand silently.
+        if (context.jobBrand) {
+          data.brand = context.jobBrand;
+        } else {
+          errors.push({
+            category: 'required', column: 'SKU Code',
+            message: `${data.skuCode} is not in the catalogue yet, so it will be created — `
+              + 'choose a Brand on the upload form first.',
+            value: data.skuCode,
+          });
+        }
+      } else if (template.brandRequiredForNewSku) {
+        errors.push({
+          category: 'required', column: 'Brand',
+          message: `${data.skuCode} is not in the catalogue yet, so it will be created — `
+            + 'which needs a Brand.',
+          value: null,
+        });
+      } else {
+        errors.push({
+          category: 'reference', column: 'SKU Code',
+          message: `${data.skuCode} is not in the catalogue.`,
+          value: data.skuCode,
+        });
+      }
     } else if (resolved === AMBIGUOUS) {
       errors.push({
         category: 'reference', column: 'SKU Code',
@@ -216,6 +244,13 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
     } else {
       data.brand = resolved;
     }
+  }
+
+  // Whether this SKU already exists, decided ONCE here and carried on the row.
+  // Deciding it again at processing time would be wrong: by then the earlier
+  // chunks of this very file may have created it.
+  if ((template.brandRequiredForNewSku || template.brandFromJobForNewSku) && data.skuCode) {
+    data.isNewSku = !context.skuToBrand?.has(data.skuCode);
   }
 
   // ── MSIL cross-check ─────────────────────────────────────────────────────
@@ -398,7 +433,7 @@ export const createImportJob = async ({
   let totalRows = 0, validRows = 0, invalidRows = 0;
 
   try {
-    const context = await buildContext(importType, { user: actor });
+    const context = await buildContext(importType, { user: actor, jobBrand: brand });
     const read = readerFor(fileType);
 
     let mapping = null;
@@ -624,12 +659,11 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
           filter: { skuCode: d.skuCode },
           // Upsert: the same import creates new SKUs and updates existing ones,
           // which is what "master import" means to the people running it.
-          update: { $set: set },
-          // NOT an upsert. This sheet carries only a SKU, an MSIL code and a
-          // quantity, which is not enough to create a usable product — and an
-          // unknown SKU is already rejected at validation, so the only thing an
-          // upsert could produce here is a junk record.
-          upsert: false,
+          update: { $set: set, $setOnInsert: { skuCode: d.skuCode } },
+          // Upsert: a SKU the catalogue does not have is CREATED. Validation has
+          // already insisted such a row carries a Brand, so the discriminator
+          // model below writes it into the right brand.
+          upsert: true,
         },
       },
     });
@@ -677,12 +711,13 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
 };
 
 /**
- * Post the sheet's Quantity as stock RECEIVED.
+ * Post the sheet's Quantity — as an opening balance for a SKU this import just
+ * created, or as stock received for one that already existed.
  *
  * The figure is an amount COMING IN, not the level stock should end at: a SKU
  * holding 444 with a sheet saying 10 finishes at 454. Each row therefore posts
- * its quantity directly as a RECEIPT — no difference is calculated, because the
- * uploader is describing an intake rather than correcting a count.
+ * its quantity directly — no difference is calculated, because the uploader is
+ * describing an intake rather than correcting a count.
  *
  * The consequence is worth stating plainly: this import is CUMULATIVE. Running
  * the same file twice adds the quantities twice. The duplicate-file check
@@ -713,15 +748,23 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
   const lines = wanted.map((row) => {
     const d = row.data;
     const before = byKey.get(`${d.skuCode}::${d.brand}::${d.locationCode}`)?.onHand ?? 0;
+
+    // A SKU this file CREATED has no prior position, so its quantity is an
+    // OPENING balance — the same movement type the go-live load used. One that
+    // already existed is receiving stock on top of what it holds, which is a
+    // RECEIPT. Filing the first as a receipt would say goods arrived when what
+    // actually happened is that a starting position was recorded.
+    const isNew = d.isNewSku === true && before === 0;
+
     return {
-      movementType: 'RECEIPT',
+      movementType: isNew ? 'OPENING' : 'RECEIPT',
       skuCode: d.skuCode,
       brand: d.brand,
       locationCode: d.locationCode,
       quantity: d.quantity,
       beforeQuantity: before,
       afterQuantity: before + d.quantity,
-      note: `Received via ${job.fileName}`,
+      note: isNew ? `Opening stock from ${job.fileName}` : `Received via ${job.fileName}`,
     };
   });
 
@@ -758,81 +801,9 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
 /** Planning carries no Quantity column, so no stock step ever runs for it. */
 const processPlanning = (args) => processMaster(args);
 
-/** Opening balances and movements both post through the ledger, unchanged. */
-const processMovements = (movementType) => async ({ rows, job, chunkIndex, actor, req }) => {
-  const successes = [];
-  const failures = [];
-
-  const lines = rows.map((row) => ({
-    movementType: movementType || row.data.movementType,
-    skuCode: row.data.skuCode,
-    brand: row.data.brand,
-    locationCode: row.data.locationCode,
-    quantity: movementType === 'OPENING' ? row.data.quantity : row.data.quantity,
-    unitCost: row.data.unitCost ?? null,
-    reasonCode: row.data.reasonCode ?? null,
-    note: row.data.note ?? null,
-  }));
-
-  let result;
-  try {
-    result = await postBatch({
-      // DETERMINISTIC, and derived from the chunk index fixed at staging time.
-      // A resumed or retried chunk replays the original batch instead of
-      // posting a second one — the ledger's own idempotency, reused rather
-      // than reimplemented.
-      idempotencyKey: `import-${job.jobId}-${chunkIndex}`,
-      workflowType: 'import',
-      referenceType: 'import',
-      referenceId: job.jobId,
-      actor,
-      effectiveDate: rows.find((r) => r.data.effectiveDate)?.data.effectiveDate ?? null,
-      note: `${IMPORT_TEMPLATES[job.importType].label} import ${job.jobId} (chunk ${chunkIndex + 1})`,
-      lines,
-    }, req);
-  } catch (error) {
-    // A transient conflict is rethrown so the chunk-level retry can take it.
-    // Recording it as a row failure would reject a perfectly good file because
-    // a booking happened to touch the same SKU a millisecond earlier.
-    if (isRetryable(error)) throw error;
-    // A genuine rejection: the ledger refused the batch, so every row in it
-    // failed together and the reason is the same for all of them.
-    for (const row of rows) failures.push({ rowNumber: row.rowNumber, reason: error.message });
-    return { successes, failures, refs: [] };
-  }
-
-  const posted = await StockMovement.find({ batchId: result.batch.batchId }).lean();
-
-  // Projections update from the movements, exactly as the count and booking
-  // flows do. Never written directly, and never rebuilt wholesale.
-  if (!result.replayed && posted.length) await applyMovements(posted);
-  const affected = [...new Set(rows.map((r) => r.data.skuCode))];
-  await recomputeHealthForSkus(affected);
-  await syncLegacyStock(affected);
-  emitStockUpdated(req, affected, { source: 'import', jobId: job.jobId });
-
-  const txnBySku = new Map(posted.map((m) => [`${m.skuCode}::${m.brand}`, m.transactionId]));
-  for (const row of rows) {
-    successes.push({
-      rowNumber: row.rowNumber,
-      result: {
-        batchId: result.batch.batchId,
-        transactionId: txnBySku.get(`${row.data.skuCode}::${row.data.brand}`) ?? null,
-        replayed: result.replayed,
-      },
-    });
-  }
-
-  return {
-    successes, failures,
-    refs: [{ kind: 'ledgerBatch', id: result.batch.batchId, chunkIndex }],
-  };
-};
-
 const PROCESSORS = {
   'inventory-master': processMaster,
   planning: processPlanning,
-  'opening-stock': processMovements('OPENING'),
 };
 
 // ─── Confirm and process ─────────────────────────────────────────────────────

@@ -61,6 +61,26 @@ const Field = ({ label, children }) => (
   </div>
 );
 
+/**
+ * Workflow keys are internal; these are what the action was, in the words
+ * someone would use for it. An unmapped key falls through unchanged rather
+ * than being hidden, so a new workflow is visible rather than blank.
+ */
+const ACTION_LABEL = {
+  import: 'Import',
+  'stock-update': 'Stock update',
+  'stock-adjustment': 'Stock adjustment',
+  'stock-count': 'Stock count',
+  'booking-confirm': 'Booking confirmed',
+  'po-settlement-release': 'PO expired — stock released',
+  'po-settlement-consume': 'PO raised — stock issued',
+  'po-expiry': 'PO expired',
+  reversal: 'Reversal',
+  reserve: 'Reservation',
+  'sales-desk-edit': 'Sales desk edit',
+};
+const actionLabel = (w) => ACTION_LABEL[w] ?? (w || 'Posting');
+
 const inputCls =
   'w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg shadow-sm outline-none ' +
   'focus:border-primary-500 focus:ring-1 focus:ring-primary-500';
@@ -146,7 +166,7 @@ const BatchPanel = ({ batch, onClose }) => (
 export const StockLedger = () => {
   const { user } = useUserStore();
   const {
-    movements, total, loading, error, movementTypes, filters,
+    movements, groups, grouped, setGrouped, total, loading, error, movementTypes, filters,
     setFilters, resetFilters, fetchMovements, fetchMovementTypes,
     selectedBatch, batchLoading, openBatch, closeBatch,
   } = useLedgerStore();
@@ -207,6 +227,20 @@ export const StockLedger = () => {
         title="Stock Ledger"
         actions={(
           <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-lg border border-slate-200 overflow-hidden">
+            {[[true, 'Grouped'], [false, 'All movements']].map(([value, label]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setGrouped(value)}
+                className={`px-3 py-1.5 text-xs font-bold transition-colors ${
+                  grouped === value ? 'bg-primary-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <ExportButton
             exportType="stock-movements"
             selectionKey="transactionIds"
@@ -331,6 +365,69 @@ export const StockLedger = () => {
             </div>
           )}
 
+          {grouped ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Action</th>
+                    <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">When</th>
+                    <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Items</th>
+                    <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">Lines</th>
+                    <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">Net Qty</th>
+                    <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">By</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {loading && groups.length === 0 && <TableSkeleton rows={8} columns={6} cellClass="px-5 py-4" />}
+
+                  {groups.map((g) => (
+                    <tr
+                      key={g.batchId}
+                      onClick={() => openBatch(g.batchId)}
+                      className="hover:bg-slate-50 transition-colors cursor-pointer"
+                    >
+                      <td className="px-5 py-4">
+                        <span className="font-bold text-slate-800">{actionLabel(g.workflowType)}</span>
+                        <span className="block font-mono text-[11px] text-slate-400">{g.batchId}</span>
+                      </td>
+                      <td className="px-5 py-4 text-slate-600 text-xs whitespace-nowrap">{fmtDate(g.postedAt)}</td>
+                      <td className="px-5 py-4">
+                        <span className="text-slate-700">
+                          {g.skuCount === 1 ? g.sampleSkus[0] : `${g.skuCount.toLocaleString()} SKUs`}
+                        </span>
+                        {g.skuCount > 1 && (
+                          <span className="block text-[11px] text-slate-400 truncate max-w-56">
+                            {g.sampleSkus.join(', ')}{g.skuCount > g.sampleSkus.length ? '…' : ''}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-right tabular-nums text-slate-700">
+                        {g.movementCount.toLocaleString()}
+                        {/* A filtered view shows how much of the posting matched,
+                            so a big posting never looks small. */}
+                        {g.batchLineCount > g.movementCount && (
+                          <span className="block text-[11px] text-slate-400">of {g.batchLineCount.toLocaleString()}</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-right"><Quantity value={g.netQuantity} /></td>
+                      <td className="px-5 py-4 text-xs text-slate-500">
+                        {g.user?.name || (g.actorType === 'system' ? 'System' : '—')}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {!loading && groups.length === 0 && !error && (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-slate-500 font-medium">
+                        No postings match these filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
@@ -448,6 +545,7 @@ export const StockLedger = () => {
               </tbody>
             </table>
           </div>
+          )}
 
           {total > 0 && (
             <div className="px-6 py-4 border-t border-slate-200 bg-slate-50/60 rounded-b-xl">

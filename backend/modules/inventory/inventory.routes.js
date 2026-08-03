@@ -4,7 +4,7 @@ import { postAdjustment, getAdjustmentPreview, getReasonCodes } from './adjustme
 import { listLocations, createLocation, updateLocation, setDefaultLocation } from './location.controller.js';
 import { getConfig, getConfigHistory, updateConfig } from './config.controller.js';
 import {
-  searchLedger, getSkuMovements, getMovement, getBatch, listMovementTypes,
+  searchLedger, searchLedgerGrouped, getSkuMovements, getMovement, getBatch, listMovementTypes,
 } from './ledger.controller.js';
 import {
   listBalances, getBalanceBySku, getAvailabilityBatch, rebuild, getReconciliation,
@@ -102,6 +102,9 @@ router.post('/items/:sku/adjust', authorize(PERMISSIONS.ADJUST_STOCK), postAdjus
 // Static paths before parameterised ones, or '/movement-types' matches as a
 // :transactionId.
 router.get('/ledger/movement-types', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), listMovementTypes);
+// Grouped view: one row per posting rather than per movement. Before
+// '/ledger/:transactionId', or 'grouped' is read as a transaction id.
+router.get('/ledger/grouped', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), searchLedgerGrouped);
 router.get('/ledger', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), searchLedger);
 router.get('/ledger/:transactionId', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), getMovement);
 router.get('/items/:sku/movements', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), getSkuMovements);

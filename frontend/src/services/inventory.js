@@ -146,6 +146,20 @@ export const inventoryApi = {
   },
 
   /** Every SKU code matching a health filter — for select-all on that table. */
+  /** The ledger as one row per POSTING rather than per movement. */
+  searchLedgerGrouped: async (filters = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== "" && v !== null && v !== undefined) qs.set(k, String(v));
+    }
+    const r = await api.get(`/inventory/ledger/grouped?${qs.toString()}`);
+    return {
+      groups: r.data.data || [],
+      total: r.data.pagination?.total ?? 0,
+      pages: r.data.pagination?.pages ?? 1,
+    };
+  },
+
   listHealthCodes: async (filters = {}) => {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(filters)) if (v) qs.append(k, v);

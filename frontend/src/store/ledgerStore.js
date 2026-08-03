@@ -31,6 +31,9 @@ const initialFilters = () => ({
 
 export const useLedgerStore = create((set, get) => ({
   movements: [],
+  groups: [],
+  // Grouped is the default: one action a user performed reads as one row.
+  grouped: true,
   total: 0,
   pages: 1,
   loading: true,
@@ -54,14 +57,25 @@ export const useLedgerStore = create((set, get) => ({
     get().fetchMovements();
   },
 
+  setGrouped: (grouped) => {
+    set({ grouped, filters: { ...get().filters, page: 1 } });
+    get().fetchMovements();
+  },
+
   fetchMovements: async () => {
     set({ loading: true, error: null });
     try {
-      const result = await inventoryApi.searchLedger(get().filters);
-      set({ ...result, loading: false });
+      // One call or the other — the grouped view is a different shape, not a
+      // client-side fold of the flat one, because a posting's movements can
+      // span pages and folding a page would group only what happened to be on it.
+      const result = get().grouped
+        ? await inventoryApi.searchLedgerGrouped(get().filters)
+        : await inventoryApi.searchLedger(get().filters);
+      set({ movements: [], groups: [], ...result, loading: false });
     } catch (err) {
       set({
         movements: [],
+        groups: [],
         total: 0,
         pages: 1,
         loading: false,

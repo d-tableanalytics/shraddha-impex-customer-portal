@@ -2,6 +2,8 @@ import StockMovement, {
   MOVEMENT_TYPES, MOVEMENT_TYPE_NAMES, MOVEMENT_CLASS,
 } from '../../models/StockMovement.js';
 import { allowedBrands, canAccessBrand } from '../../utils/brandAccess.js';
+import StockBatch from '../../models/StockBatch.js';
+import User from '../../models/User.js';
 import { findBatch } from './ledger.service.js';
 
 /**
@@ -178,6 +180,109 @@ const buildFilter = (req, { requireNarrowing }) => {
  * GET /api/v1/inventory/ledger
  * Cross-SKU movement search. Requires a narrowing filter (no unbounded scans).
  */
+/**
+ * GET /api/v1/inventory/ledger/grouped
+ *
+ * One row per POSTING, not per movement.
+ *
+ * A single action routinely writes many movements — a go-live import wrote 714,
+ * a counted variance writes one per SKU — and the flat ledger then reads as
+ * hundreds of near-identical rows for something the user did once. Grouping by
+ * the batch every posting already carries turns that back into what happened:
+ * "opening stock import, 714 lines, +24,711 units, by Krishna".
+ *
+ * Aggregated over MOVEMENTS rather than read from `stockbatches`, so the
+ * existing filters keep working and the counts describe what matched. Filtering
+ * by one SKU and grouping shows how many lines of each posting touched THAT
+ * SKU, which is the honest answer to the question being asked.
+ */
+export const searchLedgerGrouped = async (req, res, next) => {
+  try {
+    const { filter, error } = buildFilter(req, { requireNarrowing: true });
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+    if (!filter) {
+      return res.status(200).json({
+        success: true, data: [], pagination: { total: 0, page: 1, pages: 1, limit: 0 },
+      });
+    }
+
+    const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
+    const page = Math.max(Number(req.query.page) || 1, 1);
+
+    const pipeline = [
+      { $match: filter },
+      {
+        $group: {
+          _id: '$batchId',
+          movementCount: { $sum: 1 },
+          netQuantity: { $sum: '$quantity' },
+          skuCodes: { $addToSet: '$skuCode' },
+          movementTypes: { $addToSet: '$movementType' },
+          firstAt: { $min: '$effectiveDate' },
+          lastAt: { $max: '$effectiveDate' },
+          postedAt: { $max: '$postedAt' },
+          user: { $first: '$user' },
+          actorType: { $first: '$actorType' },
+          referenceType: { $first: '$referenceType' },
+          referenceId: { $first: '$referenceId' },
+          note: { $first: '$note' },
+        },
+      },
+      { $sort: { postedAt: -1, _id: -1 } },
+    ];
+
+    const [rows, totals] = await Promise.all([
+      StockMovement.aggregate([...pipeline, { $skip: (page - 1) * limit }, { $limit: limit }]),
+      StockMovement.aggregate([...pipeline.slice(0, 2), { $count: 'n' }]),
+    ]);
+
+    // The workflow that produced each batch — the thing a person recognises as
+    // "what I did". It lives on the batch, not on its movements.
+    const batches = await StockBatch.find(
+      { batchId: { $in: rows.map((r) => r._id) } },
+      'batchId workflowType lineCount status',
+    ).lean();
+    const byId = new Map(batches.map((b) => [b.batchId, b]));
+
+    const users = await User.find(
+      { _id: { $in: rows.map((r) => r.user).filter(Boolean) } }, 'name email',
+    ).lean();
+    const userById = new Map(users.map((u) => [String(u._id), u]));
+
+    const total = totals[0]?.n ?? 0;
+    res.status(200).json({
+      success: true,
+      data: rows.map((r) => {
+        const batch = byId.get(r._id);
+        const u = r.user ? userById.get(String(r.user)) : null;
+        return {
+          batchId: r._id,
+          workflowType: batch?.workflowType ?? null,
+          status: batch?.status ?? null,
+          // What the batch posted in total, versus what matched the filter —
+          // stated separately so a filtered view never looks like the whole
+          // posting was smaller than it was.
+          movementCount: r.movementCount,
+          batchLineCount: batch?.lineCount ?? r.movementCount,
+          netQuantity: r.netQuantity,
+          skuCount: r.skuCodes.length,
+          sampleSkus: r.skuCodes.slice(0, 3),
+          movementTypes: r.movementTypes,
+          firstAt: r.firstAt,
+          lastAt: r.lastAt,
+          postedAt: r.postedAt,
+          referenceType: r.referenceType,
+          referenceId: r.referenceId,
+          note: r.note,
+          actorType: r.actorType,
+          user: u ? { id: u._id, name: u.name || u.email } : null,
+        };
+      }),
+      pagination: { total, page, pages: Math.ceil(total / limit) || 1, limit },
+    });
+  } catch (error) { next(error); }
+};
+
 export const searchLedger = async (req, res, next) => {
   try {
     const { filter, error, brands } = buildFilter(req, { requireNarrowing: true });

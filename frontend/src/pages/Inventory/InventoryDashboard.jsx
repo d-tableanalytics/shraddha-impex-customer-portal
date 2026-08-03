@@ -223,7 +223,7 @@ export const InventoryDashboard = () => {
               Both bands are still computed, still filterable on the Health
               screen and still exported — only the headline tile is gone. */}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-            <Kpi label="Total SKUs" value={nf(k.totalSkus)} sub={`${nf(k.projectedSkus)} classified`} icon={Boxes} />
+            <Kpi label="Total SKUs" value={nf(k.totalSkus)} icon={Boxes} />
             <Kpi label="Out of Stock" value={nf(k.outOfStock)} icon={PackageX} tone="red" onClick={() => toHealth('Out of Stock')} />
             <Kpi label="Critical" value={nf(k.critical)} icon={AlertTriangle} tone="red" onClick={() => toHealth('Critical')} />
             <Kpi label="Low" value={nf(k.low)} icon={TrendingDown} tone="amber" onClick={() => toHealth('Low')} />
