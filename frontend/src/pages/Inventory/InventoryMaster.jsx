@@ -12,6 +12,7 @@ import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { PageHeader } from '../../components/common/PageHeader';
 import { BulkPlanningEditor } from '../../components/inventory/BulkPlanningEditor';
 import { UpdateStockModal } from '../../components/inventory/UpdateStockModal';
+import { ExportButton } from '../../components/inventory/ExportButton';
 import { inventoryApi } from '../../services/inventory';
 import { useInventoryStore } from '../../store/inventoryStore';
 import { useUserStore } from '../../store/userStore';
@@ -349,7 +350,19 @@ export const InventoryMaster = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Inventory Master" />
+      <PageHeader
+        title="Inventory Master"
+        actions={(
+          <ExportButton
+            exportType="inventory-master"
+            filters={{
+              search: filters.search, brand: filters.brand,
+              category: filters.category, status: filters.status,
+            }}
+            selected={[...picked]}
+          />
+        )}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card>

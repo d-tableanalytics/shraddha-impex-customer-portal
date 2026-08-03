@@ -374,6 +374,16 @@ export const runExport = async ({ exportType, format = 'xlsx', filters = {}, bra
 
   const Model = spec.model();
   const baseFilter = spec.filter(filters) || {};
+
+  // "Export the rows I selected" — applied on top of whatever the type's own
+  // filter produced, so a selection can never widen the scope, only narrow it.
+  // Every export here is keyed on skuCode, so one clause covers them all.
+  if (Array.isArray(filters.skuCodes) && filters.skuCodes.length > 0) {
+    baseFilter.skuCode = { $in: filters.skuCodes };
+  }
+  if (Array.isArray(filters.transactionIds) && filters.transactionIds.length > 0) {
+    baseFilter.transactionId = { $in: filters.transactionIds };
+  }
   const scoped = applyBrandScope(baseFilter, brands);
 
   // `lean()` because these documents are read once and written to a file —

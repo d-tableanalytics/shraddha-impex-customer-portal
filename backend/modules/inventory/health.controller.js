@@ -113,6 +113,44 @@ const buildFilter = (req) => {
 };
 
 /** GET /api/v1/inventory/health — paginated, filterable health list. */
+/**
+ * GET /api/v1/inventory/health/codes
+ *
+ * Every SKU code matching the current health filter. Backs the table's
+ * select-all and its "export the selected rows" — the list pages at 200, so
+ * without this "everything matching" would be dozens of round trips for a
+ * question the filter already answers once.
+ *
+ * Shares buildFilter with the list above, so the selection can never be a
+ * different set from what the table is showing.
+ */
+const SELECT_ALL_MAX = 10000;
+
+export const listHealthCodes = async (req, res, next) => {
+  try {
+    const { filter, error } = buildFilter(req);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+    if (!filter) return res.status(200).json({ success: true, data: [], total: 0 });
+
+    const total = await StockHealth.countDocuments(filter);
+    if (total > SELECT_ALL_MAX) {
+      return res.status(413).json({
+        success: false,
+        code: 'TOO_MANY_MATCHES',
+        message: `${total.toLocaleString()} SKUs match this filter, which is more than the `
+          + `${SELECT_ALL_MAX.toLocaleString()} that can be selected at once. Narrow the filter first.`,
+      });
+    }
+
+    const rows = await StockHealth.find(filter, 'skuCode').sort({ skuCode: 1 }).lean();
+    res.status(200).json({
+      success: true,
+      data: rows.map((r) => r.skuCode).filter(Boolean),
+      total,
+    });
+  } catch (error) { next(error); }
+};
+
 export const listHealth = async (req, res, next) => {
   try {
     const { filter, error } = buildFilter(req);

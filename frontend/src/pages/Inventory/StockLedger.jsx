@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { PageHeader } from '../../components/common/PageHeader';
+import { ExportButton } from '../../components/inventory/ExportButton';
 import { useLedgerStore } from '../../store/ledgerStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
@@ -174,18 +175,54 @@ export const StockLedger = () => {
     return <Navigate to="/" replace />;
   }
 
+  // A ledger row IS a transaction, so the selection is transaction ids — not
+  // SKUs. Selecting two movements of one SKU and exporting by SKU would pull in
+  // every other movement that SKU ever had.
+  const [picked, setPicked] = useState(() => new Set());
+
+  const togglePick = (txn) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(txn)) next.delete(txn); else next.add(txn);
+    return next;
+  });
+
+  const pageTxns = movements.map((m) => m.transactionId);
+  const allOnPagePicked = pageTxns.length > 0 && pageTxns.every((t) => picked.has(t));
+
+  // The ledger has no "every matching row" endpoint and does not need one —
+  // exporting without a selection already covers the whole filter. So this
+  // checkbox takes the page, and says so.
+  const togglePage = () => setPicked((prev) => {
+    const next = new Set(prev);
+    if (allOnPagePicked) pageTxns.forEach((t) => next.delete(t));
+    else pageTxns.forEach((t) => next.add(t));
+    return next;
+  });
+
   const brands = allowedBrands(user);
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Stock Ledger"
-        actions={
+        actions={(
+          <div className="flex items-center gap-2">
+          <ExportButton
+            exportType="stock-movements"
+            selectionKey="transactionIds"
+            filters={{
+              brand: filters.brand, skuCode: filters.skuCode,
+              movementType: filters.movementType,
+              dateFrom: filters.from, dateTo: filters.to,
+            }}
+            selected={[...picked]}
+          />
           <Button variant="outline" size="sm" onClick={() => { setSkuTerm(''); resetFilters(); }}>
             <RotateCcw size={15} className="mr-2" />
             Reset Filters
           </Button>
-        }
+          </div>
+        )}
       />
 
       <Card>
@@ -283,10 +320,30 @@ export const StockLedger = () => {
 
       <Card>
         <CardContent className="p-0">
+          {picked.size > 0 && (
+            <div className="flex flex-wrap items-center gap-3 px-5 py-3 bg-primary-50 border-b border-primary-100">
+              <span className="text-sm font-bold text-primary-900">
+                {picked.size.toLocaleString()} movement{picked.size === 1 ? '' : 's'} selected
+              </span>
+              <Button size="xs" variant="secondary" className="ml-auto" onClick={() => setPicked(new Set())}>
+                Clear
+              </Button>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
+                  <th className="pl-5 pr-2 py-4 w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="Select every movement on this page"
+                      className="w-4 h-4 accent-primary-600 cursor-pointer"
+                      checked={allOnPagePicked}
+                      onChange={togglePage}
+                    />
+                  </th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Transaction</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Date</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">SKU</th>
@@ -299,10 +356,22 @@ export const StockLedger = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {loading && movements.length === 0 && <TableSkeleton rows={10} columns={9} cellClass="px-5 py-4" />}
+                {loading && movements.length === 0 && <TableSkeleton rows={10} columns={10} cellClass="px-5 py-4" />}
 
                 {movements.map((m) => (
-                  <tr key={m.transactionId} className="hover:bg-slate-50 transition-colors">
+                  <tr
+                    key={m.transactionId}
+                    className={`transition-colors ${picked.has(m.transactionId) ? 'bg-primary-50/60' : 'hover:bg-slate-50'}`}
+                  >
+                    <td className="pl-5 pr-2 py-4">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${m.transactionId}`}
+                        className="w-4 h-4 accent-primary-600 cursor-pointer"
+                        checked={picked.has(m.transactionId)}
+                        onChange={() => togglePick(m.transactionId)}
+                      />
+                    </td>
                     <td className="px-5 py-4">
                       <button
                         onClick={() => openBatch(m.batchId)}
@@ -367,7 +436,7 @@ export const StockLedger = () => {
 
                 {!loading && movements.length === 0 && !error && (
                   <tr>
-                    <td colSpan={9} className="px-6 py-12 text-center">
+                    <td colSpan={10} className="px-6 py-12 text-center">
                       <p className="text-slate-600 font-semibold">No movements in this range</p>
                       <p className="text-slate-500 text-xs mt-1 max-w-md mx-auto">
                         The ledger records stock movements as they are posted. It stays empty

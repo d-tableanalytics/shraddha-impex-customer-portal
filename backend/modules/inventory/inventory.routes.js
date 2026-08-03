@@ -10,7 +10,7 @@ import {
   listBalances, getBalanceBySku, getAvailabilityBatch, rebuild, getReconciliation,
 } from './balance.controller.js';
 import {
-  listHealth, getHealthBySku, getReorderList, getOverstockList,
+  listHealth, listHealthCodes, getHealthBySku, getReorderList, getOverstockList,
   getCoverage, rebuild as rebuildHealthProjection, listFormulas,
 } from './health.controller.js';
 import { getDashboard } from './dashboard.controller.js';
@@ -130,6 +130,8 @@ router.get('/health/meta/formulas', authorize(PERMISSIONS.VIEW_INVENTORY), listF
 router.get('/health/reorder/list', authorize(PERMISSIONS.VIEW_INVENTORY), getReorderList);
 router.get('/health/overstock/list', authorize(PERMISSIONS.VIEW_INVENTORY), getOverstockList);
 router.get('/health/coverage/lookup', authorize(PERMISSIONS.VIEW_INVENTORY), getCoverage);
+// Before '/health/:sku', or 'codes' is read as a SKU.
+router.get('/health/codes', authorize(PERMISSIONS.VIEW_INVENTORY), listHealthCodes);
 router.post('/health/rebuild', authorize(PERMISSIONS.CONFIGURE_INVENTORY), rebuildHealthProjection);
 router.get('/health', authorize(PERMISSIONS.VIEW_INVENTORY), listHealth);
 router.get('/health/:sku', authorize(PERMISSIONS.VIEW_INVENTORY), getHealthBySku);

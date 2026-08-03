@@ -145,6 +145,14 @@ export const inventoryApi = {
     return { skuCodes: r.data.data || [], total: r.data.total || 0 };
   },
 
+  /** Every SKU code matching a health filter — for select-all on that table. */
+  listHealthCodes: async (filters = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) if (v) qs.append(k, v);
+    const r = await api.get(`/inventory/health/codes?${qs.toString()}`);
+    return { skuCodes: r.data.data || [], total: r.data.total || 0 };
+  },
+
   getCategories: async () => {
     const response = await api.get("/inventory/categories");
     return response.data.data || [];

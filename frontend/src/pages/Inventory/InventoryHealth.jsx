@@ -8,6 +8,10 @@ import { Button } from '../../components/ui/Button';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { PageHeader } from '../../components/common/PageHeader';
+import { ExportButton } from '../../components/inventory/ExportButton';
+import toast from 'react-hot-toast';
+
+import { inventoryApi } from '../../services/inventory';
 import { useHealthStore } from '../../store/healthStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
@@ -197,6 +201,39 @@ export const InventoryHealth = () => {
     return <Navigate to="/" replace />;
   }
 
+  // Selection is held as SKU codes, not row indexes, so it survives a re-sort,
+  // a filter change or a page turn — the identity of a row is its SKU.
+  const [picked, setPicked] = useState(() => new Set());
+  const [selectingAll, setSelectingAll] = useState(false);
+
+  const togglePick = (skuCode) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(skuCode)) next.delete(skuCode); else next.add(skuCode);
+    return next;
+  });
+
+  const pageSkus = items.map((h) => h.skuCode);
+  const allOnPagePicked = pageSkus.length > 0 && pageSkus.every((sku) => picked.has(sku));
+
+  // The header checkbox takes EVERY row matching the current filter, not just
+  // the page — the filter is what the user has already said they mean.
+  const toggleAllMatching = async () => {
+    if (picked.size > 0) { setPicked(new Set()); return; }
+    setSelectingAll(true);
+    try {
+      const { skuCodes } = await inventoryApi.listHealthCodes({
+        skuCode: filters.skuCode, brand: filters.brand,
+        band: filters.band, plannable: filters.plannable,
+      });
+      setPicked(new Set(skuCodes));
+      if (skuCodes.length) toast.success(`${skuCodes.length.toLocaleString()} SKU(s) selected.`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not select every matching SKU.');
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+
   const brands = allowedBrands(user);
   const totalBanded = BAND_ORDER.reduce((s, b) => s + (bandCounts[b] || 0), 0);
 
@@ -204,12 +241,19 @@ export const InventoryHealth = () => {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Inventory Health"
-        actions={
+        actions={(
+          <div className="flex items-center gap-2">
+          <ExportButton
+            exportType="stock-health"
+            filters={{ brand: filters.brand, band: filters.band, plannable: filters.plannable }}
+            selected={[...picked]}
+          />
           <Button variant="outline" size="sm" onClick={() => { setSkuTerm(''); resetFilters(); }}>
             <RotateCcw size={15} className="mr-2" />
             Reset
           </Button>
-        }
+          </div>
+        )}
       />
 
       {/* Band distribution — the proportions are the insight, so one segmented
@@ -302,9 +346,36 @@ export const InventoryHealth = () => {
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
+            {picked.size > 0 && (
+              <div className="flex flex-wrap items-center gap-3 px-5 py-3 bg-primary-50 border-b border-primary-100">
+                <span className="text-sm font-bold text-primary-900">
+                  {picked.size.toLocaleString()} SKU{picked.size === 1 ? '' : 's'} selected
+                </span>
+                <span className="text-[11px] text-primary-700/70">
+                  {picked.size > items.length
+                    ? 'Everything matching the current filter, across all pages.'
+                    : 'Selection is by SKU, so it survives sorting and paging.'}
+                </span>
+                <Button size="xs" variant="secondary" className="ml-auto" onClick={() => setPicked(new Set())}>
+                  Clear
+                </Button>
+              </div>
+            )}
+
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
+                  <th className="pl-5 pr-2 py-4 w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="Select every SKU matching the current filter"
+                      className="w-4 h-4 accent-primary-600 cursor-pointer"
+                      checked={picked.size > 0}
+                      ref={(el) => { if (el) el.indeterminate = picked.size > 0 && !allOnPagePicked; }}
+                      disabled={selectingAll}
+                      onChange={toggleAllMatching}
+                    />
+                  </th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">SKU</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Status</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">On Hand</th>
@@ -316,14 +387,26 @@ export const InventoryHealth = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {loading && items.length === 0 && <TableSkeleton rows={10} columns={8} cellClass="px-5 py-4" />}
+                {loading && items.length === 0 && <TableSkeleton rows={10} columns={9} cellClass="px-5 py-4" />}
 
                 {items.map((h) => (
                   <tr
                     key={`${h.brand}-${h.skuCode}`}
                     onClick={() => openItem(h.skuCode)}
-                    className="hover:bg-slate-50 transition-colors cursor-pointer"
+                    className={`transition-colors cursor-pointer ${
+                      picked.has(h.skuCode) ? 'bg-primary-50/60' : 'hover:bg-slate-50'
+                    }`}
                   >
+                    {/* stopPropagation, or ticking a row also opens its drawer. */}
+                    <td className="pl-5 pr-2 py-4" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${h.skuCode}`}
+                        className="w-4 h-4 accent-primary-600 cursor-pointer"
+                        checked={picked.has(h.skuCode)}
+                        onChange={() => togglePick(h.skuCode)}
+                      />
+                    </td>
                     <td className="px-5 py-4">
                       <span className="font-bold text-slate-900">{h.skuCode}</span>
                       <span className="block text-[11px] text-slate-400 font-medium">{h.brand}</span>
@@ -349,7 +432,7 @@ export const InventoryHealth = () => {
 
                 {!loading && items.length === 0 && !error && (
                   <tr>
-                    <td colSpan={8} className="px-6 py-12 text-center">
+                    <td colSpan={9} className="px-6 py-12 text-center">
                       <p className="text-slate-600 font-semibold">No SKUs match these filters</p>
                       <p className="text-slate-500 text-xs mt-1 max-w-md mx-auto">
                         Health is projected from stock movements and planning parameters.

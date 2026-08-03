@@ -24,6 +24,25 @@ const asInt = (v, fallback, min, max) => {
 
 const isIsoDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s).getTime());
 
+/**
+ * A caller-supplied list of SKUs — how "export the rows I selected" is asked
+ * for. Sent as one comma-separated value rather than repeated parameters, so
+ * the query string stays a string and can never arrive as an object.
+ */
+const MAX_SELECTED = 10000;
+
+const readList = (value) => {
+  const raw = asString(value);
+  if (!raw) return undefined;
+  const items = [...new Set(raw.split(',').map((c) => c.trim()).filter(Boolean))];
+  if (items.length === 0) return undefined;
+  // Bounded: a selection larger than this is not a selection, it is the whole
+  // table, and that is what the unfiltered export is for.
+  return items.slice(0, MAX_SELECTED);
+};
+
+const readSkuCodes = (query) => readList(query.skuCodes);
+
 /** The filters an export accepts, all coerced to strings first. */
 const readFilters = (query) => {
   const out = {};
@@ -34,6 +53,14 @@ const readFilters = (query) => {
     const value = asString(query[key]);
     if (value !== undefined) out[key] = value;
   }
+  const codes = readSkuCodes(query);
+  if (codes) out.skuCodes = codes;
+
+  // The ledger lists TRANSACTIONS, not SKUs — selecting rows there means
+  // "these movements", and filtering by their SKU would pull in every other
+  // movement those SKUs ever had.
+  const txns = readList(query.transactionIds);
+  if (txns) out.transactionIds = txns;
   return out;
 };
 
