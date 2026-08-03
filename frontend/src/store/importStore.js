@@ -221,18 +221,6 @@ export const useImportStore = create((set, get) => ({
     }
   },
 
-  openJob: async (jobId) => {
-    try {
-      const job = await inventoryApi.getImport(jobId);
-      set({ job, step: job.status === "Validated" ? 3 : 5, importType: job.importType });
-      if (job.status === "Validated") await get().loadPreview();
-      await get().loadErrors();
-      if (job.status === "Processing") { set({ step: 4 }); get().startPolling(); }
-    } catch (err) {
-      set({ error: err.response?.data?.message || "Failed to open the import" });
-    }
-  },
-
   downloadTemplate: async (importType) => {
     try {
       await inventoryApi.downloadImportTemplate(importType);

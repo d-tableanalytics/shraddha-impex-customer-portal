@@ -103,7 +103,7 @@ export const InventoryImport = () => {
     upload, loadPreview, toggleInvalidOnly, confirm, confirming, cancel, resume,
     stopPolling, downloadTemplate,
     history, historyTotal, historyPages, historyLoading, historyFilters,
-    setHistoryFilters, fetchHistory, openJob,
+    setHistoryFilters, fetchHistory,
   } = useImportStore();
 
   const fileInput = useRef(null);
@@ -571,7 +571,6 @@ export const InventoryImport = () => {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
-                        <Button size="xs" variant="ghost" onClick={() => openJob(j.jobId)}>Open</Button>
                         {j.status === 'Processing' && (
                           <Button size="xs" variant="ghost" onClick={() => resume(j.jobId)}>Resume</Button>
                         )}
