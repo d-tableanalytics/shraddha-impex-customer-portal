@@ -16,6 +16,7 @@ import { readerFor, MAX_ROWS } from './import.parser.js';
 import { postBatch } from './ledger.service.js';
 import { applyMovements, syncLegacyStock } from './balance.service.js';
 import { recomputeHealthForSkus } from './health.service.js';
+import { processAvailableIndents } from './indentAvailability.service.js';
 import { resolveConfig } from './config.service.js';
 import { DEFAULT_REASON_CODE } from './adjustment.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
@@ -790,6 +791,7 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
   const touched = [...new Set(wanted.map((r) => r.data.skuCode))];
   await recomputeHealthForSkus(touched);
   await syncLegacyStock(touched);
+  await processAvailableIndents(touched);
   emitStockUpdated(req, touched, { source: 'import', jobId: job.jobId });
 
   return {

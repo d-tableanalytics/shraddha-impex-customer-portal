@@ -33,6 +33,7 @@ import StockMovement from '../../models/StockMovement.js';
 import { postBatch } from './ledger.service.js';
 import { applyMovements, shapeBalance, syncLegacyStock } from './balance.service.js';
 import { recomputeHealthForSkus } from './health.service.js';
+import { processAvailableIndents } from './indentAvailability.service.js';
 import { resolveConfig } from './config.service.js';
 
 const fail = (message, status = 400, code = 'VALIDATION_ERROR') => {
@@ -239,6 +240,8 @@ export const adjustStock = async ({
   // Mirror outward, so the customer portal and the booking guard see this
   // stock too rather than only the IMS screens.
   await syncLegacyStock([sku]);
+  // Stock just rose or fell — tell anyone whose indent this now covers.
+  await processAvailableIndents([sku]);
 
   // ── Report the new position, read back rather than assumed ───────────────
   const updated = await StockBalance.findOne({ skuCode: sku, brand, locationCode: location.code }).lean();

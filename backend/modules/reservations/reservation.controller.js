@@ -190,6 +190,179 @@ export const getCancelledCount = async (req, res, next) => {
 // customer is emailed and notified to go confirm it from their dashboard.
 // Stock is NOT deducted here — that still happens at confirmation time. We only
 // verify enough stock exists so the customer's confirmation will actually succeed.
+/**
+ * A scheduled date that has not arrived yet, compared by calendar day.
+ *
+ * Measured against the START of the promised day. A date of today means the
+ * indent is available today — comparing against 23:59 would refuse the release
+ * for the whole of the very day the customer was told to expect it.
+ */
+const isScheduledForLater = (date) => {
+  if (!date) return false;
+  const due = new Date(date);
+  const startOfDue = new Date(due.getFullYear(), due.getMonth(), due.getDate(), 0, 0, 0, 0);
+  return Date.now() < startOfDue.getTime();
+};
+
+/**
+ * POST /api/v1/reservations/schedule
+ *
+ * Set the date each indented SKU is expected to become available, and tell the
+ * customer.
+ *
+ * Takes a LIST, because an indent is a list — an admin scheduling a delivery
+ * sets dates for several SKUs in one sitting, and sending one email per line
+ * for a single decision is how people learn to ignore emails.
+ *
+ * The dates are written FIRST and the mail sent afterwards, so a mail failure
+ * cannot lose a schedule that was already agreed.
+ */
+export const scheduleIndent = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return res.status(403).json({ success: false, message: 'Only an admin can schedule an indent.' });
+    }
+
+    const items = Array.isArray(req.body?.items) ? req.body.items : null;
+    if (!items || items.length === 0) {
+      return res.status(400).json({ success: false, message: 'Send an items array of { id, scheduledDate }.' });
+    }
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const wanted = [];
+    for (const raw of items) {
+      const id = typeof raw?.id === 'string' ? raw.id.trim() : null;
+      if (!id) continue;
+
+      // A null date CLEARS the schedule — that is how a promise is withdrawn.
+      if (raw.scheduledDate === null || raw.scheduledDate === '') {
+        wanted.push({ id, date: null, note: null });
+        continue;
+      }
+      const date = new Date(raw.scheduledDate);
+      if (Number.isNaN(date.getTime())) {
+        return res.status(400).json({ success: false, message: 'One of the dates could not be read.' });
+      }
+      if (date < startOfToday) {
+        return res.status(400).json({
+          success: false,
+          message: 'An availability date cannot be in the past — it is what the customer is told to expect.',
+        });
+      }
+      wanted.push({ id, date, note: typeof raw.note === 'string' ? raw.note.trim() || null : null });
+    }
+    if (wanted.length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid lines were sent.' });
+    }
+
+    const reservations = await Reservation.find({ _id: { $in: wanted.map((w) => w.id) } })
+      .populate('customerId', 'name email company');
+    const byId = new Map(reservations.map((r) => [String(r._id), r]));
+
+    const now = new Date();
+    const updated = [];
+    const skipped = [];
+    let cleared = 0;
+
+    for (const w of wanted) {
+      const r = byId.get(w.id);
+      if (!r) { skipped.push({ id: w.id, reason: 'Not found.' }); continue; }
+      if (!['Pending', 'Partially Confirmed'].includes(r.status)) {
+        skipped.push({ id: w.id, skuCode: r.skuCode, reason: 'Status is ' + r.status + ', not an open indent.' });
+        continue;
+      }
+      r.scheduledDate = w.date;
+      r.scheduledBy = w.date ? req.user._id : null;
+      r.scheduledAt = w.date ? now : null;
+      r.scheduleNote = w.note;
+      await r.save();
+      if (!w.date) cleared += 1;
+      updated.push(r);
+    }
+
+    // Grouped per customer: one indent can span more than one, and nobody
+    // should be shown another customer's lines.
+    const byCustomer = new Map();
+    for (const r of updated) {
+      if (!r.scheduledDate || !r.customerId?.email) continue;
+      const key = String(r.customerId._id);
+      if (!byCustomer.has(key)) byCustomer.set(key, { customer: r.customerId, lines: [] });
+      byCustomer.get(key).lines.push(r);
+    }
+
+    const fmt = (d) => new Date(d).toLocaleDateString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+    });
+
+    let emailed = 0;
+    for (const entry of byCustomer.values()) {
+      const { customer, lines } = entry;
+      const rows = lines.map((l) => [
+        '<tr>',
+        '<td style="padding:8px 12px;border-bottom:1px solid #eee;"><b>' + l.skuCode + '</b></td>',
+        '<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">' + l.quantity + '</td>',
+        '<td style="padding:8px 12px;border-bottom:1px solid #eee;">' + fmt(l.scheduledDate) + '</td>',
+        '</tr>',
+      ].join('')).join('');
+
+      const notes = lines.filter((l) => l.scheduleNote)
+        .map((l) => l.skuCode + ': ' + l.scheduleNote).join('<br>');
+
+      const html = [
+        '<p>Dear ' + (customer.name || customer.company || 'Customer') + ',</p>',
+        '<p>We have scheduled the expected availability for the following indented item'
+          + (lines.length === 1 ? '' : 's') + ':</p>',
+        '<table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;">',
+        '<thead><tr style="background:#f5f5f5;">',
+        '<th style="padding:8px 12px;text-align:left;">SKU</th>',
+        '<th style="padding:8px 12px;">Quantity</th>',
+        '<th style="padding:8px 12px;text-align:left;">Expected available</th>',
+        '</tr></thead><tbody>' + rows + '</tbody></table>',
+        notes ? '<p style="color:#555;">' + notes + '</p>' : '',
+        '<p>We will be in touch when the stock is ready to move to your selection list.</p>',
+        '<p>Thank you.</p>',
+      ].join('');
+
+      // Fire-and-forget: the schedule is saved, and a mail failure must not
+      // report the whole operation as failed.
+      sendEmail(
+        customer.email,
+        'Indent availability scheduled - ' + lines.length + ' item' + (lines.length === 1 ? '' : 's'),
+        html,
+        { cc: COMPANY_CC },
+      ).catch((e) => console.error('[Indent] schedule email failed:', e.message));
+
+      sendNotification(
+        customer._id,
+        'Indent availability scheduled',
+        lines.length + ' indented item' + (lines.length === 1 ? ' has' : 's have') + ' an expected availability date.',
+      );
+      emailed += 1;
+    }
+
+    await recordAudit(req.user, 'Indent Scheduled',
+      'Availability scheduled for ' + updated.length + ' indent line(s).',
+      req, { meta: { updated: updated.length, skipped: skipped.length, emailed } });
+
+    res.status(200).json({
+      success: true,
+      message: (cleared === updated.length && cleared > 0
+        ? cleared + ' schedule(s) cleared.'
+        : updated.length + ' line(s) scheduled.')
+        + (emailed ? ' ' + emailed + ' customer' + (emailed === 1 ? '' : 's') + ' notified.' : ''),
+      data: {
+        updated: updated.map((r) => ({
+          id: r._id, skuCode: r.skuCode, scheduledDate: r.scheduledDate, scheduleNote: r.scheduleNote,
+        })),
+        skipped,
+        emailed,
+      },
+    });
+  } catch (error) { next(error); }
+};
+
 export const restoreBackorder = async (req, res, next) => {
   try {
     if (req.user.role !== 'Admin') {
@@ -208,6 +381,26 @@ export const restoreBackorder = async (req, res, next) => {
     const product = await findProductById(reservation.productId, null, req.user);
     if (!product) {
       throw new Error(`Product ${reservation.skuCode} not found.`);
+    }
+
+    // A scheduled date is a promise made to the customer. Stock on the shelf
+    // before that date may be spoken for, or the promise may have been made
+    // against an inbound delivery — either way the indent is not available
+    // until the day it was scheduled for.
+    if (isScheduledForLater(reservation.scheduledDate)) {
+      const due = new Date(reservation.scheduledDate)
+        .toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      // 409, not a bare Error: this is a business rule saying "not yet", and the
+      // surrounding pattern here throws plain Errors that surface as 500s — a
+      // server fault, which this is not.
+      const err = new Error('This indent is scheduled to become available on ' + due
+        + '. Clear or change the schedule to release it sooner.');
+      // The shared error handler reads `statusCode`, not `status` — setting the
+      // wrong one is why this surfaced as a 500 despite being a business rule.
+      err.statusCode = 409;
+      err.status = 409;
+      err.code = 'SCHEDULED_FOR_LATER';
+      throw err;
     }
 
     const available = Math.max(0, product.availableForSale);

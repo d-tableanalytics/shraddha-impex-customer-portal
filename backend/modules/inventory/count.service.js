@@ -12,6 +12,7 @@ import { postBatch } from './ledger.service.js';
 import { applyMovements, syncLegacyStock } from './balance.service.js';
 import { emitStockUpdated } from '../../utils/stockEvents.js';
 import { recomputeHealthForSkus } from './health.service.js';
+import { processAvailableIndents } from './indentAvailability.service.js';
 import { resolveConfig } from './config.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { isDuplicateKeyError } from '../../utils/mongoSession.js';
@@ -535,6 +536,7 @@ export const postCount = async ({ countId, actor, req }) => {
   const affectedSkus = [...new Set(variances.map((l) => l.skuCode))];
   await recomputeHealthForSkus(affectedSkus, { brand: count.brand ?? undefined });
   await syncLegacyStock(affectedSkus);
+  await processAvailableIndents(affectedSkus);
   emitStockUpdated(req, affectedSkus, { source: 'count', countId });
 
   // ── Stamp the lines ──────────────────────────────────────────────────────

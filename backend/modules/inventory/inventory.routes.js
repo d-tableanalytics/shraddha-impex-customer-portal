@@ -1,5 +1,5 @@
 import express from 'express';
-import { listItems, listItemCodes, getItem, updatePlanning, bulkUpdatePlanning, listCategories } from './inventory.controller.js';
+import { listItems, listItemCodes, lookupItems, getItem, updatePlanning, bulkUpdatePlanning, listCategories } from './inventory.controller.js';
 import { postAdjustment, getAdjustmentPreview, getReasonCodes } from './adjustment.controller.js';
 import { recalculate as recalculateConsumption } from './consumption.controller.js';
 import { listLocations, createLocation, updateLocation, setDefaultLocation } from './location.controller.js';
@@ -70,6 +70,9 @@ router.get('/items', authorize(PERMISSIONS.VIEW_INVENTORY), listItems);
 // Before '/items/:sku', or 'codes' is read as a SKU. Backs the table's
 // select-all, which needs every matching code rather than one page of them.
 router.get('/items/codes', authorize(PERMISSIONS.VIEW_INVENTORY), listItemCodes);
+// Read-only: check a list of SKU codes against the catalogue. Static path, so
+// it sits with the others before '/items/:sku'.
+router.post('/items/lookup', authorize(PERMISSIONS.VIEW_INVENTORY), lookupItems);
 router.get('/items/:sku', authorize(PERMISSIONS.VIEW_INVENTORY), getItem);
 
 // Planning-parameter maintenance (M1). These are the ONLY write paths into the

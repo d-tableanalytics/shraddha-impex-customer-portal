@@ -33,6 +33,15 @@ export const reservationsApi = {
     return response.data.data;
   },
 
+  /**
+   * Set the expected availability date for one or more indented SKUs.
+   * Sends a LIST, so scheduling several lines is one save and one email.
+   */
+  schedule: async (items) => {
+    const response = await api.post("/reservations/schedule", { items });
+    return response.data;
+  },
+
   restore: async (id) => {
     const response = await api.post(`/reservations/${id}/restore`);
     return response.data.data;

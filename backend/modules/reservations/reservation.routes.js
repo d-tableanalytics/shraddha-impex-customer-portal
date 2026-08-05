@@ -4,6 +4,7 @@ import {
   getPendingReservations,
   getCancelledCount,
   restoreBackorder,
+  scheduleIndent,
   createReservation,
   updateReservationQuantity,
   cancelReservation,
@@ -23,6 +24,9 @@ router.route('/')
 // Static paths must precede the '/:id' routes below, or Express matches them as an id.
 router.get('/pending', getPendingReservations);
 router.get('/cancelled-count', getCancelledCount);
+// Scheduling takes a LIST, so it is not under /:id — an admin sets dates for
+// several SKUs of one indent in a single save.
+router.post('/schedule', scheduleIndent);
 router.post('/:id/restore', restoreBackorder);
 
 router.route('/:id')

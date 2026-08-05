@@ -89,6 +89,14 @@ const groupIntoBookings = (rawOrders) => {
       items,
       lineItems,
       totalQuantity,
+      // Whether any row still holds reserved stock, which is what makes the
+      // booking cancellable. Taken across ALL rows rather than the primary one:
+      // a booking is only fully settled when every line is, and reading one row
+      // would hide stock still held by the others.
+      hasReservedStock: rows.some((r) => (r.stockState ?? 'reserved') === 'reserved'),
+      // Raised automatically when a waiting indent came back into stock. Shown
+      // so a customer is not puzzled by a booking they do not remember making.
+      autoBooked: rows.some((r) => /^Auto-booked from indent/.test(r.remarks || '')),
     };
   });
 };
@@ -131,6 +139,14 @@ export const ordersApi = {
 
   updatePO: async (orderNumber, poNumber) => {
     const response = await api.put(`/orders/${orderNumber}/po`, { poNumber });
+    return response.data;
+  },
+
+  // Cancel a whole booking and hand its reserved stock back. Takes the booking
+  // id, not a row id: a booking is every row sharing one orderId, and releasing
+  // some rows while leaving others reserved would strand stock.
+  cancel: async (orderNumber, reason) => {
+    const response = await api.post(`/orders/${orderNumber}/cancel`, { reason });
     return response.data;
   }
 };

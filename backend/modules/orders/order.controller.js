@@ -9,7 +9,8 @@ import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { allowedBrandModels, canAccessBrand, brandFilter } from '../../utils/brandAccess.js';
 import { isBookingLocked, canOverrideLock } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
-import { findProductBySku, consumeStock } from '../../utils/stockLedger.js';
+import { findProductBySku, consumeStock, releaseStock } from '../../utils/stockLedger.js';
+import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
 
@@ -331,6 +332,141 @@ export const updateOrderPO = async (req, res, next) => {
     );
 
     res.status(200).json({ success: true, poNumber });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/orders/:orderId/cancel
+ *
+ * Cancel a booking whose stock is still reserved, and hand the units back.
+ *
+ * This is the customer's own escape hatch for a booking they no longer want —
+ * including one the system raised for them automatically when their indent came
+ * back in stock. Without it, an auto-booking could only be undone by waiting out
+ * the 7-day PO deadline, which leaves stock sitting reserved against a customer
+ * who has already said they do not want it.
+ *
+ * The release is deliberately identical to what the settlement job does when
+ * the deadline expires — `releaseStock`, then `stockState: 'released'`. Two
+ * different ways of returning stock would eventually disagree, and `stockState`
+ * is what makes both idempotent: a line already consumed or released is skipped,
+ * so this can never double-release.
+ *
+ * A booking whose PO has been raised is NOT cancellable here. Those units are
+ * already consumed — gone from inventory against a commitment the customer
+ * made — and "cancelling" would have to un-issue goods that may have shipped.
+ */
+export const cancelBooking = async (req, res, next) => {
+  try {
+    const orderNumber = req.params.orderId;
+    const rows = await Order.find({ orderId: orderNumber });
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    // A customer may cancel only their own booking. Admins and anyone holding
+    // manage_orders may cancel on a customer's behalf, which is how a phone
+    // request gets actioned.
+    const owner = String(rows[0].user);
+    const isOwner = owner === String(req.user._id);
+    const canActForOthers = req.user.role === 'Admin'
+      || hasPermission(req.user, PERMISSIONS.MANAGE_ORDERS);
+    if (!isOwner && !canActForOthers) {
+      return res.status(403).json({ success: false, message: 'This booking belongs to another customer.' });
+    }
+
+    if (rows.every((r) => r.status === 'Cancelled')) {
+      return res.status(409).json({
+        success: false,
+        message: `Booking ${orderNumber} is already cancelled.`,
+      });
+    }
+
+    // Locked means the PO exists and the stock has left inventory.
+    if (isBookingLocked(rows)) {
+      return res.status(423).json({
+        success: false,
+        message: 'This booking cannot be cancelled because its PO has already been raised. '
+          + 'Please contact us to arrange a return or amendment.',
+      });
+    }
+
+    const releasable = rows.filter((r) => (r.stockState ?? 'reserved') === 'reserved');
+    if (releasable.length === 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'This booking holds no reserved stock, so there is nothing to cancel.',
+      });
+    }
+
+    const now = new Date();
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+    const byName = isOwner ? 'the customer' : `${req.user.name || req.user.email || 'staff'}`;
+
+    const released = [];
+    const releasedSkus = new Set();
+
+    for (const row of releasable) {
+      const product = await findProductBySku(row.skuCode);
+      if (product) {
+        await releaseStock(product, row.confirmedQty || 0, null, {
+          workflow: 'booking-cancel',
+          referenceType: 'booking',
+          referenceId: orderNumber,
+          reasonCode: 'REVERSAL',
+          actor: req.user,
+          req,
+        });
+        releasedSkus.add(row.skuCode);
+      }
+      row.stockState = 'released';
+      row.stockSettledAt = now;
+      row.status = 'Cancelled';
+      row.remarks = `Cancelled by ${byName}${reason ? ` — ${reason}` : ''}. ${row.remarks || ''}`.trim();
+      await row.save();
+      released.push({ skuCode: row.skuCode, quantity: row.confirmedQty || 0, msilCode: row.msilCode });
+    }
+
+    const units = released.reduce((n, l) => n + l.quantity, 0);
+
+    await recordAudit(
+      req.user,
+      'Booking Cancelled',
+      `Booking ${orderNumber} cancelled by ${byName}. ${units} unit(s) released back to stock.`
+        + (reason ? ` Reason: ${reason}` : ''),
+      req,
+      { meta: { orderId: orderNumber, units, lines: released } },
+    );
+
+    notifyUser(rows[0].user, {
+      title: 'Booking cancelled',
+      message: `Booking ${orderNumber} has been cancelled and ${units} unit(s) returned to stock.`,
+      type: 'order',
+    });
+    notifyAdmins({
+      title: 'Booking Cancelled',
+      message: `${orderNumber} (${rows[0].company || 'customer'}) cancelled by ${byName} — ${units} unit(s) released.`,
+      type: 'order',
+    });
+
+    io.emit('booking-cancelled', { orderId: orderNumber });
+
+    // The units are back on the shelf, so anyone still waiting on them may now
+    // be bookable. This cannot re-raise the booking just cancelled: the indent
+    // behind it was closed when that booking was created and is not reopened
+    // here, so only indents still waiting are considered.
+    let autoBooked = null;
+    if (releasedSkus.size) {
+      autoBooked = await processAvailableIndents([...releasedSkus]);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Booking ${orderNumber} cancelled. ${units} unit(s) released back to stock.`,
+      data: { orderId: orderNumber, units, lines: released, autoBooked },
+    });
   } catch (error) {
     next(error);
   }

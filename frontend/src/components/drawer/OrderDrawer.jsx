@@ -38,7 +38,8 @@ import { PackageX } from "lucide-react";
 import toast from "react-hot-toast";
 
 export const OrderDrawer = () => {
-  const { selectedOrder, setSelectedOrder, updateOrderStatus, updateOrderPO } = useOrderHistoryStore();
+  const { selectedOrder, setSelectedOrder, updateOrderStatus, updateOrderPO, cancelBooking } =
+    useOrderHistoryStore();
   const { user } = useUserStore();
   const { pendingItems, fetchPendingReservations } = useCartStore();
   const canViewPrice = useCanViewPrice();
@@ -48,6 +49,15 @@ export const OrderDrawer = () => {
   const [busy, setBusy] = useState(false);
   const [isEditingPO, setIsEditingPO] = useState(false);
   const [newPO, setNewPO] = useState("");
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+
+  // Close the confirmation when the drawer switches booking, so a prompt opened
+  // against one booking cannot be confirmed against another.
+  useEffect(() => {
+    setConfirmingCancel(false);
+    setCancelReason("");
+  }, [selectedOrder?.orderNumber]);
 
   const handleSavePO = async () => {
     if (!newPO.trim()) return;
@@ -84,10 +94,37 @@ export const OrderDrawer = () => {
     !['-', ''].includes(String(selectedOrder.poNumber).trim()),
   );
 
+  // Cancellable while the stock is still only reserved and no PO commits it.
+  // Once the PO is raised those units have left inventory against a commitment,
+  // so returning them is a conversation, not a button. The server enforces all
+  // of this too — this only decides whether to offer the action.
+  const canCancel = Boolean(
+    selectedOrder &&
+    selectedOrder.status !== "Cancelled" &&
+    !poRaised &&
+    (selectedOrder.hasReservedStock ?? true),
+  );
+
   const linePaging = usePagination(lineItems, PAGE_SIZE);
   const indentPaging = usePagination(bookingIndents, PAGE_SIZE);
 
   if (!selectedOrder) return null;
+
+  const handleCancelBooking = async () => {
+    setBusy(true);
+    const res = await cancelBooking(selectedOrder, cancelReason.trim());
+    setBusy(false);
+    if (res.success) {
+      toast.success(res.message || "Booking cancelled and stock released.");
+      setConfirmingCancel(false);
+      setCancelReason("");
+      // The released units change what is bookable, so the selection list and
+      // indent views must not keep showing the pre-cancellation position.
+      fetchPendingReservations();
+    } else {
+      toast.error(res.error || "The booking could not be cancelled.");
+    }
+  };
 
   const applyStatus = async (newStatus) => {
     if (busy || newStatus === selectedOrder.status) return;
@@ -177,9 +214,27 @@ export const OrderDrawer = () => {
                   Bulk Import
                 </span>
               )}
+              {selectedOrder.autoBooked && (
+                <span
+                  title="Raised automatically when the stock you indented became available"
+                  className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase rounded-md border border-emerald-200"
+                >
+                  Auto-booked from indent
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
+              {canCancel && (
+                <ERPButton
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmingCancel(true)}
+                  className="text-red-600 border-red-200 hover:bg-red-50"
+                >
+                  <PackageX size={16} className="mr-2" /> Cancel booking
+                </ERPButton>
+              )}
               <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePrint}>
                 <Printer size={16} className="mr-2" /> Print
               </ERPButton>
@@ -455,6 +510,68 @@ export const OrderDrawer = () => {
               );
             })()}
           </div>
+
+          {/* Cancellation confirmation. Releasing stock is not undoable from
+              here — the booking would have to be placed again, and by then the
+              units may be gone — so the quantity being released is spelled out
+              before the customer commits. */}
+          {confirmingCancel && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-900/40 px-6">
+              <div className="w-full max-w-md bg-white rounded-xl shadow-2xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+                    <PackageX size={18} className="text-red-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800">
+                      Cancel booking {selectedOrder.orderNumber}?
+                    </h3>
+                    <p className="text-[11px] text-slate-500">This cannot be undone.</p>
+                  </div>
+                </div>
+
+                <div className="px-5 py-4 flex flex-col gap-3">
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    {selectedOrder.totalQuantity} unit
+                    {selectedOrder.totalQuantity === 1 ? "" : "s"} across{" "}
+                    {lineItems.length} item{lineItems.length === 1 ? "" : "s"} will be
+                    released back into available stock, where anyone can book them.
+                    To order these again you would need to place a fresh booking.
+                  </p>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Reason (optional)
+                    </span>
+                    <input
+                      type="text"
+                      value={cancelReason}
+                      maxLength={300}
+                      autoFocus
+                      placeholder="e.g. no longer required"
+                      onChange={(e) => setCancelReason(e.target.value)}
+                      className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-700
+                                 outline-none focus:ring-1 focus:ring-primary-500"
+                    />
+                  </label>
+                </div>
+
+                <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+                  <ERPButton
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => setConfirmingCancel(false)}
+                  >
+                    Keep booking
+                  </ERPButton>
+                  <ERPButton variant="danger" size="sm" loading={busy} onClick={handleCancelBooking}>
+                    {busy ? "Cancelling..." : "Cancel booking"}
+                  </ERPButton>
+                </div>
+              </div>
+            </div>
+          )}
         </motion.div>
       </div>
     </AnimatePresence>

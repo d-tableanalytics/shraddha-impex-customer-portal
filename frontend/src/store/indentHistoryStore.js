@@ -99,6 +99,9 @@ export const useIndentHistoryStore = create((set, get) => ({
           poNumber: r.poNumber || null,
           pendingQuantity: r.quantity,
           updatedAt: r.updatedAt,
+          // The promised availability date, so the drawer can show and edit it.
+          scheduledDate: r.scheduledDate || null,
+          scheduleNote: r.scheduleNote || null,
           customer:
             typeof c === "object"
               ? { name: c.name || c.company || c.email || "—" }
@@ -209,6 +212,22 @@ export const useIndentHistoryStore = create((set, get) => ({
   clearSelection: () => set({ selectedIds: [] }),
 
   // Admin: move one indent line back into the customer's selection list.
+  scheduleLines: async (items) => {
+    try {
+      const res = await reservationsApi.schedule(items);
+      await get().fetchIndents();
+      // Keep an open drawer in sync with the refreshed data.
+      const open = get().selectedIndent;
+      if (open) {
+        const updated = get().allIndents.find((r) => r.id === open.id);
+        set({ selectedIndent: updated || null });
+      }
+      return { success: true, message: res.message, data: res.data };
+    } catch (err) {
+      return { success: false, error: err.response?.data?.message || err.message };
+    }
+  },
+
   restoreLine: async (reservationId) => {
     try {
       await reservationsApi.restore(reservationId);

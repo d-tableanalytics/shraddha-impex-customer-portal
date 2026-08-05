@@ -6,6 +6,7 @@ import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { isPoGenerated, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { findProductBySku, releaseStock, consumeStock } from '../../utils/stockLedger.js';
+import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
 
 /**
  * Settles the stock held by confirmed bookings.
@@ -92,6 +93,14 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
   console.log(`[Job] Starting PO settlement checks${dryRun ? ' (DRY RUN)' : ''}...`);
   const result = { consumed: [], cancelled: [], skipped: 0 };
 
+  // SKUs whose availability this run moved, in either direction. A release
+  // hands units back and may make somebody's indent fulfillable; a consume
+  // takes them away and must clear any "now available" notice already sent, so
+  // a later restock is announced afresh. Collected across the whole run and
+  // acted on once at the end — a SKU freed by two bookings is then judged
+  // against the final figure rather than an intermediate one.
+  const settledSkus = new Set();
+
   try {
     // Only rows whose stock is still sitting in 'reserved' need settling.
     const rows = await Order.find({
@@ -122,6 +131,7 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
                 referenceType: 'booking',
                 referenceId: orderId,
               });
+              settledSkus.add(row.skuCode);
             }
             row.stockState = 'consumed';
             row.stockSettledAt = new Date();
@@ -160,6 +170,7 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
               referenceId: orderId,
               reasonCode: 'REVERSAL',
             });
+            settledSkus.add(row.skuCode);
           }
           row.stockState = 'released';
           row.stockSettledAt = now;
@@ -207,6 +218,22 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
       }
 
       result.cancelled.push({ orderId, units, lines: lines.map((l) => ({ skuCode: l.skuCode, qty: l.confirmedQty })) });
+    }
+
+    // Units handed back by an auto-cancellation are real availability, so any
+    // PO-less indent they now cover is booked automatically — the same thing
+    // that happens when an admin adjusts stock up by hand. Runs last, after
+    // every booking has been settled and saved, and never throws.
+    //
+    // This cannot re-book the indents these cancellations came from: an indent
+    // is closed when its booking is raised, and cancelling the booking does not
+    // reopen it. Only indents still waiting are eligible.
+    if (!dryRun && settledSkus.size) {
+      const auto = await processAvailableIndents([...settledSkus]);
+      if (auto.bookings) {
+        console.log(`[Job] PO settlement: released stock auto-booked `
+          + `${auto.booked} indent line(s) into ${auto.bookings} booking(s).`);
+      }
     }
 
     console.log(

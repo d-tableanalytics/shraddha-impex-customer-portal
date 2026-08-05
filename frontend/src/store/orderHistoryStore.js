@@ -202,6 +202,21 @@ export const useOrderHistoryStore = create((set, get) => ({
     }
   },
 
+  // Cancel the booking and release its stock. The refreshed booking is pushed
+  // back into the open drawer so the button it was clicked from immediately
+  // reflects the cancelled state rather than inviting a second click.
+  cancelBooking: async (booking, reason) => {
+    try {
+      const res = await ordersApi.cancel(booking.orderNumber, reason);
+      await get().fetchOrders();
+      const updated = get().allOrders.find((o) => o.orderNumber === booking.orderNumber);
+      if (updated) set({ selectedOrder: updated });
+      return { success: true, message: res?.message, units: res?.data?.units };
+    } catch (err) {
+      return { success: false, error: err.response?.data?.message || err.message };
+    }
+  },
+
   refresh: async () => {
     set({
       filters: { status: "all", customer: "all", dateOn: "", dateFrom: "", dateTo: "" },

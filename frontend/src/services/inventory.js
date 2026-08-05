@@ -145,7 +145,6 @@ export const inventoryApi = {
     return { skuCodes: r.data.data || [], total: r.data.total || 0 };
   },
 
-  /** Every SKU code matching a health filter — for select-all on that table. */
   /** The ledger as one row per POSTING rather than per movement. */
   searchLedgerGrouped: async (filters = {}) => {
     const qs = new URLSearchParams();
@@ -160,11 +159,21 @@ export const inventoryApi = {
     };
   },
 
+  /** Every SKU code matching a health filter — for select-all on that table. */
   listHealthCodes: async (filters = {}) => {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(filters)) if (v) qs.append(k, v);
     const r = await api.get(`/inventory/health/codes?${qs.toString()}`);
     return { skuCodes: r.data.data || [], total: r.data.total || 0 };
+  },
+
+  /**
+   * Check a list of SKU codes against the catalogue. Read-only — it creates
+   * nothing and stages nothing, unlike the import pipeline.
+   */
+  lookupSkus: async (skuCodes) => {
+    const r = await api.post("/inventory/items/lookup", { skuCodes });
+    return { data: r.data.data || [], summary: r.data.summary };
   },
 
   getCategories: async () => {

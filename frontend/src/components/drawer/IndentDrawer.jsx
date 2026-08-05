@@ -20,6 +20,7 @@ import { IndentStatusBadge } from "../ui/IndentStatusBadge";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
 import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
+import { IndentScheduleSection } from "./IndentScheduleSection";
 
 const PAGE_SIZE = 10;
 
@@ -266,6 +267,10 @@ export const IndentDrawer = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Scheduling — admin only, and it sits under the lines because
+                    it is about those lines. */}
+                {isAdmin && <IndentScheduleSection lines={lines} />}
               </div>
 
               {/* Sidebar */}

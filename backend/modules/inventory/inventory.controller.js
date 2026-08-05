@@ -1,5 +1,6 @@
 import { Product } from '../../models/Product.js';
 import StockBalance from '../../models/StockBalance.js';
+import StockHealth from '../../models/StockHealth.js';
 import { allowedBrands, canAccessBrand } from '../../utils/brandAccess.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
@@ -167,6 +168,102 @@ const shapeItem = (doc, { showMsil, balance = null }) => {
     ),
     updatedAt: doc.updatedAt,
   };
+};
+
+/** Ceiling on one lookup. Large enough for a real sheet, bounded all the same. */
+const LOOKUP_MAX = 5000;
+
+/**
+ * POST /api/v1/inventory/items/lookup
+ *
+ * Given a list of SKU codes, report what the catalogue holds for each.
+ *
+ * READ ONLY. Nothing is created, nothing is staged, no import job exists — this
+ * answers "what have I actually got for these codes" and stops there. It is
+ * deliberately NOT the import pipeline: that one writes, and a person checking a
+ * supplier's list against their own stock should not have to go near something
+ * that can change it.
+ *
+ * A code that is not in the catalogue is RETURNED, marked as missing, rather
+ * than dropped. Silence would read as "found it, zero stock", which is the one
+ * answer this must never give by accident.
+ */
+export const lookupItems = async (req, res, next) => {
+  try {
+    const brands = allowedBrands(req.user);
+    if (brands.length === 0) return res.status(200).json({ success: true, data: [], summary: null });
+
+    const raw = Array.isArray(req.body?.skuCodes) ? req.body.skuCodes : null;
+    if (!raw || raw.length === 0) {
+      return res.status(400).json({ success: false, message: 'Send a skuCodes array.' });
+    }
+
+    // Order is preserved so the preview reads in the order of the uploaded file.
+    const seen = new Set();
+    const codes = [];
+    for (const c of raw) {
+      const code = typeof c === 'string' ? c.trim() : String(c ?? '').trim();
+      if (!code || seen.has(code)) continue;
+      seen.add(code);
+      codes.push(code);
+      if (codes.length >= LOOKUP_MAX) break;
+    }
+    if (codes.length === 0) {
+      return res.status(400).json({ success: false, message: 'No usable SKU codes were found in the file.' });
+    }
+
+    const showMsil = msilAppliesTo(req.user);
+    const [products, balances, health] = await Promise.all([
+      Product.find(
+        { skuCode: { $in: codes }, brand: { $in: brands } },
+        'skuCode brand msilCode description uom status',
+      ).lean(),
+      StockBalance.aggregate([
+        { $match: { skuCode: { $in: codes }, brand: { $in: brands } } },
+        { $group: { _id: '$skuCode', onHand: { $sum: '$onHand' }, reserved: { $sum: '$reserved' } } },
+      ]),
+      StockHealth.find({ skuCode: { $in: codes }, brand: { $in: brands } }, 'skuCode band').lean(),
+    ]);
+
+    const P = new Map(products.map((p) => [p.skuCode, p]));
+    const B = new Map(balances.map((b) => [b._id, b]));
+    const H = new Map(health.map((h) => [h.skuCode, h]));
+
+    const data = codes.map((code) => {
+      const p = P.get(code);
+      if (!p) return { skuCode: code, found: false };
+      const b = B.get(code);
+      const onHand = b?.onHand ?? 0;
+      const reserved = b?.reserved ?? 0;
+      return {
+        skuCode: code,
+        found: true,
+        brand: p.brand,
+        msilCode: showMsil ? (p.msilCode || null) : null,
+        description: p.description || null,
+        uom: p.uom || 'PCS',
+        status: p.status,
+        onHand,
+        reserved,
+        available: onHand - reserved,
+        band: H.get(code)?.band ?? null,
+      };
+    });
+
+    const found = data.filter((d) => d.found);
+    res.status(200).json({
+      success: true,
+      data,
+      summary: {
+        requested: raw.length,
+        unique: codes.length,
+        found: found.length,
+        missing: data.length - found.length,
+        totalAvailable: found.reduce((n, d) => n + d.available, 0),
+        truncated: raw.length > LOOKUP_MAX,
+      },
+    });
+  } catch (error) { next(error); }
 };
 
 /**

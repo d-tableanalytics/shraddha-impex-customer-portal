@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Boxes, Search, AlertCircle, X, Save, Loader2, Layers, PackagePlus } from 'lucide-react';
+import { Boxes, Search, AlertCircle, X, Save, Loader2, Layers, PackagePlus, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 
@@ -13,6 +13,7 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { BulkPlanningEditor } from '../../components/inventory/BulkPlanningEditor';
 import { UpdateStockModal } from '../../components/inventory/UpdateStockModal';
 import { ExportButton } from '../../components/inventory/ExportButton';
+import { SkuLookupModal } from '../../components/inventory/SkuLookupModal';
 import { inventoryApi } from '../../services/inventory';
 import { useInventoryStore } from '../../store/inventoryStore';
 import { useUserStore } from '../../store/userStore';
@@ -266,6 +267,7 @@ export const InventoryMaster = () => {
   // because the adjustment endpoint is brand-scoped and the same SKU code can
   // exist under more than one brand.
   const [adjusting, setAdjusting] = useState(null);
+  const [lookupOpen, setLookupOpen] = useState(false);
 
   const togglePick = (skuCode) => setPicked((prev) => {
     const next = new Set(prev);
@@ -352,6 +354,10 @@ export const InventoryMaster = () => {
       <PageHeader
         title="Inventory Master"
         actions={(
+          <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setLookupOpen(true)}>
+            <Upload size={15} className="mr-2" />Import
+          </Button>
           <ExportButton
             exportType="inventory-master"
             filters={{
@@ -360,6 +366,7 @@ export const InventoryMaster = () => {
             }}
             selected={[...picked]}
           />
+          </div>
         )}
       />
 
@@ -672,6 +679,8 @@ export const InventoryMaster = () => {
         // throw away the context the warning panel is describing.
         onDone={() => fetchItems()}
       />
+
+      <SkuLookupModal open={lookupOpen} onClose={() => setLookupOpen(false)} />
 
       <UpdateStockModal
         open={Boolean(adjusting)}

@@ -18,19 +18,17 @@ import { api } from "../../services/api";
 import { reservationsApi } from "../../services/reservations";
 import toast from "react-hot-toast";
 import { Download, AlertTriangle, Check, RefreshCw } from "lucide-react";
-import { ReviewIndentModal } from "../../components/booking/ReviewIndentModal";
 import { computeReview, linesFromBulkRows } from "../../utils/bookingReview";
 
 export const BulkUpload = () => {
   const navigate = useNavigate();
   const { file, rows, summary, setFile, setRows, updateRow, removeRow, reset: resetStore } =
     useBulkImportStore();
-  const { confirmBooking, fetchReservations } = useCartStore();
+  const { fetchReservations } = useCartStore();
   // Non-MSIL customers upload by SKU Code alone.
   const showMsilCode = useShowMsilCode();
   const [isParsing, setIsParsing] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
-  const [showReview, setShowReview] = useState(false);
   const [excludedRowIds, setExcludedRowIds] = useState([]);
 
   // Clearing the session also clears row exclusions.
@@ -143,23 +141,24 @@ export const BulkUpload = () => {
   };
 
   const handleDirectConfirm = async () => {
-    setShowReview(false);
     setIsConfirming(true);
     try {
-      // 1. Create reservations for every valid row.
-      const { failures } = await importValidRows();
+      // Reserve every valid row — this is what puts them on the Selection List.
+      const { attempted, failures } = await importValidRows();
       if (failures.length > 0) {
         throw new Error(`Some items could not be reserved: ${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "…" : ""}`);
       }
 
-      // 2. Confirm booking immediately
-      await confirmBooking();
-
-      toast.success("Bulk booking confirmed successfully!", { icon: "🚀" });
+      // STOP HERE. The booking is NOT confirmed from this screen — the upload's
+      // job is to fill the Selection List, and confirming happens on Create
+      // Booking exactly as it does for an item added by hand. Booking straight
+      // from here gave the file a shortcut past the review every other booking
+      // goes through.
+      toast.success(`${attempted} item${attempted === 1 ? "" : "s"} added to your Selection List.`);
       reset();
-      navigate("/orders/history");
+      navigate("/orders/new");
     } catch (err) {
-      toast.error(err.message || err.response?.data?.message || "Failed to confirm bulk booking directly.");
+      toast.error(err.message || err.response?.data?.message || "Failed to add the uploaded rows to the Selection List.");
     } finally {
       setIsConfirming(false);
     }
@@ -264,11 +263,11 @@ export const BulkUpload = () => {
                   variant="success"
                   size="lg"
                   disabled={!canConfirm}
-                  onClick={() => setShowReview(true)}
+                  onClick={handleDirectConfirm}
                   className="w-full md:w-auto px-8 shadow-md bg-green-600 hover:bg-green-700 ring-2 ring-green-300"
                 >
                   <Check size={18} className="mr-2 text-white" />
-                  {isConfirming ? "Confirming..." : `Confirm Booking (${selectedCount})`}
+                  {isConfirming ? "Adding..." : `Continue to Booking (${selectedCount})`}
                 </ERPButton>
               </div>
             </>
@@ -279,17 +278,6 @@ export const BulkUpload = () => {
           )}
         </div>
       </div>
-
-      {/* The individual flow's popup, driven by the uploaded rows. */}
-      <ReviewIndentModal
-        isOpen={showReview}
-        onClose={() => setShowReview(false)}
-        onConfirm={handleDirectConfirm}
-        review={bulkReview}
-        loading={isConfirming}
-        itemCount={reviewLines.length}
-        unitCount={reviewLines.reduce((n, l) => n + l.orderQuantity, 0)}
-      />
 
     </div>
   );
