@@ -2,6 +2,7 @@ import { Search, Filter, Download, X, Users } from "lucide-react";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { ERPButton } from "../ui/ERPButton";
+import { DateField } from "../ui/DateField";
 import { useIndentHistoryStore, INDENT_STATUSES } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
 
@@ -176,29 +177,29 @@ export const IndentToolbar = () => {
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold text-slate-600">Date</label>
-            <input
-              type="date"
+            <DateField
               value={filters.dateOn}
-              onChange={(e) => setFilters({ dateOn: e.target.value, dateFrom: "", dateTo: "" })}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:border-primary-500 text-slate-700 font-semibold"
+              onChange={(v) => setFilters({ dateOn: v, dateFrom: "", dateTo: "" })}
+              placeholder="Any date"
             />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold text-slate-600">From Date</label>
-            <input
-              type="date"
+            <DateField
               value={filters.dateFrom}
-              onChange={(e) => setFilters({ dateFrom: e.target.value, dateOn: "" })}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:border-primary-500 text-slate-700 font-semibold"
+              onChange={(v) => setFilters({ dateFrom: v, dateOn: "" })}
+              max={filters.dateTo || undefined}
+              placeholder="Start date"
             />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold text-slate-600">To Date</label>
-            <input
-              type="date"
+            <DateField
               value={filters.dateTo}
-              onChange={(e) => setFilters({ dateTo: e.target.value, dateOn: "" })}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:border-primary-500 text-slate-700 font-semibold"
+              onChange={(v) => setFilters({ dateTo: v, dateOn: "" })}
+              min={filters.dateFrom || undefined}
+              placeholder="End date"
+              align="right"
             />
           </div>
         </div>

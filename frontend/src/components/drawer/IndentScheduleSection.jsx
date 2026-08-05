@@ -3,6 +3,8 @@ import { CalendarClock, Loader2, Save, Info } from "lucide-react";
 import toast from "react-hot-toast";
 
 import { useIndentHistoryStore } from "../../store/indentHistoryStore";
+import { DateField } from "../ui/DateField";
+import { toYmd, todayYmd, formatDisplayDate } from "../../utils/dateValue";
 
 /**
  * Schedule when each indented SKU is expected to become available.
@@ -17,21 +19,7 @@ import { useIndentHistoryStore } from "../../store/indentHistoryStore";
  * happens to be on the shelf. Clearing the date withdraws the promise.
  */
 
-const todayYmd = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-
-/** A Date to the "YYYY-MM-DD" a date input wants, in LOCAL time. */
-const toYmd = (value) => {
-  if (!value) return "";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-
-const fmt = (value) =>
-  new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+const fmt = (value) => formatDisplayDate(new Date(value));
 
 export const IndentScheduleSection = ({ lines }) => {
   const { scheduleLines } = useIndentHistoryStore();
@@ -118,13 +106,12 @@ export const IndentScheduleSection = ({ lines }) => {
                     {l.pendingQuantity}
                   </td>
                   <td className="px-5 py-3">
-                    <input
-                      type="date"
+                    <DateField
                       min={todayYmd()}
                       value={value}
-                      onChange={(e) => setDraft((d) => ({ ...d, [l._id]: e.target.value }))}
-                      className="px-2.5 py-1.5 border border-slate-300 rounded-md text-sm text-slate-700
-                                 bg-white outline-none focus:ring-1 focus:ring-primary-500"
+                      onChange={(v) => setDraft((d) => ({ ...d, [l._id]: v }))}
+                      placeholder="Not scheduled"
+                      className="min-w-42 py-1.5"
                     />
                   </td>
                   <td className="px-5 py-3 text-xs">

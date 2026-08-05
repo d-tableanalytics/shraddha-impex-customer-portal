@@ -13,6 +13,7 @@ import { useLedgerStore } from '../../store/ledgerStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import { hasPermission, PERMISSIONS } from '../../utils/permissions';
+import { DateField } from "../../components/ui/DateField";
 
 /**
  * Stock Ledger — IMS Module M2, blueprint screen S6.
@@ -275,18 +276,20 @@ export const StockLedger = () => {
           </Field>
 
           <Field label="From">
-            <input
-              type="date" value={filters.from}
-              onChange={(e) => setFilters({ from: e.target.value })}
-              className={inputCls}
+            <DateField
+              value={filters.from}
+              onChange={(v) => setFilters({ from: v })}
+              max={filters.to || undefined}
+              placeholder="Start date"
             />
           </Field>
 
           <Field label="To">
-            <input
-              type="date" value={filters.to}
-              onChange={(e) => setFilters({ to: e.target.value })}
-              className={inputCls}
+            <DateField
+              value={filters.to}
+              onChange={(v) => setFilters({ to: v })}
+              min={filters.from || undefined}
+              placeholder="End date"
             />
           </Field>
 

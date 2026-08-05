@@ -18,6 +18,7 @@ import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import { hasPermission, canUseInventoryMaster, PERMISSIONS } from '../../utils/permissions';
 import { formatAvailablePercent, bandLabel } from '../../utils/inventoryFormat';
+import { DateField } from "../../components/ui/DateField";
 
 /**
  * Inventory Dashboard — IMS Module M5.
@@ -195,11 +196,11 @@ export const InventoryDashboard = () => {
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">Activity from</label>
-            <input type="date" value={filters.from} onChange={(e) => setFilters({ from: e.target.value })} className={inputCls} />
+            <DateField value={filters.from} onChange={(v) => setFilters({ from: v })} max={filters.to || undefined} placeholder="Start date" />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">Activity to</label>
-            <input type="date" value={filters.to} onChange={(e) => setFilters({ to: e.target.value })} className={inputCls} />
+            <DateField value={filters.to} onChange={(v) => setFilters({ to: v })} min={filters.from || undefined} placeholder="End date" />
           </div>
         </CardContent>
       </Card>
