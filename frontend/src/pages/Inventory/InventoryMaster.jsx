@@ -255,6 +255,12 @@ export const InventoryMaster = () => {
   } = useInventoryStore();
 
   const [searchTerm, setSearchTerm] = useState('');
+
+  // True from the first keystroke, not only once the request is in flight.
+  // The search box waits 300ms before firing, and during that pause the old
+  // rows sat there looking like the filter had been ignored. This spans the
+  // debounce window and the request as one continuous "working" state.
+  const filtering = loading || searchTerm !== filters.search;
   const [saving, setSaving] = useState(false);
 
   // Bulk selection. Held as SKU codes rather than row indexes so a selection
@@ -481,11 +487,14 @@ export const InventoryMaster = () => {
                   ? 'Everything matching the current filter, across all pages.'
                   : 'Selection is by SKU, so it survives sorting and paging.'}
               </span>
-              <div className="ml-auto flex gap-2">
-                <Button size="xs" variant="secondary" onClick={() => setPicked(new Set())}>
+              {/* `sm` rather than `xs`: these two commit or discard a change
+                  across thousands of rows, so they get a comfortable target
+                  rather than the compact sizing used for pagers. */}
+              <div className="ml-auto flex items-center gap-2.5">
+                <Button size="sm" variant="secondary" onClick={() => setPicked(new Set())}>
                   Clear
                 </Button>
-                <Button size="xs" onClick={() => setBulkOpen(true)}>
+                <Button size="sm" onClick={() => setBulkOpen(true)}>
                   Edit selected
                 </Button>
               </div>
@@ -521,11 +530,14 @@ export const InventoryMaster = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {loading && items.length === 0 && (
-                  <TableSkeleton rows={10} columns={8 + (canEdit ? 1 : 0) + (canAdjust ? 1 : 0)} />
+                {filtering && (
+                  <TableSkeleton
+                    rows={items.length || 10}
+                    columns={8 + (canEdit ? 1 : 0) + (canAdjust ? 1 : 0)}
+                  />
                 )}
 
-                {items.map((item) => (
+                {!filtering && items.map((item) => (
                   <tr
                     key={item.id}
                     onClick={() => openItem(item.skuCode)}
@@ -606,7 +618,7 @@ export const InventoryMaster = () => {
                   </tr>
                 ))}
 
-                {!loading && items.length === 0 && (
+                {!filtering && items.length === 0 && (
                   <tr>
                     <td
                       colSpan={8 + (canEdit ? 1 : 0) + (canAdjust ? 1 : 0)}

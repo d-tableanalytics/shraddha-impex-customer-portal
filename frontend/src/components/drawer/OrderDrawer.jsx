@@ -29,8 +29,6 @@ import { StatusBadge } from "../ui/StatusBadge";
 import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
-import { OrderSummaryCard } from "../cards/OrderSummaryCard";
-import { useCanViewPrice } from "../../hooks/useCanViewPrice";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
 import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
@@ -42,7 +40,6 @@ export const OrderDrawer = () => {
     useOrderHistoryStore();
   const { user } = useUserStore();
   const { pendingItems, fetchPendingReservations } = useCartStore();
-  const canViewPrice = useCanViewPrice();
   const showMsilCode = useShowMsilCode();
   const isAdmin = user?.role === "Admin";
 
@@ -135,20 +132,17 @@ export const OrderDrawer = () => {
     else toast.error(res.error || "Failed to update status");
   };
 
-  // Build printable / exportable rows for this order (price columns admin-only).
+  // Build printable / exportable rows for this order.
   const buildExport = () => {
     const items = Array.isArray(selectedOrder.items) ? selectedOrder.items : [];
     const rows = items.map((item, i) => {
       const p = item.product || {};
       const qty = item.orderQuantity ?? item.quantity ?? 0;
-      const price = p.price || 0;
       return {
         sr: i + 1,
         code: p.code || p.name || "-",
         msil: p.msilCode || selectedOrder.msilCode || "-",
         qty,
-        price: price.toFixed(2),
-        subtotal: (price * qty).toFixed(2),
       };
     });
     const columns = [
@@ -156,12 +150,6 @@ export const OrderDrawer = () => {
       { key: "code", label: "SKU / Product" },
       ...(showMsilCode ? [{ key: "msil", label: "MSIL Code" }] : []),
       { key: "qty", label: "Qty" },
-      ...(canViewPrice
-        ? [
-            { key: "price", label: "Unit Price (INR)" },
-            { key: "subtotal", label: "Subtotal (INR)" },
-          ]
-        : []),
     ];
     const title = `Booking ${selectedOrder.orderNumber}${selectedOrder.customer ? ` - ${selectedOrder.customer}` : ""}`;
     return { rows, columns, title };
@@ -348,8 +336,6 @@ export const OrderDrawer = () => {
                           <th className="px-5 py-3">{showMsilCode ? "Code / MSIL" : "SKU Code"}</th>
                           <th className="px-5 py-3">Product Name</th>
                           <th className="px-5 py-3 text-center">Qty</th>
-                          {canViewPrice && <th className="px-5 py-3 text-right">Unit Price</th>}
-                          {canViewPrice && <th className="px-5 py-3 text-right">Subtotal</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
@@ -376,19 +362,6 @@ export const OrderDrawer = () => {
                             <td className="px-5 py-4 text-center font-bold text-slate-700">
                               {item.orderQuantity} {item.product.unit}
                             </td>
-                            {canViewPrice && (
-                              <td className="px-5 py-4 text-right font-semibold text-slate-600">
-                                ₹{item.product.price.toLocaleString()}
-                              </td>
-                            )}
-                            {canViewPrice && (
-                              <td className="px-5 py-4 text-right font-black text-slate-900">
-                                ₹
-                                {(
-                                  item.product.price * item.orderQuantity
-                                ).toLocaleString()}
-                              </td>
-                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -472,8 +445,6 @@ export const OrderDrawer = () => {
 
               {/* Sidebar */}
               <div className="flex flex-col gap-6">
-                {canViewPrice && <OrderSummaryCard order={selectedOrder} />}
-
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col">
                   <div className="px-5 py-4 border-b border-slate-100">
                     <h3 className="text-sm font-bold text-slate-800">

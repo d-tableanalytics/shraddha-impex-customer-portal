@@ -174,6 +174,12 @@ export const StockLedger = () => {
 
   const [skuTerm, setSkuTerm] = useState('');
 
+  // True from the first keystroke, not only once the request is in flight.
+  // The search box waits 300ms before firing, and during that pause the old
+  // rows sat there looking like the filter had been ignored. This spans the
+  // debounce window and the request as one continuous "working" state.
+  const filtering = loading || skuTerm !== filters.skuCode;
+
   // One fetch on mount, then one per settled SKU term. The debounce skips its
   // first run so mounting costs a single request.
   const firstRender = useRef(true);
@@ -362,7 +368,7 @@ export const StockLedger = () => {
               <span className="text-sm font-bold text-primary-900">
                 {picked.size.toLocaleString()} movement{picked.size === 1 ? '' : 's'} selected
               </span>
-              <Button size="xs" variant="secondary" className="ml-auto" onClick={() => setPicked(new Set())}>
+              <Button size="sm" variant="secondary" className="ml-auto" onClick={() => setPicked(new Set())}>
                 Clear
               </Button>
             </div>
@@ -382,9 +388,9 @@ export const StockLedger = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {loading && groups.length === 0 && <TableSkeleton rows={8} columns={6} cellClass="px-5 py-4" />}
+                  {filtering && <TableSkeleton rows={groups.length || 8} columns={6} cellClass="px-5 py-4" />}
 
-                  {groups.map((g) => (
+                  {!filtering && groups.map((g) => (
                     <tr
                       key={g.batchId}
                       onClick={() => openBatch(g.batchId)}
@@ -420,7 +426,7 @@ export const StockLedger = () => {
                     </tr>
                   ))}
 
-                  {!loading && groups.length === 0 && !error && (
+                  {!filtering && groups.length === 0 && !error && (
                     <tr>
                       <td colSpan={6} className="px-6 py-12 text-center text-slate-500 font-medium">
                         No postings match these filters.
@@ -456,9 +462,9 @@ export const StockLedger = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {loading && movements.length === 0 && <TableSkeleton rows={10} columns={10} cellClass="px-5 py-4" />}
+                {filtering && <TableSkeleton rows={movements.length || 10} columns={10} cellClass="px-5 py-4" />}
 
-                {movements.map((m) => (
+                {!filtering && movements.map((m) => (
                   <tr
                     key={m.transactionId}
                     className={`transition-colors ${picked.has(m.transactionId) ? 'bg-primary-50/60' : 'hover:bg-slate-50'}`}
@@ -534,7 +540,7 @@ export const StockLedger = () => {
                   </tr>
                 ))}
 
-                {!loading && movements.length === 0 && !error && (
+                {!filtering && movements.length === 0 && !error && (
                   <tr>
                     <td colSpan={10} className="px-6 py-12 text-center">
                       <p className="text-slate-600 font-semibold">No movements in this range</p>

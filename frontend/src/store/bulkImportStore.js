@@ -9,7 +9,6 @@ const initialSummary = {
   mergedRows: 0,
   totalProducts: 0,
   totalQuantity: 0,
-  estimatedValue: 0,
 };
 
 // Fully re-evaluates a row after a client-side edit. Server-validated rows are
@@ -75,10 +74,6 @@ export const computeSummary = (rows) => {
     (acc, r) => acc + (r.quantity || 0),
     0,
   );
-  const estimatedValue = validItems.reduce((acc, r) => {
-    return acc + (r.quantity || 0) * (r.product?.price || 0);
-  }, 0);
-
   return {
     totalRows,
     validRows,
@@ -87,7 +82,6 @@ export const computeSummary = (rows) => {
     mergedRows,
     totalProducts,
     totalQuantity,
-    estimatedValue,
   };
 };
 

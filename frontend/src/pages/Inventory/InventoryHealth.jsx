@@ -185,6 +185,12 @@ export const InventoryHealth = () => {
 
   const [skuTerm, setSkuTerm] = useState('');
 
+  // True from the first keystroke, not only once the request is in flight.
+  // The search box waits 300ms before firing, and during that pause the old
+  // rows sat there looking like the filter had been ignored. This spans the
+  // debounce window and the request as one continuous "working" state.
+  const filtering = loading || skuTerm !== filters.skuCode;
+
   // One fetch on mount, then one per settled term — the debounce skips its
   // first run so mounting costs a single request.
   const firstRender = useRef(true);
@@ -356,7 +362,7 @@ export const InventoryHealth = () => {
                     ? 'Everything matching the current filter, across all pages.'
                     : 'Selection is by SKU, so it survives sorting and paging.'}
                 </span>
-                <Button size="xs" variant="secondary" className="ml-auto" onClick={() => setPicked(new Set())}>
+                <Button size="sm" variant="secondary" className="ml-auto" onClick={() => setPicked(new Set())}>
                   Clear
                 </Button>
               </div>
@@ -387,9 +393,9 @@ export const InventoryHealth = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {loading && items.length === 0 && <TableSkeleton rows={10} columns={9} cellClass="px-5 py-4" />}
+                {filtering && <TableSkeleton rows={items.length || 10} columns={9} cellClass="px-5 py-4" />}
 
-                {items.map((h) => (
+                {!filtering && items.map((h) => (
                   <tr
                     key={`${h.brand}-${h.skuCode}`}
                     onClick={() => openItem(h.skuCode)}
@@ -430,7 +436,7 @@ export const InventoryHealth = () => {
                   </tr>
                 ))}
 
-                {!loading && items.length === 0 && !error && (
+                {!filtering && items.length === 0 && !error && (
                   <tr>
                     <td colSpan={9} className="px-6 py-12 text-center">
                       <p className="text-slate-600 font-semibold">No SKUs match these filters</p>

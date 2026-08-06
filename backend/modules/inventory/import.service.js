@@ -746,28 +746,81 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
   }).lean();
   const byKey = new Map(balances.map((b) => [`${b.skuCode}::${b.brand}::${b.locationCode}`, b]));
 
-  const lines = wanted.map((row) => {
+  // A negative quantity DEDUCTS. Rows that cannot legally reduce stock are
+  // rejected individually and the rest of the file still posts — one bad line
+  // in a thousand-row sheet should not cost the operator the whole upload.
+  const lines = [];
+  const posting = [];
+
+  for (const row of wanted) {
     const d = row.data;
-    const before = byKey.get(`${d.skuCode}::${d.brand}::${d.locationCode}`)?.onHand ?? 0;
+    const balance = byKey.get(`${d.skuCode}::${d.brand}::${d.locationCode}`);
+    const before = balance?.onHand ?? 0;
+    const reserved = balance?.reserved ?? 0;
+    const after = before + d.quantity;
+
+    if (d.quantity < 0) {
+      // A SKU this file just created holds nothing, so there is nothing to take.
+      if (d.isNewSku === true && before === 0) {
+        failures.push({
+          rowNumber: row.rowNumber,
+          reason: `${d.skuCode} is new and holds no stock, so ${d.quantity} cannot be deducted.`,
+        });
+        continue;
+      }
+      // Physical stock cannot go negative.
+      if (after < 0) {
+        failures.push({
+          rowNumber: row.rowNumber,
+          reason: `Deducting ${Math.abs(d.quantity)} would take ${d.skuCode} to ${after}. `
+            + `Only ${before} on hand.`,
+        });
+        continue;
+      }
+      // Reserved units are committed to live bookings. Cutting on-hand below
+      // them does not un-commit anything — it just creates an oversell that
+      // surfaces at dispatch, so it is refused here where it is still visible.
+      if (after < reserved) {
+        failures.push({
+          rowNumber: row.rowNumber,
+          reason: `${reserved} unit${reserved === 1 ? ' is' : 's are'} reserved against live bookings for `
+            + `${d.skuCode}, so on hand cannot drop to ${after}.`,
+        });
+        continue;
+      }
+    }
 
     // A SKU this file CREATED has no prior position, so its quantity is an
     // OPENING balance — the same movement type the go-live load used. One that
     // already existed is receiving stock on top of what it holds, which is a
     // RECEIPT. Filing the first as a receipt would say goods arrived when what
     // actually happened is that a starting position was recorded.
+    //
+    // A reduction is neither. It is filed as an ADJUSTMENT, the same type the
+    // Update Stock dialog posts for "Adjust by -5", so a correction made by
+    // hand and one made by spreadsheet are indistinguishable in the ledger.
+    // ISSUE was the other candidate and was rejected: it asserts goods left the
+    // building, which a negative cell does not actually say.
     const isNew = d.isNewSku === true && before === 0;
+    const movementType = d.quantity < 0 ? 'ADJUSTMENT' : (isNew ? 'OPENING' : 'RECEIPT');
 
-    return {
-      movementType: isNew ? 'OPENING' : 'RECEIPT',
+    lines.push({
+      movementType,
       skuCode: d.skuCode,
       brand: d.brand,
       locationCode: d.locationCode,
       quantity: d.quantity,
       beforeQuantity: before,
-      afterQuantity: before + d.quantity,
-      note: isNew ? `Opening stock from ${job.fileName}` : `Received via ${job.fileName}`,
-    };
-  });
+      afterQuantity: after,
+      reasonCode: d.quantity < 0 ? 'MANUAL_ADJUSTMENT' : undefined,
+      note: d.quantity < 0
+        ? `Deducted via ${job.fileName}`
+        : (isNew ? `Opening stock from ${job.fileName}` : `Received via ${job.fileName}`),
+    });
+    posting.push(row);
+  }
+
+  if (lines.length === 0) return { successes, failures, refs: [] };
 
   let result;
   try {
@@ -782,13 +835,15 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
     }, req);
   } catch (error) {
     if (isRetryable(error)) throw error;
-    for (const row of wanted) failures.push({ rowNumber: row.rowNumber, reason: error.message });
+    // Only the rows that were actually in this batch — rows already rejected
+    // above have their own, more specific reason and must not be overwritten.
+    for (const row of posting) failures.push({ rowNumber: row.rowNumber, reason: error.message });
     return { successes, failures, refs: [] };
   }
 
   const posted = await StockMovement.find({ batchId: result.batch.batchId }).lean();
   if (!result.replayed && posted.length) await applyMovements(posted);
-  const touched = [...new Set(wanted.map((r) => r.data.skuCode))];
+  const touched = [...new Set(posting.map((r) => r.data.skuCode))];
   await recomputeHealthForSkus(touched);
   await syncLegacyStock(touched);
   await processAvailableIndents(touched);

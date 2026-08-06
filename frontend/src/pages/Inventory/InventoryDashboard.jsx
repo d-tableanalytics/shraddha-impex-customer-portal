@@ -217,7 +217,11 @@ export const InventoryDashboard = () => {
         </div>
       )}
 
-      {loading && !data ? <DashboardSkeleton /> : data && (
+      {/* `loading` alone, not `loading && !data`. Keeping the previous figures
+          on screen during a refetch made a date-range change look like it had
+          done nothing for the second or two the request takes — the numbers sat
+          there unchanged, so the user clicked again. */}
+      {loading ? <DashboardSkeleton /> : data && (
         <>
           {/* ── KPI cards ─────────────────────────────────────────────── */}
           {/* Overstock and Unknown are deliberately not surfaced as KPI tiles.

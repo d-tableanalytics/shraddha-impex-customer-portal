@@ -133,7 +133,6 @@ export const useOrderHistoryStore = create((set, get) => ({
       let cmp = 0;
       if (sortBy === "date")
         cmp = new Date(a.date).getTime() - new Date(b.date).getTime();
-      if (sortBy === "value") cmp = (a.grandTotal || 0) - (b.grandTotal || 0);
       if (sortBy === "status") cmp = String(a.status || "").localeCompare(String(b.status || ""));
       return sortOrder === "asc" ? cmp : -cmp;
     });

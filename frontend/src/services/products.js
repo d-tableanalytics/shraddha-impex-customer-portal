@@ -12,7 +12,6 @@ const mapProduct = (p) => {
     brand:          p.vendorName || null,
     category:       Array.isArray(p.category) ? p.category.join(', ') : (p.category || null),
     warehouse:      null,               // not in Product schema
-    price:          0,                  // not in Product schema
     availableStock: p.availableForSale ?? 0,
     reservedStock:  p.bookedQuantity  ?? 0,
     unit:           'PCS',

@@ -55,7 +55,6 @@ export const useCartStore = create((set, get) => ({
             brand: p.brand || '—',
             availableStock: p.availableForSale !== undefined ? p.availableForSale : 0,
             moq: p.moq || 1,
-            price: p.price || 0,
             unit: p.unit || 'PCS',
             warehouse: p.warehouse || 'Warehouse'
           }
@@ -221,13 +220,4 @@ export const useCartStore = create((set, get) => ({
   getTotalQuantity: () =>
     get().items.reduce((total, item) => total + item.orderQuantity, 0),
 
-  getEstimatedValue: () =>
-    get().items.reduce(
-      (total, item) => total + (item.product.price || 0) * item.orderQuantity,
-      0,
-    ),
-
-  getTax: () => get().getEstimatedValue() * 0.18, // 18% standard tax
-
-  getGrandTotal: () => get().getEstimatedValue() + get().getTax(),
 }));

@@ -20,6 +20,12 @@ export const Inventory = () => {
   const showMsilCode = useShowMsilCode();
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // True from the first keystroke, not only once the request is in flight.
+  // The search box waits 300ms before firing, and during that pause the old
+  // rows sat there looking like the filter had been ignored. This spans the
+  // debounce window and the request as one continuous "working" state.
+  const filtering = inventoryLoading || searchTerm !== debouncedSearch;
   const [sortBy, setSortBy] = useState('name-asc');
   const [selectedBrand, setSelectedBrand] = useState('');
   const [page, setPage] = useState(1);
@@ -205,11 +211,11 @@ export const Inventory = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {inventoryLoading && items.length === 0 && (
-                  <TableSkeleton rows={PAGE_SIZE} columns={showMsilCode ? 5 : 4} />
+                {filtering && (
+                  <TableSkeleton rows={items.length || PAGE_SIZE} columns={showMsilCode ? 5 : 4} />
                 )}
                 <AnimatePresence>
-                  {items.map(product => (
+                  {!filtering && items.map(product => (
                     <motion.tr 
                       key={product.code}
                       initial={{ opacity: 0 }}

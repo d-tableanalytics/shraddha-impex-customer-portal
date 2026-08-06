@@ -10,7 +10,6 @@ export const mapOrder = (order) => {
       code: order.skuCode,
       name: order.brand ? `${order.brand} Product` : order.skuCode,
       warehouse: 'Default',
-      price: 0,
       availableStock: order.requestedQty || 0,
       unit: 'PCS'
     },
@@ -28,9 +27,6 @@ export const mapOrder = (order) => {
     workflowStage: order.status, 
     items,
     totalQuantity,
-    estimatedValue: order.totalValue || 0,
-    grandTotal: order.grandTotal || 0,
-    orderValue: order.grandTotal || order.totalValue || 0,
     priority: order.priority || 'Medium',
     createdDate: order.createdAt || order.date || new Date().toISOString(),
     auditLogs: (order.auditLogs || []).map((log) => ({

@@ -128,8 +128,7 @@ export const Autocomplete = ({
                     {product.name}
                   </span>
                   <span className="text-xs text-slate-400">
-                    {product.brand} · {product.category} · ₹
-                    {product.price.toFixed(2)}
+                    {product.brand} · {product.category}
                   </span>
                 </li>
               ))}

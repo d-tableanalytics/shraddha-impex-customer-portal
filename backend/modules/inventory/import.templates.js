@@ -107,7 +107,8 @@ export const IMPORT_TEMPLATES = {
     label: 'Inventory Master',
     description:
       'SKU and quantity. A SKU already in the catalogue has its Quantity ADDED to stock; a SKU '
-      + 'that is new is created, and its Quantity becomes the opening stock.',
+      + 'that is new is created, and its Quantity becomes the opening stock. '
+      + 'A NEGATIVE quantity (e.g. -5) is DEDUCTED from stock instead.',
     permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
     keyFields: ['skuCode'],
     // Deliberately NOT requireExistingSku: creating what is missing is half of
@@ -128,8 +129,14 @@ export const IMPORT_TEMPLATES = {
       SKU,
       { header: 'MSIL Code', field: 'msilCode', type: 'string', required: false, note: 'Optional. Checked against the catalogue if given.' },
       {
-        header: 'Quantity', field: 'quantity', type: 'int', required: false, min: 0,
-        note: 'Added to stock for an existing SKU; recorded as opening stock for a new one. Blank leaves stock alone.',
+        // No `min`: a negative quantity is a deduction, which is the whole
+        // point of allowing a signed figure here. The floor that matters is not
+        // the cell value but the resulting stock, and that is enforced when the
+        // movement is posted — a row may only reduce stock as far as zero, and
+        // no further than the units already reserved against live bookings.
+        header: 'Quantity', field: 'quantity', type: 'int', required: false,
+        note: 'Positive adds to stock (or sets opening stock for a new SKU). '
+          + 'Negative deducts, e.g. -5. Blank leaves stock alone.',
       },
     ],
     sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 250 },

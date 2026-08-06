@@ -87,7 +87,25 @@ export const UpdateStockModal = ({ open, skuCode, brand, onClose, onDone }) => {
     const a = before + d;
 
     if (d === 0) return { delta: 0, after: a, problem: 'That is the current figure — nothing would change.' };
-    if (a < 0) return { delta: d, after: a, problem: `That would take stock to ${a}. Stock cannot go negative.` };
+
+    // Two different reasons a reduction fails, and they need different wording.
+    // "Stock cannot go negative" against a SKU holding nothing reads as "you may
+    // not type a minus sign", which is not what is being refused — the minus
+    // sign is fine, there is simply nothing on the shelf to take.
+    if (a < 0 && before === 0) {
+      return {
+        delta: d,
+        after: a,
+        problem: 'There is no stock on hand to deduct. Add stock first, or use "Set to" to record a figure.',
+      };
+    }
+    if (a < 0) {
+      return {
+        delta: d,
+        after: a,
+        problem: `Only ${before.toLocaleString()} on hand, so ${Math.abs(d).toLocaleString()} cannot be deducted.`,
+      };
+    }
     if (a < reserved) {
       return {
         delta: d,

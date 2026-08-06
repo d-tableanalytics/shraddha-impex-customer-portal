@@ -267,9 +267,9 @@ export const StockCounts = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {loading && counts.length === 0 && <TableSkeleton rows={8} columns={7} cellClass="px-5 py-4" />}
+                {loading && <TableSkeleton rows={counts.length || 8} columns={7} cellClass="px-5 py-4" />}
 
-                {counts.map((c) => (
+                {!loading && counts.map((c) => (
                   <tr key={c.countId} onClick={() => openSession(c.countId)}
                     className="hover:bg-slate-50 transition-colors cursor-pointer">
                     <td className="px-5 py-4">
