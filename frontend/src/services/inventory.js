@@ -380,52 +380,6 @@ export const inventoryApi = {
     return response.data.data;
   },
 
-  // ── Stock verification (M7) ─────────────────────────────────────────────
-  listCounts: async ({ status = "", brand = "", page = 1, limit = 25 } = {}) => {
-    const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
-    if (status) qs.set("status", status);
-    if (brand) qs.set("brand", brand);
-    const r = await api.get(`/inventory/counts?${qs.toString()}`);
-    return {
-      items: r.data.data || [], total: r.data.pagination?.total ?? 0,
-      statusCounts: r.data.statusCounts || {},
-    };
-  },
-
-  getCount: async (countId, { varianceOnly = false, page = 1, limit = 200 } = {}) => {
-    const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
-    if (varianceOnly) qs.set("varianceOnly", "true");
-    const r = await api.get(`/inventory/counts/${encodeURIComponent(countId)}?${qs.toString()}`);
-    return { ...r.data.data, pagination: r.data.pagination };
-  },
-
-  createCount: async (payload) => (await api.post("/inventory/counts", payload)).data.data,
-  startCount: async (id) => (await api.post(`/inventory/counts/${encodeURIComponent(id)}/start`)).data.data,
-  saveCountLines: async (id, lines) =>
-    (await api.put(`/inventory/counts/${encodeURIComponent(id)}/lines`, { lines })).data.data,
-  submitCount: async (id, allowUncounted = false) =>
-    (await api.post(`/inventory/counts/${encodeURIComponent(id)}/submit`, { allowUncounted })).data.data,
-  reviewCount: async (id, decision, reason = null) =>
-    (await api.post(`/inventory/counts/${encodeURIComponent(id)}/review`, { decision, reason })).data.data,
-  postCount: async (id) => (await api.post(`/inventory/counts/${encodeURIComponent(id)}/post`)).data.data,
-  cancelCount: async (id, reason) =>
-    (await api.post(`/inventory/counts/${encodeURIComponent(id)}/cancel`, { reason })).data.data,
-
-  getVariances: async (id) =>
-    (await api.get(`/inventory/counts/${encodeURIComponent(id)}/variances?limit=500`)).data,
-
-  listAdjustments: async ({ countId = "", limit = 25 } = {}) => {
-    const qs = new URLSearchParams({ limit: String(limit) });
-    if (countId) qs.set("countId", countId);
-    return (await api.get(`/inventory/counts/adjustments?${qs.toString()}`)).data.data || [];
-  },
-
-  listOversold: async (status = "Open") =>
-    (await api.get(`/inventory/counts/oversold?status=${status}`)).data.data || [],
-
-  resolveOversold: async (id, resolution, note = null) =>
-    (await api.post(`/inventory/counts/oversold/${encodeURIComponent(id)}/resolve`, { resolution, note })).data.data,
-
   // ── Alerts & notifications (M8) ─────────────────────────────────────────
   // Read plus three lifecycle actions. There is deliberately no createAlert —
   // alerts are raised by the server in response to projection events, never

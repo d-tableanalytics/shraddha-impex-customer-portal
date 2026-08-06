@@ -21,7 +21,6 @@ const InventoryMaster = lazy(() => import("../pages/Inventory/InventoryMaster").
 const StockLedger = lazy(() => import("../pages/Inventory/StockLedger").then(m => ({ default: m.StockLedger })));
 const InventoryHealth = lazy(() => import("../pages/Inventory/InventoryHealth").then(m => ({ default: m.InventoryHealth })));
 const InventoryDashboard = lazy(() => import("../pages/Inventory/InventoryDashboard").then(m => ({ default: m.InventoryDashboard })));
-const StockCounts = lazy(() => import("../pages/Inventory/StockCounts").then(m => ({ default: m.StockCounts })));
 const InventoryImport = lazy(() => import("../pages/Inventory/InventoryImport").then(m => ({ default: m.InventoryImport })));
 const Reports = lazy(() => import("../pages/Reports/Reports").then(m => ({ default: m.Reports })));
 const Settings = lazy(() => import("../pages/Settings/Settings").then(m => ({ default: m.Settings })));
@@ -104,11 +103,6 @@ export const router = createBrowserRouter([
             // Inventory dashboard (M5). A read model over the projections.
             path: "inventory/dashboard",
             element: <InventoryDashboard />,
-          },
-          {
-            // Stock verification (M7). Counts post ledger adjustments.
-            path: "inventory/counts",
-            element: <StockCounts />,
           },
           {
             // Import (M9). Files flow through the approved services; nothing

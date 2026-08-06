@@ -17,7 +17,6 @@ import {
   ScrollText,
   Activity,
   GaugeCircle,
-  ClipboardCheck,
   Upload,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -82,10 +81,6 @@ export const Sidebar = () => {
     // Stock ledger — anyone who may read movement history.
     ...(hasPermission(user, PERMISSIONS.VIEW_STOCK_LEDGER) ? [
       { name: "Stock Ledger", path: "/inventory/ledger", icon: ScrollText },
-    ] : []),
-    // Stock verification — counting and approval.
-    ...(canUseInventoryMaster(user) ? [
-      { name: "Stock Verification", path: "/inventory/counts", icon: ClipboardCheck },
     ] : []),
     // Import — the history is readable by anyone who sees inventory; the
     // upload controls inside are gated per import type.
