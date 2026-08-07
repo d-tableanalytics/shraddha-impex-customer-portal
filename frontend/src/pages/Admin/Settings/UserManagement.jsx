@@ -265,7 +265,13 @@ export const UserManagement = () => {
                 ) : (
                   visibleUsers.map((u) => {
                     const displayName = u.user || u.company || u.email;
-                    const isCustomer = u.role !== 'Admin';
+                    // A customer category belongs to CUSTOMERS. Testing against
+                    // Admin alone meant every staff role — Sales, Inventory
+                    // Manager, Warehouse, Management — was offered an
+                    // MSIL/Non-MSIL dropdown that means nothing for them, and
+                    // could be set to a value that never applies. Staff work
+                    // across both categories by definition.
+                    const isCustomer = (u.role || 'Customer') === 'Customer';
                     return (
                       <tr key={u._id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4">
@@ -297,7 +303,15 @@ export const UserManagement = () => {
                               <option value="Non-MSIL">Non-MSIL</option>
                             </select>
                           ) : (
-                            <span className="text-xs text-slate-400 italic">N/A (Admin)</span>
+                            /* Was hardcoded "N/A (Admin)", which labelled a Sales
+                               user as an Admin. Staff work across both MSIL and
+                               Non-MSIL, so the honest value is the role held. */
+                            <span
+                              title={`Customer category does not apply to a ${u.role} account — they work across both MSIL and Non-MSIL.`}
+                              className="px-2 py-1 bg-slate-100 text-slate-600 text-xs font-bold rounded-md border border-slate-200 w-fit inline-block"
+                            >
+                              {u.role}
+                            </span>
                           )}
                         </td>
                         <td className="px-6 py-4">
