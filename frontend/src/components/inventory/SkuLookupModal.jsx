@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import { readSkuCodesFromFile } from '../../utils/skuFile';
+import { readSkuCodesFromFile, readCodesFromFile } from '../../utils/skuFile';
 
 /**
  * Upload a list of SKU codes and preview what the system holds for each.
@@ -38,6 +38,7 @@ export const SkuLookupModal = ({
   title = 'Check stock for a list of SKUs',
   intro,
   size = 'lg',
+  showMsilCode = false,
 }) => {
   const fileInput = useRef(null);
   const [fileName, setFileName] = useState('');
@@ -57,14 +58,26 @@ export const SkuLookupModal = ({
     setRows(null);
     setSummary(null);
     try {
-      const codes = await readSkuCodesFromFile(file);
-      if (codes.length === 0) {
-        toast.error('No SKU codes were found in that file.');
-        setLoading(false);
-        return;
+      let res;
+      if (showMsilCode) {
+        // MSIL users: extract both SKU + MSIL columns from the file.
+        const { skuCodes, msilCodes } = await readCodesFromFile(file);
+        if (skuCodes.length === 0 && msilCodes.length === 0) {
+          toast.error('No SKU or MSIL codes were found in that file.');
+          setLoading(false);
+          return;
+        }
+        res = await lookup(skuCodes, msilCodes);
+      } else {
+        // Non-MSIL users: SKU codes only (original path).
+        const codes = await readSkuCodesFromFile(file);
+        if (codes.length === 0) {
+          toast.error('No SKU codes were found in that file.');
+          setLoading(false);
+          return;
+        }
+        res = await lookup(codes);
       }
-
-      const res = await lookup(codes);
       setRows(res.data);
       setSummary(res.summary);
     } catch (err) {
@@ -135,6 +148,7 @@ export const SkuLookupModal = ({
                 <thead className="bg-slate-50 sticky top-0">
                   <tr className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                     <th className={CELL}>SKU</th>
+                    {showMsilCode && <th className={CELL}>MSIL Code</th>}
                     {columns.map((c) => (
                       <th key={c.key} className={`${CELL} ${c.align === 'right' ? 'text-right' : ''}`}>
                         {c.label}
@@ -145,13 +159,18 @@ export const SkuLookupModal = ({
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {rows.map((r) => (
-                    <tr key={r.skuCode} className={r.found ? '' : 'bg-error-50/40'}>
+                    <tr key={r.lookupCode || r.skuCode} className={r.found ? '' : 'bg-error-50/40'}>
                       <td className={`${CELL} font-bold text-slate-800`}>
-                        {r.skuCode}
+                        {r.skuCode || '—'}
                         {r.found && r.brand && (
                           <span className="block text-[10px] font-medium text-slate-400">{r.brand}</span>
                         )}
                       </td>
+                      {showMsilCode && (
+                        <td className={`${CELL} font-medium text-slate-600`}>
+                          {r.msilCode || '—'}
+                        </td>
+                      )}
                       {columns.map((c) => (
                         <td
                           key={c.key}

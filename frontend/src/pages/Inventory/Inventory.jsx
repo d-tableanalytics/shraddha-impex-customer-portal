@@ -281,13 +281,18 @@ export const Inventory = () => {
       <SkuLookupModal
         open={bulkOpen}
         onClose={() => setBulkOpen(false)}
-        title="Check availability for a list of SKUs"
+        title={showMsilCode ? "Check availability for a list of SKUs / MSIL Codes" : "Check availability for a list of SKUs"}
         intro={
-          'Upload a file containing a SKU Code column (or just a plain list of codes in the '
-          + 'first column). Nothing is ordered or changed — this only shows what is available '
-          + 'for each code so you can review before booking.'
+          showMsilCode
+            ? 'Upload a file containing a SKU Code and/or MSIL Code column. Nothing is ordered '
+              + 'or changed — this only shows what is available for each code so you can review '
+              + 'before booking.'
+            : 'Upload a file containing a SKU Code column (or just a plain list of codes in the '
+              + 'first column). Nothing is ordered or changed — this only shows what is available '
+              + 'for each code so you can review before booking.'
         }
-        lookup={productsApi.lookupSkus}
+        showMsilCode={showMsilCode}
+        lookup={showMsilCode ? productsApi.lookupCodes : productsApi.lookupSkus}
         columns={[
           {
             key: 'available',

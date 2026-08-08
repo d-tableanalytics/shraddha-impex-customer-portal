@@ -32,6 +32,14 @@ export const productsApi = {
     return { data: response.data.data || [], summary: response.data.summary };
   },
 
+  // Resolve a list of SKU codes and/or MSIL codes. For MSIL users who may
+  // upload a file containing either column — the backend resolves by whichever
+  // code is provided and merges the results.
+  lookupCodes: async (skuCodes, msilCodes) => {
+    const response = await api.post('/products/lookup', { skuCodes, msilCodes });
+    return { data: response.data.data || [], summary: response.data.summary };
+  },
+
   // Search across the active user's accessible brand(s)
   search: async (query, brand = 'koken') => {
     if (!query) return [];

@@ -261,9 +261,10 @@ export const getCategories = async (req, res, next) => {
 const LOOKUP_MAX = 5000;
 
 /**
- * POST /api/v1/products/lookup   { skuCodes: [...] }
+ * POST /api/v1/products/lookup   { skuCodes: [...], msilCodes?: [...] }
  *
- * Resolve a list of SKU codes to what the customer can actually order.
+ * Resolve a list of SKU codes (and optionally MSIL codes) to what the customer
+ * can actually order.
  *
  * READ ONLY. This is the customer-facing twin of the IMS lookup, and it exists
  * as a separate endpoint rather than by relaxing that one's guard: the IMS
@@ -274,74 +275,106 @@ const LOOKUP_MAX = 5000;
  * Brand scoping and MSIL visibility come from the shared helpers, so this obeys
  * exactly the same rules as the catalogue listing the customer already sees. No
  * new data is exposed by this route.
+ *
+ * For MSIL users every code — whether it came from the SKU column or the MSIL
+ * column — is searched against BOTH `skuCode` and `msilCode`, so the user does
+ * not need to worry about which column a code is placed in.
  */
 export const lookupProducts = async (req, res, next) => {
   try {
-    const raw = Array.isArray(req.body?.skuCodes) ? req.body.skuCodes : null;
-    if (!raw) {
-      return res.status(400).json({ success: false, message: 'Send a skuCodes array.' });
+    const rawSku = Array.isArray(req.body?.skuCodes) ? req.body.skuCodes : [];
+    const rawMsil = Array.isArray(req.body?.msilCodes) ? req.body.msilCodes : [];
+
+    if (rawSku.length === 0 && rawMsil.length === 0) {
+      return res.status(400).json({ success: false, message: 'Send a skuCodes and/or msilCodes array.' });
     }
 
-    // Deduplicated, blanks dropped, original order preserved so the preview
-    // lines up with the file the customer uploaded.
+    const msilApplies = msilAppliesTo(req.user);
+
+    // Pool all codes from both columns into one deduped list. For MSIL users
+    // every code is tried against both fields, so the column it came from does
+    // not matter. For non-MSIL users, msilCodes are silently ignored.
     const seen = new Set();
     const codes = [];
-    for (const value of raw) {
+    for (const value of [...rawSku, ...(msilApplies ? rawMsil : [])]) {
       const code = String(value ?? '').trim();
       if (!code || seen.has(code)) continue;
       seen.add(code);
       codes.push(code);
       if (codes.length >= LOOKUP_MAX) break;
     }
+
     if (codes.length === 0) {
-      return res.status(400).json({ success: false, message: 'No usable SKU codes were found in the file.' });
+      return res.status(400).json({ success: false, message: 'No usable codes were found in the file.' });
     }
 
     const models = allowedBrandModels(req.user);
     if (models.length === 0) {
       return res.status(200).json({ success: true, data: [], summary: null });
     }
-    const msilApplies = msilAppliesTo(req.user);
 
-    // Searched per brand collection the user may see. A SKU outside their brand
-    // access simply does not resolve — it reports as "not in the catalogue"
-    // rather than revealing that it exists under a brand they cannot order.
-    const found = new Map();
+    // ── Fetch products ────────────────────────────────────────────────────
+    // For MSIL users each code is tried against both skuCode and msilCode.
+    // For non-MSIL users only skuCode is searched.
+    const bySku  = new Map(); // skuCode  → product
+    const byMsil = new Map(); // msilCode → product
+
     await Promise.all(models.map(async ([Model, brand]) => {
-      const rows = await Model.find({ skuCode: { $in: codes } }).lean();
-      for (const row of rows) if (!found.has(row.skuCode)) found.set(row.skuCode, { ...row, brand });
+      const query = msilApplies
+        ? { $or: [{ skuCode: { $in: codes } }, { msilCode: { $in: codes } }] }
+        : { skuCode: { $in: codes } };
+      const rows = await Model.find(query).lean();
+      for (const row of rows) {
+        if (row.skuCode && !bySku.has(row.skuCode))   bySku.set(row.skuCode, { ...row, brand });
+        if (row.msilCode && !byMsil.has(row.msilCode)) byMsil.set(row.msilCode, { ...row, brand });
+      }
     }));
 
-    const data = codes.map((skuCode) => {
-      const p = found.get(skuCode);
-      if (!p) return { skuCode, found: false };
-      return {
+    // ── Build result rows ─────────────────────────────────────────────────
+    // For each code in file order, try skuCode first, then msilCode. Dedup by
+    // product _id so a product found by both its SKU and MSIL code only appears
+    // once.
+    const seenProductIds = new Set();
+    const data = [];
+
+    for (const code of codes) {
+      // Try SKU match first, then MSIL match.
+      const p = bySku.get(code) || (msilApplies ? byMsil.get(code) : null);
+      if (!p) {
+        data.push({ lookupCode: code, skuCode: code, msilCode: null, found: false });
+        continue;
+      }
+      const pid = String(p._id);
+      if (seenProductIds.has(pid)) continue; // already in results
+      seenProductIds.add(pid);
+      data.push({
+        lookupCode: code,
         skuCode: p.skuCode,
         found: true,
         brand: p.brand,
-        // Withheld entirely rather than blanked, so it cannot leak to a
-        // Non-MSIL customer through the network response.
         msilCode: msilApplies ? (p.msilCode ?? null) : null,
         category: Array.isArray(p.category) ? p.category.join(', ') : (p.category || null),
         available: Math.max(0, p.availableForSale ?? 0),
         moq: p.moq || 1,
         status: p.status ?? null,
-      };
-    });
+      });
+    }
 
     const resolved = data.filter((d) => d.found);
+    const totalRequested = rawSku.length + rawMsil.length;
     res.status(200).json({
       success: true,
       data,
       summary: {
-        unique: codes.length,
+        unique: data.length,
         found: resolved.length,
         missing: data.length - resolved.length,
         totalAvailable: resolved.reduce((n, d) => n + d.available, 0),
-        truncated: raw.length > LOOKUP_MAX,
+        truncated: totalRequested > LOOKUP_MAX,
       },
     });
   } catch (error) {
     next(error);
   }
 };
+
