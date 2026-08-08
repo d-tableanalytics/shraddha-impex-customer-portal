@@ -333,32 +333,26 @@ export const OrderDrawer = () => {
                     <table className="w-full text-left whitespace-nowrap">
                       <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                         <tr>
-                          <th className="px-5 py-3">{showMsilCode ? "Code / MSIL" : "SKU Code"}</th>
-                          <th className="px-5 py-3">Product Name</th>
+                          <th className="px-5 py-3">SKU Code</th>
+                          {/* MSIL Code replaces the old Product Name column, which
+                              only ever rendered a placeholder like "Koken Product".
+                              Shown only to users MSIL codes apply to — the same rule
+                              used everywhere else (utils/msilVisibility on the server). */}
+                          {showMsilCode && <th className="px-5 py-3">MSIL Code</th>}
                           <th className="px-5 py-3 text-center">Qty</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
                         {linePaging.pageItems.map((item, idx) => (
                           <tr key={idx} className="hover:bg-slate-50">
-                            <td className="px-5 py-4">
-                              <div className="flex flex-col">
-                                <span className="font-bold text-slate-800">
-                                  {item.product.code}
-                                </span>
-                                {showMsilCode && (
-                                  <span className="text-xs text-slate-500">
-                                    {item.product.msilCode}
-                                  </span>
-                                )}
-                              </div>
+                            <td className="px-5 py-4 font-bold text-slate-800">
+                              {item.product.code}
                             </td>
-                            <td
-                              className="px-5 py-4 font-medium text-slate-700 truncate max-w-[200px]"
-                              title={item.product.name}
-                            >
-                              {item.product.name}
-                            </td>
+                            {showMsilCode && (
+                              <td className="px-5 py-4 font-medium text-slate-700">
+                                {item.product.msilCode || "—"}
+                              </td>
+                            )}
                             <td className="px-5 py-4 text-center font-bold text-slate-700">
                               {item.orderQuantity} {item.product.unit}
                             </td>

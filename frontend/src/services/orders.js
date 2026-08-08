@@ -9,6 +9,9 @@ export const mapOrder = (order) => {
       id: order.skuCode,
       code: order.skuCode,
       name: order.brand ? `${order.brand} Product` : order.skuCode,
+      // The Order document carries the MSIL code, but it was never mapped
+      // through, so every MSIL display in the drawer rendered blank.
+      msilCode: order.msilCode || null,
       warehouse: 'Default',
       availableStock: order.requestedQty || 0,
       unit: 'PCS'
