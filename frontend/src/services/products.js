@@ -24,6 +24,14 @@ const mapProduct = (p) => {
 };
 
 export const productsApi = {
+  // Resolve a list of SKU codes to what this customer can order. Read-only, and
+  // scoped server-side to their permitted brands — a SKU outside them reports as
+  // "not in the catalogue" rather than revealing it exists.
+  lookupSkus: async (skuCodes) => {
+    const response = await api.post('/products/lookup', { skuCodes });
+    return { data: response.data.data || [], summary: response.data.summary };
+  },
+
   // Search across the active user's accessible brand(s)
   search: async (query, brand = 'koken') => {
     if (!query) return [];

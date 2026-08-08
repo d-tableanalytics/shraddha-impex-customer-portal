@@ -15,6 +15,7 @@ import { UpdateStockModal } from '../../components/inventory/UpdateStockModal';
 import { ExportButton } from '../../components/inventory/ExportButton';
 import { SkuLookupModal } from '../../components/inventory/SkuLookupModal';
 import { inventoryApi } from '../../services/inventory';
+import { bandLabel } from '../../utils/inventoryFormat';
 import { useInventoryStore } from '../../store/inventoryStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
@@ -692,7 +693,28 @@ export const InventoryMaster = () => {
         onDone={() => fetchItems()}
       />
 
-      <SkuLookupModal open={lookupOpen} onClose={() => setLookupOpen(false)} />
+      <SkuLookupModal
+        open={lookupOpen}
+        onClose={() => setLookupOpen(false)}
+        intro={
+          'Upload a file of SKU codes to see what is in stock for each. Nothing is changed — '
+          + 'this only reads. Use Inventory Import to create SKUs or add stock.'
+        }
+        lookup={async (codes) => {
+          const res = await inventoryApi.lookupSkus(codes);
+          // The band is a planning classification; turn it into the label the
+          // rest of the IMS screens use before it reaches the shared table.
+          return {
+            ...res,
+            data: res.data.map((r) => ({ ...r, statusLabel: r.band ? bandLabel(r.band) : r.status })),
+          };
+        }}
+        columns={[
+          { key: 'onHand', label: 'On Hand', align: 'right', render: (r) => r.onHand.toLocaleString() },
+          { key: 'reserved', label: 'Reserved', align: 'right', className: 'text-slate-500', render: (r) => r.reserved.toLocaleString() },
+          { key: 'available', label: 'Available', align: 'right', className: 'font-bold text-primary-700', render: (r) => r.available.toLocaleString() },
+        ]}
+      />
 
       <UpdateStockModal
         open={Boolean(adjusting)}

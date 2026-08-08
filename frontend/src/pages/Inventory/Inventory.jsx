@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '../../components/ui/Card';
-import { Boxes, AlertTriangle, Search, Download, Loader2 } from 'lucide-react';
+import { Boxes, AlertTriangle, Search, Download, Loader2, FileUp } from 'lucide-react';
 import { useProductStore } from '../../store/productStore';
 import { onStockUpdated } from '../../services/socketService';
 import { useUserStore } from '../../store/userStore';
@@ -8,6 +8,8 @@ import { useShowMsilCode } from '../../hooks/useShowMsilCode';
 import { allowedBrands } from '../../utils/brandAccess';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
+import { SkuLookupModal } from '../../components/inventory/SkuLookupModal';
+import { productsApi } from '../../services/products';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 
@@ -30,6 +32,7 @@ export const Inventory = () => {
   const [selectedBrand, setSelectedBrand] = useState('');
   const [page, setPage] = useState(1);
   const [downloading, setDownloading] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   // Debounce typing so a search costs one request rather than one per keystroke,
   // keeping load off the API and avoiding a burst of results racing each other.
@@ -187,6 +190,13 @@ export const Inventory = () => {
                 <option value="stock-asc">Sort: Stock (Low-High)</option>
               </select>
               <button
+                onClick={() => setBulkOpen(true)}
+                title="Upload a file of SKU codes to check availability"
+                className="inline-flex items-center justify-center gap-2 px-3 py-1.5 text-sm font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-md transition-all shrink-0"
+              >
+                <FileUp size={16} /> Bulk SKU upload
+              </button>
+              <button
                 onClick={handleDownload}
                 disabled={downloading || total === 0}
                 title="Download inventory as Excel"
@@ -267,6 +277,34 @@ export const Inventory = () => {
           )}
         </CardContent>
       </Card>
+
+      <SkuLookupModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title="Check availability for a list of SKUs"
+        intro={
+          'Upload a file containing a SKU Code column (or just a plain list of codes in the '
+          + 'first column). Nothing is ordered or changed — this only shows what is available '
+          + 'for each code so you can review before booking.'
+        }
+        lookup={productsApi.lookupSkus}
+        columns={[
+          {
+            key: 'available',
+            label: 'Available',
+            align: 'right',
+            className: 'font-bold text-primary-700',
+            render: (r) => r.available.toLocaleString(),
+          },
+          {
+            key: 'moq',
+            label: 'Min Order',
+            align: 'right',
+            className: 'text-slate-500',
+            render: (r) => (r.moq > 1 ? r.moq.toLocaleString() : '—'),
+          },
+        ]}
+      />
     </div>
   );
 };

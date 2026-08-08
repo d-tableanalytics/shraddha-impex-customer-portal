@@ -253,3 +253,95 @@ export const getCategories = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * How many codes one uploaded file may resolve. Matches the IMS lookup cap so a
+ * customer and an admin checking the same sheet see the same rows.
+ */
+const LOOKUP_MAX = 5000;
+
+/**
+ * POST /api/v1/products/lookup   { skuCodes: [...] }
+ *
+ * Resolve a list of SKU codes to what the customer can actually order.
+ *
+ * READ ONLY. This is the customer-facing twin of the IMS lookup, and it exists
+ * as a separate endpoint rather than by relaxing that one's guard: the IMS
+ * version answers "what do we hold", exposing on-hand, reserved and planning
+ * bands, and those are internal figures. A customer is asking a narrower
+ * question — "can I order these, and how many" — so only that is returned.
+ *
+ * Brand scoping and MSIL visibility come from the shared helpers, so this obeys
+ * exactly the same rules as the catalogue listing the customer already sees. No
+ * new data is exposed by this route.
+ */
+export const lookupProducts = async (req, res, next) => {
+  try {
+    const raw = Array.isArray(req.body?.skuCodes) ? req.body.skuCodes : null;
+    if (!raw) {
+      return res.status(400).json({ success: false, message: 'Send a skuCodes array.' });
+    }
+
+    // Deduplicated, blanks dropped, original order preserved so the preview
+    // lines up with the file the customer uploaded.
+    const seen = new Set();
+    const codes = [];
+    for (const value of raw) {
+      const code = String(value ?? '').trim();
+      if (!code || seen.has(code)) continue;
+      seen.add(code);
+      codes.push(code);
+      if (codes.length >= LOOKUP_MAX) break;
+    }
+    if (codes.length === 0) {
+      return res.status(400).json({ success: false, message: 'No usable SKU codes were found in the file.' });
+    }
+
+    const models = allowedBrandModels(req.user);
+    if (models.length === 0) {
+      return res.status(200).json({ success: true, data: [], summary: null });
+    }
+    const msilApplies = msilAppliesTo(req.user);
+
+    // Searched per brand collection the user may see. A SKU outside their brand
+    // access simply does not resolve — it reports as "not in the catalogue"
+    // rather than revealing that it exists under a brand they cannot order.
+    const found = new Map();
+    await Promise.all(models.map(async ([Model, brand]) => {
+      const rows = await Model.find({ skuCode: { $in: codes } }).lean();
+      for (const row of rows) if (!found.has(row.skuCode)) found.set(row.skuCode, { ...row, brand });
+    }));
+
+    const data = codes.map((skuCode) => {
+      const p = found.get(skuCode);
+      if (!p) return { skuCode, found: false };
+      return {
+        skuCode: p.skuCode,
+        found: true,
+        brand: p.brand,
+        // Withheld entirely rather than blanked, so it cannot leak to a
+        // Non-MSIL customer through the network response.
+        msilCode: msilApplies ? (p.msilCode ?? null) : null,
+        category: Array.isArray(p.category) ? p.category.join(', ') : (p.category || null),
+        available: Math.max(0, p.availableForSale ?? 0),
+        moq: p.moq || 1,
+        status: p.status ?? null,
+      };
+    });
+
+    const resolved = data.filter((d) => d.found);
+    res.status(200).json({
+      success: true,
+      data,
+      summary: {
+        unique: codes.length,
+        found: resolved.length,
+        missing: data.length - resolved.length,
+        totalAvailable: resolved.reduce((n, d) => n + d.available, 0),
+        truncated: raw.length > LOOKUP_MAX,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};

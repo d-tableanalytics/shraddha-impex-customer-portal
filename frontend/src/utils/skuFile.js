@@ -1,0 +1,36 @@
+import * as XLSX from 'xlsx';
+
+/**
+ * Pull SKU codes out of an uploaded workbook.
+ *
+ * Takes a column called something like "SKU" when the sheet has headers, and
+ * falls back to the first column when it does not — a list of codes pasted into
+ * a blank sheet is the most common shape this receives, and refusing it for
+ * lacking a header would be pedantry.
+ *
+ * Shared by the admin stock check and the customer bulk upload so the two agree
+ * on what counts as a SKU column; they previously would have drifted.
+ */
+export const readSkuCodes = (rows) => {
+  if (rows.length === 0) return [];
+
+  const header = (rows[0] || []).map((h) => String(h ?? '').trim().toLowerCase());
+  const skuIndex = header.findIndex((h) => /^(sku|sku ?code|item ?code|part ?no\.?)$/.test(h));
+
+  const startRow = skuIndex >= 0 ? 1 : 0;
+  const column = skuIndex >= 0 ? skuIndex : 0;
+
+  return rows
+    .slice(startRow)
+    .map((r) => String(r?.[column] ?? '').trim())
+    .filter(Boolean);
+};
+
+/** Read the first sheet of an uploaded file and return its SKU codes. */
+export const readSkuCodesFromFile = async (file) => {
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  return readSkuCodes(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }));
+};
+
+export default { readSkuCodes, readSkuCodesFromFile };

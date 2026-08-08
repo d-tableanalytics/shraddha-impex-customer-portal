@@ -1,5 +1,5 @@
 import express from 'express';
-import { getProducts, getInventory, createProduct, getProductByCode, getCategories } from './product.controller.js';
+import { getProducts, getInventory, createProduct, getProductByCode, getCategories, lookupProducts } from './product.controller.js';
 import { protect } from '../../middlewares/auth.js';
 import { authorize } from '../../middlewares/rbac.js';
 
@@ -7,6 +7,10 @@ import { authorize } from '../../middlewares/rbac.js';
 // Requests carrying a brand segment fall through to the router below.
 export const inventoryRouter = express.Router();
 inventoryRouter.get('/categories', protect, getCategories);
+// Bulk SKU lookup. Declared on the all-brands router so it resolves BEFORE the
+// ':brand' router below — otherwise POST /products/lookup would be read as
+// brand="lookup" and fall through to createProduct.
+inventoryRouter.post('/lookup', protect, lookupProducts);
 inventoryRouter.get('/', protect, getInventory);
 
 const router = express.Router({ mergeParams: true }); // inherit :brand from parent
