@@ -30,6 +30,17 @@ export const sendEmail = async (to, subject, htmlBody, options = {}) => {
   )];
 
   if (!process.env.SMTP_HOST || process.env.SMTP_HOST === 'smtp.example.com') {
+    // A MISSING SMTP_HOST IS NOT A DEV SETTING. Falling back here silently
+    // returned true, so an app started without its .env — from the repo root,
+    // say, where dotenv finds nothing — reported every notification as
+    // delivered while sending none. Say so unmistakably.
+    if (!process.env.SMTP_HOST) {
+      console.error(
+        '[Mailer] SMTP_HOST IS NOT SET — NO MAIL IS BEING SENT. If this is not a '
+        + `dev machine the process was started without its .env (cwd: ${process.cwd()}). `
+        + `Intended recipient: ${to}`,
+      );
+    }
     console.log(`\n=== [DEV MAIL SIMULATOR] ===`);
     console.log(`To: ${to}`);
     if (cc.length) console.log(`Cc: ${cc.join(', ')}`);

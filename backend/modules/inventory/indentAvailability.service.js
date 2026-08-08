@@ -343,6 +343,8 @@ export const processAvailableIndents = async (skuCodes) => {
     let bookings = 0;
     let booked = 0;
     let emailed = 0;
+    let emailFailed = 0;
+    let emailSkipped = 0;
 
     for (const { customer, lines } of byCustomer.values()) {
       let made;
@@ -382,19 +384,45 @@ export const processAvailableIndents = async (skuCodes) => {
       });
 
       if (customer.email && customer.preferences?.emailNotifications !== false) {
-        // Fire-and-forget: the booking is already made, and a mail failure must
-        // not be reported as the booking having failed.
-        sendEmail(
+        // AWAITED, and the result believed. This was fire-and-forget with a
+        // .catch attached — but sendEmail handles its own errors and resolves
+        // false rather than rejecting, so that catch was dead code and `emailed`
+        // counted attempts while reading like deliveries. A booking whose
+        // notification silently failed looked identical to one that reached the
+        // customer, which is what made a real "no mail arrived" report
+        // impossible to diagnose after the fact.
+        //
+        // The wait costs a second or two, after stock is already committed, and
+        // buys an answer to "was the customer actually told".
+        const delivered = await sendEmail(
           customer.email,
           `Booking ${made.orderNumber} created — your indented stock is available`,
           bookingEmail({ customerName, orderNumber: made.orderNumber, lines: made.lines, dueAt }),
           { cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC] },
-        ).catch((e) => console.error('[Indent] auto-book email failed:', e.message));
-        emailed += 1;
+        );
+        if (delivered) {
+          emailed += 1;
+        } else {
+          emailFailed += 1;
+          console.error(
+            `[Indent] availability email FAILED for ${customer.email} — booking `
+            + `${made.orderNumber} exists and its stock is reserved, but the customer `
+            + 'has NOT been told. See the mailer error above.',
+          );
+        }
+      } else {
+        emailSkipped += 1;
+        console.warn(
+          `[Indent] no email for booking ${made.orderNumber}: `
+          + (customer.email
+            ? 'the customer has email notifications switched off.'
+            : 'no address on the account.'),
+        );
       }
     }
 
-    return { checked: indents.length, booked, bookings, emailed };
+    // `emailed` counts messages the SMTP server accepted, not attempts.
+    return { checked: indents.length, booked, bookings, emailed, emailFailed, emailSkipped };
   } catch (error) {
     // Swallowed by design — see the note at the top.
     console.error('[Indent] auto-book check failed:', error.message);

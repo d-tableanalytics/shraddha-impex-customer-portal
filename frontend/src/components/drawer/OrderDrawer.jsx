@@ -8,6 +8,7 @@ import {
   Calendar as CalendarIcon,
   Package,
   FileText,
+  Sparkles,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -189,12 +190,43 @@ export const OrderDrawer = () => {
           transition={{ type: "spring", damping: 25, stiffness: 200 }}
           className="relative w-full max-w-4xl bg-slate-50 h-full shadow-2xl flex flex-col z-10 overflow-hidden"
         >
-          {/* Header */}
-          <div className="px-6 py-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-4">
-              <h2 className="text-xl font-black text-slate-800">
+          {/* Header. Two tiers: the booking's identity and its actions on the
+              first row, its state on the second. Everything used to share one
+              row — title, up to four badges and four buttons — which squeezed
+              the title until it wrapped mid-reference. */}
+          <div className="px-6 py-3.5 bg-white border-b border-slate-200 shrink-0 flex flex-col gap-2.5">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-xl font-black text-slate-800 whitespace-nowrap truncate">
                 Booking {selectedOrder.orderNumber}
               </h2>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {canCancel && (
+                  <ERPButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setConfirmingCancel(true)}
+                    className="text-red-600 border-red-200 hover:bg-red-50"
+                  >
+                    <PackageX size={16} className="mr-2" /> Cancel booking
+                  </ERPButton>
+                )}
+                <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePrint}>
+                  <Printer size={16} className="mr-2" /> Print
+                </ERPButton>
+                <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePDF}>
+                  <Download size={16} className="mr-2" /> PDF
+                </ERPButton>
+                <button
+                  onClick={() => setSelectedOrder(null)}
+                  className="p-2 ml-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors focus:outline-none"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={selectedOrder.status} />
               <PoStatusBadge locked={poRaised} poNumber={selectedOrder.poNumber} />
               {selectedOrder.orderType === "bulk_upload" && (
@@ -202,39 +234,6 @@ export const OrderDrawer = () => {
                   Bulk Import
                 </span>
               )}
-              {selectedOrder.autoBooked && (
-                <span
-                  title="Raised automatically when the stock you indented became available"
-                  className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase rounded-md border border-emerald-200"
-                >
-                  Auto-booked from indent
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              {canCancel && (
-                <ERPButton
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setConfirmingCancel(true)}
-                  className="text-red-600 border-red-200 hover:bg-red-50"
-                >
-                  <PackageX size={16} className="mr-2" /> Cancel booking
-                </ERPButton>
-              )}
-              <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePrint}>
-                <Printer size={16} className="mr-2" /> Print
-              </ERPButton>
-              <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePDF}>
-                <Download size={16} className="mr-2" /> PDF
-              </ERPButton>
-              <button
-                onClick={() => setSelectedOrder(null)}
-                className="p-2 ml-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors focus:outline-none"
-              >
-                <X size={24} />
-              </button>
             </div>
           </div>
 
@@ -242,6 +241,28 @@ export const OrderDrawer = () => {
           <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-8">
             {/* Top Info Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* Moved out of the header, where it was one badge among four and
+                  said less than it could. Here it has room to name the indent
+                  the booking came from. */}
+              {selectedOrder.autoBooked && (
+                <div className="bg-white border border-emerald-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+                  <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
+                    <Sparkles size={16} className="text-emerald-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">
+                      Raised automatically
+                    </p>
+                    <p className="text-sm font-bold text-slate-800 truncate">
+                      From indent {selectedOrder.autoBookedFrom || "—"}
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      when the stock came back in
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {isAdmin && (
                 <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
                   <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">

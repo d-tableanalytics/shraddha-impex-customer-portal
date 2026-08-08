@@ -96,6 +96,12 @@ const groupIntoBookings = (rawOrders) => {
       // Raised automatically when a waiting indent came back into stock. Shown
       // so a customer is not puzzled by a booking they do not remember making.
       autoBooked: rows.some((r) => /^Auto-booked from indent/.test(r.remarks || '')),
+      // The indent it came from, pulled out here rather than re-parsed in the
+      // component — the remarks string is a backend detail and only one place
+      // should know its shape.
+      autoBookedFrom: rows
+        .map((r) => /^Auto-booked from indent (\S+)/.exec(r.remarks || '')?.[1])
+        .find(Boolean) || null,
     };
   });
 };
