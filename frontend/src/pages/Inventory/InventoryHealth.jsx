@@ -203,14 +203,19 @@ export const InventoryHealth = () => {
 
   useEffect(() => { fetchHealth(); }, [fetchHealth]);
 
+  // Selection is held as SKU codes, not row indexes, so it survives a re-sort,
+  // a filter change or a page turn — the identity of a row is its SKU.
+  //
+  // Declared above the permission guard, not below it: `user` is null on the
+  // first render, so the guard does not fire and these hooks run. Once the user
+  // loads without the permission the guard returns early, and React sees fewer
+  // hooks than last render — which throws instead of redirecting.
+  const [picked, setPicked] = useState(() => new Set());
+  const [selectingAll, setSelectingAll] = useState(false);
+
   if (user && !hasPermission(user, PERMISSIONS.VIEW_INVENTORY)) {
     return <Navigate to="/" replace />;
   }
-
-  // Selection is held as SKU codes, not row indexes, so it survives a re-sort,
-  // a filter change or a page turn — the identity of a row is its SKU.
-  const [picked, setPicked] = useState(() => new Set());
-  const [selectingAll, setSelectingAll] = useState(false);
 
   const togglePick = (skuCode) => setPicked((prev) => {
     const next = new Set(prev);

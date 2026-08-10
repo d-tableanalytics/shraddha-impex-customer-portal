@@ -6,3 +6,11 @@ node_modules
 
 # Database dumps taken before destructive scripts — contain customer PII
 backend/backups/
+
+# SSH keys for the deployment host. erp-p-2.pem lives in this directory; a
+# stray `git add .` would push the server's private key to a remote.
+*.pem
+*.key
+
+# Frontend build output (built in CI, rsynced to the server — never committed)
+frontend/dist/

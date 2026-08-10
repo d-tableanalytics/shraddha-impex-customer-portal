@@ -1,0 +1,113 @@
+name: Deploy to EC2
+
+# Ships main to the EC2 box: nginx serves frontend/dist on :4003, PM2 runs the
+# backend on :4000.
+#
+# The frontend is built HERE, not on the server. That box runs ~15 other
+# production apps on 3.7 GB with no swap, so a Vite build there risks the kernel
+# OOM killer taking down a neighbouring app. The runner has memory to spare.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never let two deploys interleave a git reset with an rsync.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build & deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.20.2'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Fail if the build produced nothing
+        run: test -s frontend/dist/index.html
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pin the host key instead of disabling the check.
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Update backend and install dependencies
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$USER@$HOST" bash -euo pipefail <<'REMOTE'
+            cd /var/www/shraddha-impex
+            git fetch --all --prune
+            # reset, not pull: the server tree is a deploy target, not a
+            # workspace. Ignored files (backend/.env, node_modules) are untouched.
+            git reset --hard origin/main
+            cd backend
+            npm ci --omit=dev
+          REMOTE
+
+      - name: Upload frontend build
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            frontend/dist/ "$USER@$HOST:/var/www/shraddha-impex/frontend/dist/"
+
+      - name: Reload services
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$USER@$HOST" bash -euo pipefail <<'REMOTE'
+            cd /var/www/shraddha-impex
+            pm2 startOrReload ecosystem.config.cjs --only shraddha-backend --update-env
+            pm2 save
+            # Pick up any change to the committed vhost.
+            if ! sudo cmp -s deploy/nginx/shraddha-impex.conf /etc/nginx/sites-available/shraddha-impex; then
+              sudo cp deploy/nginx/shraddha-impex.conf /etc/nginx/sites-available/shraddha-impex
+              sudo nginx -t && sudo systemctl reload nginx
+            fi
+          REMOTE
+
+      - name: Health check
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          # The backend reconnects to Atlas and runs its boot jobs before it
+          # listens, so give it room before calling the deploy bad.
+          for i in $(seq 1 20); do
+            if curl -fsS -m 10 "http://$HOST:4000/health" > /dev/null; then
+              echo "backend healthy"
+              curl -fsS -m 10 -o /dev/null "http://$HOST:4003/" && echo "frontend healthy"
+              exit 0
+            fi
+            echo "attempt $i: not up yet"
+            sleep 6
+          done
+          echo "::error::backend did not become healthy within ~2 minutes"
+          ssh -i ~/.ssh/deploy_key "${{ secrets.EC2_USER }}@$HOST" \
+            "pm2 logs shraddha-backend --lines 40 --nostream" || true
+          exit 1
