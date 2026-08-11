@@ -28,13 +28,11 @@ const QtyCell = ({ item, enforceMoq, onUpdateQty }) => {
       setDraft(String(item.orderQuantity)); // revert invalid entry
       return;
     }
+    // MOQ is a minimum, not a pack size — see utils/moq.js. The multiple-of
+    // check that used to follow this one had no counterpart on the server, so
+    // it reverted quantities the API would have accepted.
     if (applyMoq && val < rowMoq) {
       toast.error(`Quantity must be at least the MOQ (${rowMoq})`);
-      setDraft(String(item.orderQuantity));
-      return;
-    }
-    if (applyMoq && val % rowMoq !== 0) {
-      toast.error(`Quantity must be a multiple of the MOQ (${rowMoq})`);
       setDraft(String(item.orderQuantity));
       return;
     }

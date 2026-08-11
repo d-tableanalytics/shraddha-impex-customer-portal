@@ -17,23 +17,31 @@ import {
 import { api } from "../../services/api";
 import { reservationsApi } from "../../services/reservations";
 import toast from "react-hot-toast";
-import { Download, AlertTriangle, Check, RefreshCw } from "lucide-react";
-import { computeReview, linesFromBulkRows } from "../../utils/bookingReview";
+import { Download, AlertTriangle, Check, RefreshCw, PackageCheck, PackageX } from "lucide-react";
+import { computeReview } from "../../utils/bookingReview";
+import { ReviewIndentModal } from "../../components/booking/ReviewIndentModal";
+import { Modal } from "../../components/ui/Modal";
+import { Button } from "../../components/ui/Button";
 
 export const BulkUpload = () => {
   const navigate = useNavigate();
   const { file, rows, summary, setFile, setRows, updateRow, removeRow, reset: resetStore } =
     useBulkImportStore();
-  const { fetchReservations } = useCartStore();
+  const { fetchReservations, confirmBooking } = useCartStore();
   // Non-MSIL customers upload by SKU Code alone.
   const showMsilCode = useShowMsilCode();
   const [isParsing, setIsParsing] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [excludedRowIds, setExcludedRowIds] = useState([]);
+  // The review popup is opened against the Selection List AFTER the rows have
+  // been reserved, not against the parsed file — see handleContinue.
+  const [pendingReview, setPendingReview] = useState(null);
+  const [outcome, setOutcome] = useState(null);
 
   // Clearing the session also clears row exclusions.
   const reset = () => {
     setExcludedRowIds([]);
+    setPendingReview(null);
     resetStore();
   };
 
@@ -93,16 +101,12 @@ export const BulkUpload = () => {
   const canConfirm =
     summary.invalidRows === 0 && selectedCount > 0 && !hasPendingRows && !isConfirming;
   // A "clean" import (no warnings) gets the highlighted primary confirm.
-
-  // The rows that will actually be booked, in the shape the shared review
-  // popup expects — so the bulk shortfall is worked out by the same code as an
-  // individual booking's, against the same stock figure.
-  const reviewLines = linesFromBulkRows(
-    rows.filter((r) => (r.status === "valid" || r.status === "warning")
-      && !excludedRowIds.includes(r.id)),
-  );
-  const bulkReview = computeReview(reviewLines);
-
+  //
+  // The shortfall is NOT worked out from the parsed rows here. It is computed
+  // in handleContinue from the Selection List once the rows are reserved,
+  // because that is the set the confirmation actually commits — a preview built
+  // from the file alone omits lines the customer already held and misstates a
+  // repeat SKU the server merged into an existing line.
 
   const handleRevalidate = async () => {
     setIsParsing(true);
@@ -140,28 +144,85 @@ export const BulkUpload = () => {
     return { attempted: validRows.length, failures };
   };
 
-  const handleDirectConfirm = async () => {
+  /**
+   * Step 1 — reserve the selected rows, then REVIEW.
+   *
+   * This used to stop here and send the user to Create Booking, which is the
+   * reported defect: an uploaded file that was entirely out of stock — a pure
+   * indent — was dumped onto the booking screen, and nothing the file created
+   * ever reached Booking History because nothing was ever confirmed.
+   *
+   * The review is still shown, because a file must not get a shortcut past the
+   * check every hand-made booking goes through. What changed is that it is now
+   * computed against the SELECTION LIST as it stands after the import, not
+   * against the parsed rows — the confirm step commits every reserved line the
+   * customer holds, so anything already sitting there must be visible in the
+   * popup rather than swept in unannounced.
+   */
+  const handleContinue = async () => {
     setIsConfirming(true);
     try {
-      // Reserve every valid row — this is what puts them on the Selection List.
-      const { attempted, failures } = await importValidRows();
+      const { failures } = await importValidRows();
       if (failures.length > 0) {
+        // Rows that failed to reserve stay on this screen with their error and
+        // are never carried into the booking — a failed record must not appear
+        // in Booking History as though it had been created.
         throw new Error(`Some items could not be reserved: ${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "…" : ""}`);
       }
 
-      // STOP HERE. The booking is NOT confirmed from this screen — the upload's
-      // job is to fill the Selection List, and confirming happens on Create
-      // Booking exactly as it does for an item added by hand. Booking straight
-      // from here gave the file a shortcut past the review every other booking
-      // goes through.
-      toast.success(`${attempted} item${attempted === 1 ? "" : "s"} added to your Selection List.`);
-      reset();
-      navigate("/orders/new");
+      // The Selection List as the server sees it — importValidRows has already
+      // refetched it. Read back rather than trusting the parsed rows: the
+      // server merges a repeat SKU into an existing line, so the quantity that
+      // will actually be booked can differ from the quantity in the file.
+      const items = useCartStore.getState().items;
+      if (items.length === 0) {
+        throw new Error("Nothing is on your Selection List to confirm.");
+      }
+      setPendingReview({
+        review: computeReview(items),
+        itemCount: items.length,
+        unitCount: items.reduce((n, i) => n + (i.orderQuantity || 0), 0),
+      });
     } catch (err) {
       toast.error(err.message || err.response?.data?.message || "Failed to add the uploaded rows to the Selection List.");
     } finally {
       setIsConfirming(false);
     }
+  };
+
+  /**
+   * Step 2 — confirm, and route on what was actually created.
+   *
+   * The server reports the outcome (`booking`, `indent`, or `booking+indent`)
+   * rather than leaving the client to guess from the totals. Bookings land in
+   * Booking History and indents in Indent History, so a file of out-of-stock
+   * lines is never again announced as a booking that does not exist.
+   */
+  const handleConfirm = async () => {
+    setIsConfirming(true);
+    try {
+      const result = await confirmBooking();
+      setPendingReview(null);
+      reset();
+      setOutcome({
+        outcome: result?.outcome || (result?.totals?.totalConfirmed > 0 ? "booking" : "indent"),
+        orderId: result?.orderId || "",
+        indentId: result?.indentId || "",
+        poNumber: result?.poNumber || "",
+        confirmed: result?.totals?.totalConfirmed ?? 0,
+        pending: result?.totals?.totalPending ?? 0,
+        lines: (result?.summary || []).length,
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.message || "Failed to confirm the uploaded rows.");
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  const goTo = (path) => {
+    setOutcome(null);
+    navigate(path);
   };
 
   return (
@@ -176,7 +237,9 @@ export const BulkUpload = () => {
       />
 
       <p className="text-slate-600">
-        Upload bookings using an Excel template.
+        Upload bookings using an Excel template. Lines covered by stock become a booking and
+        appear in <span className="font-semibold">Booking History</span>; anything short becomes
+        an indent and appears in <span className="font-semibold">Indent History</span>.
       </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-[30fr_70fr] gap-8 items-start">
@@ -258,16 +321,16 @@ export const BulkUpload = () => {
                 )}
                 {/* One button, and it opens the same review popup the
                     individual flow opens — the shortfall is reviewed before
-                    anything is reserved, not announced afterwards. */}
+                    the booking is committed, not announced afterwards. */}
                 <ERPButton
                   variant="success"
                   size="lg"
                   disabled={!canConfirm}
-                  onClick={handleDirectConfirm}
+                  onClick={handleContinue}
                   className="w-full md:w-auto px-8 shadow-md bg-green-600 hover:bg-green-700 ring-2 ring-green-300"
                 >
                   <Check size={18} className="mr-2 text-white" />
-                  {isConfirming ? "Adding..." : `Continue to Booking (${selectedCount})`}
+                  {isConfirming ? "Adding..." : `Review & Confirm (${selectedCount})`}
                 </ERPButton>
               </div>
             </>
@@ -279,6 +342,93 @@ export const BulkUpload = () => {
         </div>
       </div>
 
+      {/* The SAME review popup Create Booking uses. It decides for itself
+          whether this is a plain confirmation or an indent review, so the two
+          screens cannot drift apart on what a shortfall looks like. */}
+      <ReviewIndentModal
+        isOpen={!!pendingReview}
+        onClose={() => setPendingReview(null)}
+        onConfirm={handleConfirm}
+        review={pendingReview?.review || { available: [], pending: [] }}
+        loading={isConfirming}
+        itemCount={pendingReview?.itemCount || 0}
+        unitCount={pendingReview?.unitCount || 0}
+      />
+
+      {/* WHERE THE UPLOAD ACTUALLY WENT. A file can produce a booking, an
+          indent, or both, and each lives in its own history — so the outcome
+          names what was created and links to the screen that holds it. */}
+      <Modal
+        isOpen={!!outcome}
+        onClose={() => setOutcome(null)}
+        title={
+          outcome?.outcome === "indent"
+            ? "Indent Raised"
+            : outcome?.outcome === "booking+indent"
+              ? "Booking Confirmed with Indent"
+              : "Booking Confirmed"
+        }
+        size="sm"
+      >
+        {outcome && (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <div className={`w-11 h-11 rounded-full flex items-center justify-center ${
+                outcome.outcome === "indent" ? "bg-amber-50" : "bg-emerald-50"
+              }`}>
+                {outcome.outcome === "indent"
+                  ? <PackageX size={22} className="text-amber-600" />
+                  : <PackageCheck size={22} className="text-emerald-600" />}
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-800">
+                  {outcome.outcome === "indent"
+                    ? `Indent ${outcome.indentId}`
+                    : `Booking ${outcome.orderId}`}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {outcome.lines} line{outcome.lines === 1 ? "" : "s"} from your upload
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
+                <p className="text-2xl font-black text-emerald-700">{outcome.confirmed}</p>
+                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mt-1">Units Booked</p>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+                <p className="text-2xl font-black text-amber-700">{outcome.pending}</p>
+                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mt-1">Units → Indent</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-500 leading-relaxed">
+              {outcome.outcome === "indent"
+                ? `None of the uploaded quantity was in stock, so no booking was created. Indent ${outcome.indentId} is tracked in Indent History and fulfilled when material is inwarded.`
+                : outcome.outcome === "booking+indent"
+                  ? `Booking ${outcome.orderId} holds the ${outcome.confirmed} unit(s) available now. The remaining ${outcome.pending} are on indent ${outcome.indentId}.`
+                  : `Booking ${outcome.orderId} holds all ${outcome.confirmed} uploaded unit(s).`}
+            </p>
+
+            <div className="flex justify-end gap-3 mt-1">
+              {outcome.pending > 0 && (
+                <Button
+                  variant={outcome.outcome === "indent" ? "primary" : "secondary"}
+                  onClick={() => goTo("/orders/indent-history")}
+                >
+                  View Indent History
+                </Button>
+              )}
+              {outcome.confirmed > 0 && (
+                <Button variant="primary" onClick={() => goTo("/orders/history")}>
+                  View Booking History
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

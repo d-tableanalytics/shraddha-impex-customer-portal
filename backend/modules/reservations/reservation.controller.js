@@ -14,6 +14,8 @@ import { recordAudit } from '../../utils/auditLog.js';
 import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
+import { enforceMoq, moqError } from '../../utils/moq.js';
+import { sendIndentRaisedMails, sendBookingMails } from '../../utils/indentMail.js';
 
 // The product collection is split one-per-brand; the brand is implied by which
 // collection a doc lives in (there is no brand field on the schema).
@@ -114,16 +116,10 @@ const sendNotification = (userId, title, message, type = 'reservation') => {
   notifyUser(userId, { title, message, type });
 };
 
-// MOQ (Minimum Order Quantity) is enforced only for Non-MSIL customers: the
-// quantity must be at least the MOQ (any amount at or above it is allowed).
-// MSIL customers are exempt. Throws when the rule is violated.
-const enforceMoq = (user, product, quantity) => {
-  if (user?.customerCategory === 'MSIL') return; // MSIL users are MOQ-exempt.
-  const moq = Number(product?.moq) || 0;
-  if (moq > 1 && quantity < moq) {
-    throw new Error(`Quantity must be at least the Minimum Order Quantity (${moq}) for ${product.skuCode}.`);
-  }
-};
+// MOQ (Minimum Order Quantity) is enforced only for Non-MSIL customers; MSIL
+// customers are exempt. Both the rule and the classification behind it live in
+// utils/moq.js — see enforceMoq()/moqError() there — so this file, the bulk
+// validator below and the front end cannot drift apart on who MOQ applies to.
 
 // MSIL Code visibility lives in utils/msilVisibility.js — see msilAppliesTo().
 
@@ -154,13 +150,44 @@ export const getPendingReservations = async (req, res, next) => {
     }
 
     const reservations = await Reservation.find(filter)
-      .populate('customerId', 'name email company')
+      // `user` is the customer's display name on this schema; `name` does not
+      // exist, so the drawer and the tables were showing the company or the
+      // email in its place.
+      .populate('customerId', 'user name email company customerCategory')
       .sort({ updatedAt: -1 });
+
+    // WHICH INDENTS ACTUALLY HAVE A BOOKING.
+    //
+    // An indent id and its booking id share a sequence number and differ only
+    // in the prefix (PI-2026-000042 ↔ BO-2026-000042), and the client used to
+    // derive one from the other by string substitution. That is right for an
+    // indent raised alongside a booking and WRONG for a standalone one: the
+    // sequence number is allocated whether or not anything could be fulfilled,
+    // so a request that fulfilled nothing displayed a Booking ID for an order
+    // that was never created, and searching Booking History for it found
+    // nothing. Asked of the orders collection instead of guessed — one query
+    // for the whole page.
+    const candidateBookingIds = [...new Set(
+      reservations
+        .map((r) => r.indentNumber)
+        .filter(Boolean)
+        .map((id) => id.replace(/^PI-/, 'BO-')),
+    )];
+    const realBookingIds = candidateBookingIds.length
+      ? new Set(await Order.distinct('orderId', { orderId: { $in: candidateBookingIds } }))
+      : new Set();
 
     const populated = await Promise.all(reservations.map(async r => {
       const obj = r.toObject();
       const { product } = await findProductWithBrand(r.productId, req.user);
-      return { ...obj, productId: product };
+      const derived = r.indentNumber ? r.indentNumber.replace(/^PI-/, 'BO-') : null;
+      return {
+        ...obj,
+        productId: product,
+        // null when this indent stands alone — the client must not invent one.
+        bookingId: derived && realBookingIds.has(derived) ? derived : null,
+        standalone: !derived || !realBookingIds.has(derived),
+      };
     }));
     // Brand-scoped: an indent for a brand this user cannot access is omitted.
     res.status(200).json({ success: true, data: populated.filter((r) => r.productId) });
@@ -737,6 +764,9 @@ const runConfirmBooking = async (req, session) => {
       reservationId: resItem.reservationId,
       skuCode: product.skuCode,
       msilCode: product.msilCode || null,
+      // Carried so the notification can name the material, not just its code —
+      // "SKU 09008" tells a support mailbox nothing on its own.
+      category: Array.isArray(product.category) ? product.category.join(', ') : (product.category || null),
       requestedQty,
       confirmedQty,
       pendingQty,
@@ -751,78 +781,20 @@ const runConfirmBooking = async (req, session) => {
   const totalConfirmed = summary.reduce((sum, s) => sum + s.confirmedQty, 0);
   const totalPending = summary.reduce((sum, s) => sum + s.pendingQty, 0);
 
-  return { orderNumber, poNumber, indentId, createdOrders, summary, totalConfirmed, totalPending };
+  return {
+    orderNumber, poNumber, indentId, createdOrders, summary,
+    totalConfirmed, totalPending,
+    // The moment the confirmation happened — the indent date the customer is
+    // told, read from the same value the reservations were stamped with rather
+    // than from a second `new Date()` in the mail builder.
+    confirmedAt: dateNow,
+  };
 };
 
-
-// Escape values that originate from user/product data before dropping them into
-// the email HTML.
-const esc = (v) =>
-  String(v ?? '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-
-// Builds the booking-confirmation email body. One mail per confirmation: a short
-// confirmation line, the Booking ID generated when the booking was made, and the
-// items the customer actually booked. Every value comes from the live booking.
-const buildConfirmationEmail = ({ customerName, orderNumber, indentId, summary, totalConfirmed, totalPending }) => {
-  const cell = 'padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
-  const head = 'padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;';
-
-  const totalRequested = summary.reduce((n, s) => n + s.requestedQty, 0);
-
-  const rows = summary.map((s) => `
-    <tr>
-      <td style="${cell}"><strong>${esc(s.skuCode)}</strong></td>
-      <td style="${cell}">${esc(s.msilCode || '—')}</td>
-      <td style="${cell} text-align: right;">${s.requestedQty}</td>
-      <td style="${cell} text-align: right; color: #1a7f37; font-weight: bold;">${s.confirmedQty}</td>
-      <td style="${cell} text-align: right; ${s.pendingQty > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #bbb;'}">${s.pendingQty}</td>
-    </tr>`).join('');
-
-  return `
-    <p>Hi ${esc(customerName)},</p>
-    <p>Your booking is <strong>confirmed</strong>.</p>
-
-    <div style="margin: 18px 0; padding: 14px 18px; background: #f0f6ff; border: 1px solid #cfe0f7; border-radius: 4px;">
-      <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">Booking ID</div>
-      <div style="font-size: 22px; font-weight: bold; color: #1a5b9e; font-family: monospace; margin-top: 2px;">${esc(orderNumber)}</div>
-      ${totalPending > 0 ? `<div style="margin-top: 8px; font-size: 12px; color: #5a7ca8;">Indent reference: <strong style="font-family: monospace; color: #b54708;">${esc(indentId)}</strong></div>` : ''}
-    </div>
-
-    <table style="border-collapse: collapse; margin: 0 0 8px; width: 100%;">
-      <thead>
-        <tr>
-          <th style="${head}">SKU</th>
-          <th style="${head}">MSIL Code</th>
-          <th style="${head} text-align: right;">Booked</th>
-          <th style="${head} text-align: right;">Confirmed</th>
-          <th style="${head} text-align: right;">On Indent</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-      <tfoot>
-        <tr>
-          <td colspan="2" style="${cell} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
-          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${totalRequested}</td>
-          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">${totalConfirmed}</td>
-          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold; ${totalPending > 0 ? 'color: #b54708;' : 'color: #bbb;'}">${totalPending}</td>
-        </tr>
-      </tfoot>
-    </table>
-
-    ${totalPending > 0
-      ? `<p>Of the ${totalRequested} unit(s) booked, <strong>${totalConfirmed}</strong> were confirmed from available stock and <strong>${totalPending}</strong> could not be fulfilled. The shortfall has been moved to indent <strong>${esc(indentId)}</strong> — we will notify you as soon as it is back in stock, and it will return to your selection list for confirmation.</p>`
-      : ''}
-
-    <p style="margin: 16px 0; padding: 12px 16px; background: #fff8e6; border-left: 4px solid #f0a500; font-size: 14px;">
-      <strong>Please note:</strong> the turnaround time (TAT) for this booking is
-      <strong>7 days</strong> from the date of confirmation.
-    </p>
-
-    <p>Thank you for your business.</p>
-  `;
-};
+// The notification bodies live in utils/indentMail.js. One module builds the
+// customer copy and the Support Team copy from the same facts, so a confirmation
+// that raises an indent cannot tell the two audiences different things — see
+// sendBookingMails() and sendIndentRaisedMails() there.
 
 export const confirmBooking = async (req, res, next) => {
   const session = await mongoose.startSession();
@@ -847,42 +819,91 @@ export const confirmBooking = async (req, res, next) => {
       session.endSession();
     }
 
-    const { orderNumber, poNumber, indentId, createdOrders, summary, totalConfirmed, totalPending } = result;
+    const {
+      orderNumber, poNumber, indentId, createdOrders, summary,
+      totalConfirmed, totalPending, confirmedAt,
+    } = result;
+
+    // WHAT WAS ACTUALLY CREATED. A confirmation produces one of three outcomes,
+    // and they are not interchangeable — a request where nothing could be
+    // fulfilled creates an INDENT and no booking at all, and calling that
+    // "Booking BO-… confirmed — 0 units" is both untrue and alarming. It is also
+    // why a standalone indent appeared to send nothing useful.
+    const isStandaloneIndent = totalConfirmed === 0 && totalPending > 0;
+    const isCombined = totalConfirmed > 0 && totalPending > 0;
 
     // Side effects run only after a successful commit.
-    const notifMessage = totalPending > 0
-      ? `Booking ${orderNumber} (PO ${poNumber}): ${totalConfirmed} units confirmed, ${totalPending} units moved to Indent ${indentId}.`
-      : `Your booking ${orderNumber} (PO ${poNumber}) is confirmed.`;
-    sendNotification(req.user._id, 'Booking Confirmed', notifMessage, 'order');
+    const notifMessage = isStandaloneIndent
+      ? `Indent ${indentId} raised for ${totalPending} unit(s). We will notify you when material is inwarded.`
+      : isCombined
+        ? `Booking ${orderNumber} (PO ${poNumber}): ${totalConfirmed} units confirmed, ${totalPending} units moved to Indent ${indentId}.`
+        : `Your booking ${orderNumber} (PO ${poNumber}) is confirmed.`;
+    sendNotification(
+      req.user._id,
+      isStandaloneIndent ? 'Indent Raised' : 'Booking Confirmed',
+      notifMessage,
+      'order',
+    );
 
     const who = req.user.company || req.user.user || req.user.email;
     notifyAdmins({
-      title: totalPending > 0 ? 'Booking Confirmed (with Indent)' : 'Booking Confirmed',
-      message: `${who} confirmed booking ${orderNumber} — ${totalConfirmed} units confirmed${totalPending > 0 ? `, ${totalPending} units on indent` : ''}.`,
+      title: isStandaloneIndent
+        ? 'Indent Raised'
+        : isCombined ? 'Booking Confirmed (with Indent)' : 'Booking Confirmed',
+      message: isStandaloneIndent
+        ? `${who} raised indent ${indentId} — ${totalPending} units awaiting stock.`
+        : `${who} confirmed booking ${orderNumber} — ${totalConfirmed} units confirmed${totalPending > 0 ? `, ${totalPending} units on indent` : ''}.`,
       type: 'order',
     });
 
-    // Booking confirmation email to the customer who placed it. Sent once per
-    // confirmation (not per line), and only after the transaction has committed
-    // so we never email about a booking that was rolled back.
-    if (req.user.email && req.user.preferences?.emailNotifications !== false) {
-      const subject = totalPending > 0
-        ? `Booking ${orderNumber} confirmed (${totalConfirmed} units) — ${totalPending} on indent`
-        : `Booking ${orderNumber} confirmed — ${totalConfirmed} units`;
-
-      const body = buildConfirmationEmail({
-        customerName: req.user.user || req.user.company || 'Customer',
-        orderNumber, indentId, summary, totalConfirmed, totalPending,
-      });
-
-      // Fire-and-forget: a mail failure must not fail an already-committed booking.
-      sendEmail(req.user.email, subject, body, {
-        cc: [...(req.user.bookingCcEmails || []), ...COMPANY_CC],
-      }).catch((e) => console.error('[confirmBooking] email error', e));
-    }
+    // ── Email: the customer AND the Support Team ───────────────────────────
+    //
+    // EXACTLY ONE mail each way per confirmation, whichever of the three
+    // outcomes it was. The branch picks the wording, not the number of mails —
+    // sending "a booking mail" and "an indent mail" for a combined confirmation
+    // is precisely the duplicate the brief rules out.
+    //
+    // Sent after the transaction has committed, so nothing is ever announced
+    // that was rolled back. Awaited rather than fire-and-forget: the whole
+    // reported defect was mail that silently did not go, and a promise nobody
+    // waits on cannot report that. The wait is a second or two on an
+    // already-saved record, and both helpers swallow their own failures.
+    const mailArgs = {
+      customer: req.user,
+      indentDate: confirmedAt,
+      poNumber,
+    };
+    const delivery = isStandaloneIndent
+      ? await sendIndentRaisedMails({
+          ...mailArgs,
+          indentId,
+          lines: summary
+            .filter((s) => s.pendingQty > 0)
+            .map((s) => ({
+              skuCode: s.skuCode,
+              msilCode: s.msilCode,
+              category: s.category,
+              quantity: s.pendingQty,
+              reference: s.reservationId,
+            })),
+        })
+      : await sendBookingMails({
+          ...mailArgs,
+          orderNumber,
+          indentId,
+          bookingDate: confirmedAt,
+          summary,
+          totalConfirmed,
+          totalPending,
+        });
 
     if (createdOrders.length) {
       io.emit('order-created', { orderId: createdOrders[0]._id, orderNumber });
+    }
+    // An indent with no booking still changes what Indent History shows, and
+    // the screen had no reason to refetch because no order-created ever fired.
+    if (totalPending > 0) {
+      io.emit('indent-raised', { indentId, customerId: String(req.user._id) });
     }
 
     res.status(201).json({
@@ -899,7 +920,13 @@ export const confirmBooking = async (req, res, next) => {
           totalConfirmed,
           totalPending
         },
-        fullyConfirmed: totalPending === 0
+        fullyConfirmed: totalPending === 0,
+        // Told plainly so the client can route to Booking History or Indent
+        // History on fact rather than by re-deriving it from the totals.
+        outcome: isStandaloneIndent ? 'indent' : isCombined ? 'booking+indent' : 'booking',
+        bookingCreated: totalConfirmed > 0,
+        indentCreated: totalPending > 0,
+        notified: delivery,
       }
     });
   } catch (error) {
@@ -1005,12 +1032,12 @@ export const validateBulk = async (req, res, next) => {
       }
 
       // MOQ applies to Non-MSIL customers only; MSIL customers are exempt.
-      // The quantity must be at least the MOQ.
-      if (req.user?.customerCategory !== 'MSIL') {
-        const moq = Number(product.moq) || 0;
-        if (moq > 1 && Number.isInteger(quantity) && quantity < moq) {
-          errors.push(`Quantity must be at least the Minimum Order Quantity (${moq}).`);
-        }
+      // Asked of utils/moq.js rather than re-derived here — a bulk upload that
+      // disagreed with the individual booking screen about who MOQ applies to
+      // is how an MSIL customer's file came back full of MOQ errors.
+      if (Number.isInteger(quantity)) {
+        const moqMessage = moqError(req.user, product, quantity);
+        if (moqMessage) errors.push(moqMessage);
       }
 
       if (errors.length > 0) {

@@ -6,13 +6,13 @@ import { ReviewIndentModal } from "../../components/booking/ReviewIndentModal";
 import { computeReview } from "../../utils/bookingReview";
 import { useUserStore } from "../../store/userStore";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
+import { isMsilCustomer, moqAppliesTo, effectiveMoq } from "../../utils/moq";
 import toast from "react-hot-toast";
 
 import { OrderTable } from "../../components/tables/OrderTable";
 import { ProductSearchDropdown } from "../../components/ui";
 import { Modal } from "../../components/ui/Modal";
 import { Button } from "../../components/ui/Button";
-import { Pagination } from "../../components/ui/Pagination";
 import { Package, Hash, Tag, MessageSquare, Receipt, ArrowRight, AlertTriangle, Clock, PackageCheck } from "lucide-react";
 
 const ValidityNotice = () => (
@@ -49,10 +49,14 @@ export const CustomerOrders = () => {
   const { user } = useUserStore();
 
   // MOQ is enforced only for Non-MSIL customers; MSIL customers are exempt.
-  const isMsil = user?.customerCategory === "MSIL";
+  // Both the classification and the rule come from utils/moq.js, which mirrors
+  // backend/utils/moq.js — re-deriving `customerCategory === "MSIL"` here is
+  // what let a category stored as 'msil' reclassify an MSIL customer as
+  // Non-MSIL and put them behind an MOQ they are exempt from.
+  const isMsil = isMsilCustomer(user);
   const showMsilCode = useShowMsilCode();
-  const productMoq = Number(selectedProduct?.moq) || 0;
-  const moqApplies = !isMsil && productMoq > 1;
+  const productMoq = effectiveMoq(user, selectedProduct);
+  const moqApplies = productMoq > 0;
 
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm({
     defaultValues: {
@@ -88,13 +92,12 @@ export const CustomerOrders = () => {
       return;
     }
 
-    // Non-MSIL customers must book at least the product's MOQ.
+    // Non-MSIL customers must book at least the product's MOQ. It is a
+    // minimum, not a pack size — the multiple-of check that used to sit here
+    // was never enforced by the server, so it refused quantities the same
+    // customer could push through Bulk Upload unchallenged.
     if (moqApplies && data.quantity < productMoq) {
       toast.error(`Quantity must be at least the MOQ (${productMoq})`, { icon: "❌" });
-      return;
-    }
-    if (moqApplies && data.quantity % productMoq !== 0) {
-      toast.error(`Quantity must be a multiple of the MOQ (${productMoq})`, { icon: "❌" });
       return;
     }
 
@@ -147,7 +150,6 @@ export const CustomerOrders = () => {
   };
 
   const review = computeReview(cartItems);
-  const indentLines = review.pending;
 
   // "Raise Indent" from a Selection List row: opens the Review Indent popup so
   // the user can confirm the booking (the shortfall becomes a Indent).
@@ -161,8 +163,14 @@ export const CustomerOrders = () => {
     try {
       const result = await confirmBooking();
       const totals = result?.totals;
-      // Show the confirmation summary popup with confirmed vs pending-indent counts.
+      // Show the confirmation summary popup with confirmed vs pending-indent
+      // counts. `outcome` comes from the server rather than being guessed here:
+      // a confirmation that fulfilled nothing created an INDENT and no booking,
+      // and heading that popup "Booking Confirmed" — then sending the customer
+      // to Booking History to find nothing — is what made the indent flow look
+      // broken from the outside.
       setSummary({
+        outcome: result?.outcome || ((totals?.totalConfirmed ?? 0) > 0 ? "booking" : "indent"),
         orderId: result?.orderId || "",
         poNumber: result?.poNumber || "",
         indentId: result?.indentId || "",
@@ -311,20 +319,10 @@ export const CustomerOrders = () => {
               {errors.quantity && <span className="text-xs text-red-500 mt-1 font-semibold">{errors.quantity.message}</span>}
               {/* MOQ reminder for Non-MSIL: quantity must be at least the MOQ. */}
               {moqApplies && selectedProduct && (
-                Number.isInteger(watchQuantity) && watchQuantity >= 1 ? (
-                  watchQuantity < productMoq ? (
-                    <span className="text-xs text-red-500 mt-1 font-semibold">
-                      Enter {productMoq} or more units (MOQ {productMoq}).
-                    </span>
-                  ) : watchQuantity % productMoq !== 0 ? (
-                    <span className="text-xs text-red-500 mt-1 font-semibold">
-                      Enter a quantity that is a multiple of {productMoq}.
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-slate-400 mt-1 font-medium">
-                      Multiple of {productMoq} units required.
-                    </span>
-                  )
+                Number.isInteger(watchQuantity) && watchQuantity >= 1 && watchQuantity < productMoq ? (
+                  <span className="text-xs text-red-500 mt-1 font-semibold">
+                    Enter {productMoq} or more units (MOQ {productMoq}).
+                  </span>
                 ) : (
                   <span className="text-[11px] text-slate-400 mt-1 font-medium">
                     Minimum {productMoq} units — enter {productMoq} or more.
@@ -341,7 +339,7 @@ export const CustomerOrders = () => {
             {/* ADD TO LIST BUTTON */}
             <button
               type="submit"
-              disabled={loading || !selectedProduct || !Number.isInteger(watchQuantity) || watchQuantity < 1 || (moqApplies && (watchQuantity < productMoq || watchQuantity % productMoq !== 0))}
+              disabled={loading || !selectedProduct || !Number.isInteger(watchQuantity) || watchQuantity < 1 || (moqApplies && watchQuantity < productMoq)}
               className="w-full py-3.5 mt-2 bg-gradient-to-r from-[#1a5b9e] to-[#15467a] hover:from-[#15467a] hover:to-[#0f345a] text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed tracking-wider text-sm active:scale-[0.98]"
             >
               <span className="text-lg font-light leading-none mb-0.5">+</span> ADD TO LIST
@@ -368,7 +366,7 @@ export const CustomerOrders = () => {
                 onRemoveItem={handleRemoveCartItem}
                 onBulkRemove={handleBulkRemove}
                 onRaiseIndent={handleRaiseIndent}
-                enforceMoq={!isMsil}
+                enforceMoq={moqAppliesTo(user)}
               />
             </div>
 
@@ -444,21 +442,37 @@ export const CustomerOrders = () => {
         unitCount={getTotalQuantity()}
       />
 
-      {/* BOOKING CONFIRMATION SUMMARY POPUP */}
+      {/* CONFIRMATION SUMMARY POPUP — named after what was actually created:
+          a booking, an indent, or both. Each links to the history that holds
+          it, so nobody is sent to Booking History to look for an indent. */}
       <Modal
         isOpen={!!summary}
-        onClose={() => { setSummary(null); navigate("/orders/history"); }}
-        title="Booking Confirmed"
+        onClose={() => setSummary(null)}
+        title={
+          summary?.outcome === "indent"
+            ? "Indent Raised"
+            : summary?.outcome === "booking+indent"
+              ? "Booking Confirmed with Indent"
+              : "Booking Confirmed"
+        }
         size="sm"
       >
         {summary && (
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-full bg-emerald-50 flex items-center justify-center">
-                <PackageCheck size={22} className="text-emerald-600" />
+              <div className={`w-11 h-11 rounded-full flex items-center justify-center ${
+                summary.outcome === "indent" ? "bg-amber-50" : "bg-emerald-50"
+              }`}>
+                {summary.outcome === "indent"
+                  ? <AlertTriangle size={22} className="text-amber-600" />
+                  : <PackageCheck size={22} className="text-emerald-600" />}
               </div>
               <div>
-                <p className="text-sm font-bold text-slate-800">Booking {summary.orderId}</p>
+                <p className="text-sm font-bold text-slate-800">
+                  {summary.outcome === "indent"
+                    ? `Indent ${summary.indentId}`
+                    : `Booking ${summary.orderId}`}
+                </p>
                 <p className="text-xs text-slate-500">PO {summary.poNumber}</p>
               </div>
             </div>
@@ -476,15 +490,29 @@ export const CustomerOrders = () => {
 
             {summary.pending > 0 && (
               <p className="text-xs text-slate-500 leading-relaxed">
-                Indent <span className="font-semibold text-amber-700">{summary.indentId}</span> (PO {summary.poNumber})
-                is tracked separately and fulfilled when fresh stock arrives.
+                {summary.outcome === "indent"
+                  ? "None of the requested quantity was in stock, so no booking was created."
+                  : "Part of the booking could not be fulfilled from stock."}{" "}
+                Indent <span className="font-semibold text-amber-700">{summary.indentId}</span> is
+                tracked in Indent History and fulfilled when material is inwarded. We have emailed
+                you the details.
               </p>
             )}
 
             <div className="flex justify-end gap-3 mt-1">
-              <Button variant="primary" onClick={() => { setSummary(null); navigate("/orders/history"); }}>
-                View Booking History
-              </Button>
+              {summary.pending > 0 && (
+                <Button
+                  variant={summary.outcome === "indent" ? "primary" : "secondary"}
+                  onClick={() => { setSummary(null); navigate("/orders/indent-history"); }}
+                >
+                  View Indent History
+                </Button>
+              )}
+              {summary.confirmed > 0 && (
+                <Button variant="primary" onClick={() => { setSummary(null); navigate("/orders/history"); }}>
+                  View Booking History
+                </Button>
+              )}
             </div>
           </div>
         )}

@@ -846,7 +846,19 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
   const touched = [...new Set(posting.map((r) => r.data.skuCode))];
   await recomputeHealthForSkus(touched);
   await syncLegacyStock(touched);
-  await processAvailableIndents(touched);
+  // Goods received by spreadsheet are still goods received. Only the RECEIPT /
+  // OPENING lines count as inward — a negative cell is filed as an ADJUSTMENT
+  // and nothing arrived for it. The batch id is the replay guard: reprocessing
+  // a chunk must not announce the same delivery to the customer a second time.
+  const inwardBySku = new Map();
+  for (const line of lines) {
+    if (line.quantity > 0) {
+      inwardBySku.set(line.skuCode, (inwardBySku.get(line.skuCode) || 0) + line.quantity);
+    }
+  }
+  await processAvailableIndents(touched, inwardBySku.size
+    ? { event: 'material-inward', reference: result.batch.batchId, inwardBySku }
+    : {});
   emitStockUpdated(req, touched, { source: 'import', jobId: job.jobId });
 
   return {

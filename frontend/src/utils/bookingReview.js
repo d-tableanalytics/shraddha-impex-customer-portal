@@ -36,6 +36,11 @@ export const computeReview = (lines = []) => {
  * A bulk row already carries the validated product and its quantity; this only
  * renames the fields, so both flows are reviewed against the same stock figure
  * by the same code.
+ *
+ * NOT USED BY THE BULK UPLOAD SCREEN ANY MORE. That screen now reviews the
+ * Selection List after reserving the rows, because that — not the parsed file —
+ * is the set the confirmation commits. Kept for callers that need to review a
+ * file before anything is reserved.
  */
 export const linesFromBulkRows = (rows = []) =>
   rows

@@ -159,8 +159,13 @@ export const IndentDrawer = () => {
                 </div>
                 <div>
                   <p className="text-[10px] font-bold text-slate-400 uppercase">Booking ID</p>
-                  <p className="text-sm font-bold text-slate-800 line-clamp-2">
-                    {selectedIndent.bookingId || "—"}
+                  {/* Null means this indent was raised on its own. Deriving an
+                      id from the indent number would name a booking that was
+                      never created. */}
+                  <p className={`text-sm font-bold line-clamp-2 ${
+                    selectedIndent.bookingId ? "text-slate-800" : "text-amber-600"
+                  }`}>
+                    {selectedIndent.bookingId || "Standalone indent"}
                   </p>
                 </div>
               </div>

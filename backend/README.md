@@ -47,8 +47,30 @@ MONGODB_URI=mongodb://localhost:27017/erp_portal
 JWT_SECRET=super_secret_enterprise_jwt_key_2026
 JWT_EXPIRES_IN=1d
 NODE_ENV=development
+
+# Mail
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+EMAIL_FROM="Shraddha Impex Booking Portal" <no-reply@example.com>
+
+# Notification recipients (comma-separated)
+BOOKING_CC_EMAILS=Contact@shraddhaimpex.net
+SUPPORT_TEAM_EMAILS=support@shraddhaimpex.net
 ```
 *(Note: Change `JWT_SECRET` in production to a secure random hash).*
+
+**`SMTP_HOST` is not optional.** With it unset the mailer logs every message to
+the console instead of sending it, and reports success — an app started without
+its `.env` therefore reports every notification as delivered while sending none.
+
+**`SUPPORT_TEAM_EMAILS`** is the Support Team mailbox. It receives its own copy —
+not a Cc — of every indent raised, every booking confirmed, and every material
+inward posted against an open indent. Left unset it falls back to
+`BOOKING_CC_EMAILS`, so support still hears about these events; set it explicitly
+to route them at a real support queue. Set it to an empty string to disable the
+support copy entirely.
 
 ### Running the Server
 

@@ -35,8 +35,9 @@ import { nextSequence } from '../../models/Counter.js';
 import { findProductBySku, reserveStock, releaseStock } from '../../utils/stockLedger.js';
 import { isPlaceholderPo, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { sendEmail } from '../../utils/mailer.js';
-import { notifyUser } from '../../utils/notify.js';
+import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
+import { sendAutoBookSupportMail, sendMaterialInwardMails } from '../../utils/indentMail.js';
 
 const OPEN_STATUSES = ['Pending', 'Partially Confirmed'];
 
@@ -288,9 +289,128 @@ const bookForCustomer = async (customer, indents) => {
 };
 
 /**
- * @param {string[]} skuCodes  SKUs whose stock just moved.
+ * MATERIAL INWARD against indents that are STILL OPEN after the auto-book pass.
+ *
+ * The auto-booker only acts on an indent when the arriving stock covers it in
+ * full. Everything else — a part delivery, or units that went to an older
+ * indent in the queue — left the customer and the Support Team with no word at
+ * all that their material had started arriving. That is the reported gap, and
+ * it is filled here rather than by loosening the all-or-nothing booking rule,
+ * which exists for a good reason.
+ *
+ * Indents that WERE auto-booked are excluded by construction: this runs after
+ * the booking pass and re-reads what is still open, so a line that became a
+ * booking has already left the set and cannot be told about the same receipt
+ * twice.
+ *
+ * @param {string[]}            skus         SKUs the receipt touched.
+ * @param {Map<string,number>}  inwardBySku  Units received, per SKU.
+ * @param {string|null}         reference    The posting's id (ledger batch or
+ *                                           import job). Replays of the same
+ *                                           posting are silently skipped.
  */
-export const processAvailableIndents = async (skuCodes) => {
+const notifyMaterialInward = async ({ skus, inwardBySku, reference }) => {
+  const stats = { inwardLines: 0, inwardCustomers: 0, inwardEmailed: 0, inwardFailed: 0 };
+
+  const received = skus.filter((s) => (inwardBySku?.get(s) ?? 0) > 0);
+  if (received.length === 0) return stats;
+
+  // A posting that has already been announced to this indent is skipped. With
+  // no reference to compare, every open indent qualifies — the caller has not
+  // given us anything to recognise a replay by, and silence would be worse.
+  const notAlreadyTold = reference
+    ? { $or: [{ materialInwardNotifiedRef: null }, { materialInwardNotifiedRef: { $ne: reference } }] }
+    : {};
+
+  const open = await Reservation.find({
+    skuCode: { $in: received },
+    status: { $in: OPEN_STATUSES },
+    ...notAlreadyTold,
+  }).populate(
+    'customerId',
+    'user name email company role phone preferences bookingCcEmails customerCategory',
+  );
+  if (open.length === 0) return stats;
+
+  // Read the position back rather than reusing the pre-booking figures — the
+  // auto-booker has just consumed some of this stock, and telling a customer
+  // that units are available when they have been reserved to somebody else is
+  // the kind of wrong number that generates a phone call.
+  const balances = await StockBalance.aggregate([
+    { $match: { skuCode: { $in: received } } },
+    { $group: { _id: '$skuCode', onHand: { $sum: '$onHand' }, reserved: { $sum: '$reserved' } } },
+  ]);
+  const availableBySku = new Map(
+    balances.map((b) => [b._id, Math.max(0, b.onHand - b.reserved)]),
+  );
+
+  const byCustomer = new Map();
+  for (const r of open) {
+    if (!r.customerId?._id) continue;
+    const key = String(r.customerId._id);
+    if (!byCustomer.has(key)) byCustomer.set(key, { customer: r.customerId, lines: [] });
+    byCustomer.get(key).lines.push(r);
+  }
+
+  const now = new Date();
+  for (const { customer, lines } of byCustomer.values()) {
+    const rows = lines.map((l) => ({
+      skuCode: l.skuCode,
+      msilCode: l.msilCode,
+      quantity: l.quantity,
+      receivedQty: inwardBySku.get(l.skuCode) ?? 0,
+      availableQty: availableBySku.get(l.skuCode) ?? 0,
+      indentNumber: l.indentNumber,
+      reference: l.reservationId,
+    }));
+
+    const result = await sendMaterialInwardMails({ customer, lines: rows, reference });
+    stats.inwardCustomers += 1;
+    stats.inwardLines += lines.length;
+    if (result.customer === 'sent') stats.inwardEmailed += 1;
+    if (result.customer === 'failed' || result.support === 'failed') stats.inwardFailed += 1;
+
+    notifyUser(customer._id, {
+      title: 'Material inwarded against your indent',
+      message: `Stock has been received for ${lines.length} indented item`
+        + `${lines.length === 1 ? '' : 's'}. The indent stays open until the full quantity is covered.`,
+      type: 'reservation',
+    });
+
+    // Stamped whatever the mail did. The stamp records "this receipt has been
+    // handled for this indent", and a replayed import must not have another go
+    // at it just because SMTP was down the first time — that would produce the
+    // duplicate the brief rules out, not a recovery.
+    await Reservation.updateMany(
+      { _id: { $in: lines.map((l) => l._id) } },
+      { $set: { materialInwardNotifiedRef: reference ?? null, materialInwardNotifiedAt: now } },
+    ).catch((e) => console.error('[Indent] could not stamp material-inward notice:', e.message));
+  }
+
+  if (stats.inwardCustomers > 0) {
+    notifyAdmins({
+      title: 'Material inwarded against open indents',
+      message: `${stats.inwardLines} open indent line(s) across ${stats.inwardCustomers} customer(s) `
+        + 'had material inwarded but are not yet fully covered.',
+      type: 'reservation',
+    });
+  }
+
+  return stats;
+};
+
+/**
+ * @param {string[]} skuCodes  SKUs whose stock just moved.
+ * @param {object}  [options]
+ * @param {string}  [options.event]        'material-inward' when the movement was
+ *                                         goods being received. Anything else is
+ *                                         a stock change that only auto-books.
+ * @param {string}  [options.reference]    The posting's id, used to recognise a
+ *                                         replay of the same receipt.
+ * @param {Map<string,number>} [options.inwardBySku]  Units received, per SKU.
+ */
+export const processAvailableIndents = async (skuCodes, options = {}) => {
+  const { event = 'stock-change', reference = null, inwardBySku = null } = options;
   const empty = { checked: 0, booked: 0, bookings: 0, emailed: 0 };
   try {
     const skus = [...new Set((skuCodes || []).filter(Boolean))];
@@ -299,8 +419,21 @@ export const processAvailableIndents = async (skuCodes) => {
     const indents = await Reservation.find({
       skuCode: { $in: skus },
       status: { $in: OPEN_STATUSES },
-    }).populate('customerId', 'user name email company role phone preferences bookingCcEmails');
+    }).populate(
+      'customerId',
+      'user name email company role phone preferences bookingCcEmails customerCategory',
+    );
     if (indents.length === 0) return empty;
+
+    // The material-inward notice covers whatever is STILL open once the
+    // auto-booker has taken what it can, so it always runs last — including on
+    // the paths that book nothing at all, which is the common case for a part
+    // delivery and exactly where the customer was previously told nothing.
+    const inwardNotice = async () => (
+      event === 'material-inward'
+        ? notifyMaterialInward({ skus, inwardBySku: inwardBySku ?? new Map(), reference })
+        : {}
+    );
 
     // Availability summed across locations, matching what every other screen
     // reports for a SKU.
@@ -331,7 +464,9 @@ export const processAvailableIndents = async (skuCodes) => {
       eligible.push(r);
     }
 
-    if (eligible.length === 0) return { ...empty, checked: indents.length };
+    if (eligible.length === 0) {
+      return { ...empty, checked: indents.length, ...(await inwardNotice()) };
+    }
 
     const byCustomer = new Map();
     for (const r of eligible) {
@@ -419,10 +554,25 @@ export const processAvailableIndents = async (skuCodes) => {
             : 'no address on the account.'),
         );
       }
+
+      // The Support Team's copy. Support was never a recipient of anything on
+      // this path, so an indent that quietly turned into a booking with stock
+      // committed against it was invisible to the people who work indents.
+      // Sent regardless of the customer's own notification preference — it is
+      // an operational record, not a subscription.
+      await sendAutoBookSupportMail({
+        customer,
+        orderNumber: made.orderNumber,
+        lines: made.lines,
+        dueAt,
+      });
     }
 
     // `emailed` counts messages the SMTP server accepted, not attempts.
-    return { checked: indents.length, booked, bookings, emailed, emailFailed, emailSkipped };
+    return {
+      checked: indents.length, booked, bookings, emailed, emailFailed, emailSkipped,
+      ...(await inwardNotice()),
+    };
   } catch (error) {
     // Swallowed by design — see the note at the top.
     console.error('[Indent] auto-book check failed:', error.message);

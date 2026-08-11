@@ -39,8 +39,10 @@ const groupIndents = (items) => {
       id: indentNumber || primary._id,
       indentNumber,
       poNumber: primary.poNumber || null,
-      // The indent id mirrors its booking id, differing only in the prefix.
-      bookingId: indentNumber ? indentNumber.replace(/^PI-/, "BO-") : null,
+      // The booking this indent was raised alongside, or null when it stands
+      // alone. Server-reported — see the mapping above.
+      bookingId: primary.bookingId || null,
+      standalone: lines.every((l) => l.standalone),
       date: primary.updatedAt || null,
       customer: primary.customer?.name || "—",
       status: primary.status,
@@ -97,6 +99,12 @@ export const useIndentHistoryStore = create((set, get) => ({
           status: r.status,
           indentNumber: r.indentNumber || null,
           poNumber: r.poNumber || null,
+          // Reported by the server, which checks the orders collection. It is
+          // null for a standalone indent — one raised with no booking behind
+          // it — and must NOT be derived from the indent number here: the two
+          // ids share a sequence whether or not a booking was ever created.
+          bookingId: r.bookingId || null,
+          standalone: r.standalone === true,
           pendingQuantity: r.quantity,
           updatedAt: r.updatedAt,
           // The promised availability date, so the drawer can show and edit it.

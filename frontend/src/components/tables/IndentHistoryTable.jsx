@@ -158,8 +158,15 @@ export const IndentHistoryTable = () => {
                       )}
                     </div>
                   </td>
+                  {/* Blank, not a guess. A standalone indent has no booking
+                      behind it, and printing the id a booking WOULD have had
+                      sends people to Booking History to look for nothing. */}
                   <td className="px-5 py-4 font-bold text-slate-800">
-                    {indent.bookingId || "—"}
+                    {indent.bookingId || (
+                      <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">
+                        Standalone
+                      </span>
+                    )}
                   </td>
                   {isAdmin && (
                     <td

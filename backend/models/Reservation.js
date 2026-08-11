@@ -45,6 +45,16 @@ const reservationSchema = new mongoose.Schema({
   // short, so a genuine second chance is announced like the first.
   availabilityNotifiedAt: { type: Date, default: null },
 
+  // ── Material inward notice ────────────────────────────────────────────────
+  // The inward event this indent was last told about. Stored as the reference
+  // of the posting (a ledger batch id or an import job id) rather than a
+  // timestamp, because the thing that must not repeat is the SAME receipt being
+  // announced twice — which is exactly what a replayed import chunk or a
+  // retried adjustment would otherwise do. A genuinely new receipt carries a
+  // new reference and is announced normally.
+  materialInwardNotifiedRef: { type: String, default: null },
+  materialInwardNotifiedAt: { type: Date, default: null },
+
   // ── Automatic booking ─────────────────────────────────────────────────────
   // The booking the system raised on the customer's behalf when this indent
   // became fulfillable. Recorded rather than inferred: an indent and its

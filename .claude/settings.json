@@ -4,7 +4,13 @@
       "Bash(pkill -f \"node server.js\")",
       "Bash(PORT=5098 timeout 15 node server.js)",
       "Bash(python -)",
-      "Bash(node -e \"await import\\('./modules/inventory/import.service.js'\\); console.log\\('service loads OK'\\);\" --input-type=module)"
+      "Bash(node -e \"await import\\('./modules/inventory/import.service.js'\\); console.log\\('service loads OK'\\);\" --input-type=module)",
+      "Read(//c/Users/angel/.claude/projects/c--Users-angel-OneDrive-Desktop-Customer-portal-module/memory/**)",
+      "Bash(node --check utils/indentMail.js)",
+      "Bash(node --check utils/moq.js)",
+      "Bash(node --check utils/mailRecipients.js)",
+      "Bash(node mailcheck.mjs)",
+      "Bash(node importcheck.mjs)"
     ]
   }
 }

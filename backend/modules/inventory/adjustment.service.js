@@ -241,7 +241,19 @@ export const adjustStock = async ({
   // stock too rather than only the IMS screens.
   await syncLegacyStock([sku]);
   // Stock just rose or fell — tell anyone whose indent this now covers.
-  await processAvailableIndents([sku]);
+  //
+  // A POSITIVE delta is material coming in, and is announced as such to anyone
+  // holding an open indent for the SKU even when the receipt is too small to
+  // book their line outright. A negative one is a correction: nothing arrived,
+  // so nobody is told anything arrived. The batch id is passed so a retried
+  // posting cannot announce the same receipt twice.
+  await processAvailableIndents([sku], delta > 0
+    ? {
+        event: 'material-inward',
+        reference: result.batch.batchId,
+        inwardBySku: new Map([[sku, delta]]),
+      }
+    : {});
 
   // ── Report the new position, read back rather than assumed ───────────────
   const updated = await StockBalance.findOne({ skuCode: sku, brand, locationCode: location.code }).lean();
