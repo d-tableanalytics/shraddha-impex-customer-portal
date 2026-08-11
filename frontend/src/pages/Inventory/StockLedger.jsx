@@ -196,16 +196,21 @@ export const StockLedger = () => {
     fetchMovementTypes();
   }, [fetchMovements, fetchMovementTypes]);
 
+  // A ledger row IS a transaction, so the selection is transaction ids — not
+  // SKUs. Selecting two movements of one SKU and exporting by SKU would pull in
+  // every other movement that SKU ever had.
+  //
+  // Declared above the permission guard, not below it: `user` is null on the
+  // first render, so the guard does not fire and this hook runs. Once the user
+  // loads without the permission the guard returns early, and React sees fewer
+  // hooks than last render — which throws instead of redirecting.
+  const [picked, setPicked] = useState(() => new Set());
+
   // The route is guarded server-side on every request; this only avoids
   // rendering a screen the user could not populate.
   if (user && !hasPermission(user, PERMISSIONS.VIEW_STOCK_LEDGER)) {
     return <Navigate to="/" replace />;
   }
-
-  // A ledger row IS a transaction, so the selection is transaction ids — not
-  // SKUs. Selecting two movements of one SKU and exporting by SKU would pull in
-  // every other movement that SKU ever had.
-  const [picked, setPicked] = useState(() => new Set());
 
   const togglePick = (txn) => setPicked((prev) => {
     const next = new Set(prev);
