@@ -412,7 +412,8 @@ export const BulkUpload = () => {
             </p>
 
             <div className="flex justify-end gap-3 mt-1">
-              {outcome.pending > 0 && (
+              {/* Indent-only or combined: show Indent History button */}
+              {(outcome.outcome === "indent" || outcome.outcome === "booking+indent" || outcome.pending > 0) && (
                 <Button
                   variant={outcome.outcome === "indent" ? "primary" : "secondary"}
                   onClick={() => goTo("/orders/indent-history")}
@@ -420,7 +421,9 @@ export const BulkUpload = () => {
                   View Indent History
                 </Button>
               )}
-              {outcome.confirmed > 0 && (
+              {/* Booking-only or combined: show Booking History button.
+                  Never shown for indent-only outcomes. */}
+              {outcome.outcome !== "indent" && (outcome.confirmed > 0 || outcome.outcome === "booking" || outcome.outcome === "booking+indent") && (
                 <Button variant="primary" onClick={() => goTo("/orders/history")}>
                   View Booking History
                 </Button>

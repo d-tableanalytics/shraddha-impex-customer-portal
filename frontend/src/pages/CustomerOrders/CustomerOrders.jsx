@@ -500,7 +500,8 @@ export const CustomerOrders = () => {
             )}
 
             <div className="flex justify-end gap-3 mt-1">
-              {summary.pending > 0 && (
+              {/* Indent-only or combined: show Indent History button */}
+              {(summary.outcome === "indent" || summary.outcome === "booking+indent" || summary.pending > 0) && (
                 <Button
                   variant={summary.outcome === "indent" ? "primary" : "secondary"}
                   onClick={() => { setSummary(null); navigate("/orders/indent-history"); }}
@@ -508,7 +509,9 @@ export const CustomerOrders = () => {
                   View Indent History
                 </Button>
               )}
-              {summary.confirmed > 0 && (
+              {/* Booking-only or combined: show Booking History button.
+                  Never shown for indent-only outcomes. */}
+              {summary.outcome !== "indent" && (summary.confirmed > 0 || summary.outcome === "booking" || summary.outcome === "booking+indent") && (
                 <Button variant="primary" onClick={() => { setSummary(null); navigate("/orders/history"); }}>
                   View Booking History
                 </Button>
