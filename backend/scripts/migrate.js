@@ -15,6 +15,7 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 // ─── Import Mongoose Models ───────────────────────────────────────────────────
 import { ProductKoken, ProductBIX, ProductIMADA } from '../models/Product.js';
 import { normaliseSeason, describeSeasonIssues } from '../utils/productFields.js';
+import { stripBlocked } from '../utils/mailRecipients.js';
 import User  from '../models/User.js';
 import Order from '../models/Order.js';
 
@@ -267,8 +268,11 @@ export const migrateUsers = async (filePath) => {
     const email = toStr(row['EMAIL']);
     if (!email) { skipped++; continue; }
 
-    // Booking CC Emails: split comma-separated string into array
-    const bookingCcEmails = toArray(row['Booking CC Emails']);
+    // Booking CC Emails: split comma-separated string into array, minus any
+    // address on the mail blocklist — the sheet still carries addresses that
+    // must not be copied on customer mail, and re-importing it would restore
+    // them.
+    const bookingCcEmails = stripBlocked(toArray(row['Booking CC Emails']));
 
     // Brand access: Excel stores TRUE/FALSE or 1/0
     const brandAccess = {

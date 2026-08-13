@@ -22,8 +22,8 @@ async function test() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     }, {
-      email: 'krishnapawar@dtableanalytics.com',
-      password: 'a1234'
+      email: process.env.TEST_EMAIL || 'angelsharmajiya@gmail.com',
+      password: process.env.TEST_PASSWORD || 'a1234'
     });
     
     const token = login.data.token;

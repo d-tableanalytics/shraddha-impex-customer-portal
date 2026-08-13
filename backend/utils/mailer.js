@@ -2,6 +2,8 @@ import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { isBlockedRecipient, stripBlocked } from './mailRecipients.js';
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.ethereal.email',
   port: process.env.SMTP_PORT || 587,
@@ -21,9 +23,17 @@ const transporter = nodemailer.createTransport({
  * @param {string[]} [options.cc]  Extra addresses to copy (e.g. a user's bookingCcEmails).
  */
 export const sendEmail = async (to, subject, htmlBody, options = {}) => {
+  // Last line of defence for the blocklist: every notification in the app goes
+  // through here, so filtering at this point covers call paths that assemble
+  // their recipients from a customer record without consulting mailRecipients.
+  if (isBlockedRecipient(to)) {
+    console.warn(`[Mailer] Skipped — "${to}" is a blocked recipient. Subject: ${subject}`);
+    return false;
+  }
+
   // Accept a single string or an array; drop blanks and de-duplicate against `to`.
   const cc = [...new Set(
-    (Array.isArray(options.cc) ? options.cc : options.cc ? [options.cc] : [])
+    stripBlocked(Array.isArray(options.cc) ? options.cc : options.cc ? [options.cc] : [])
       .map((a) => String(a).trim())
       .filter(Boolean)
       .filter((a) => a.toLowerCase() !== String(to).trim().toLowerCase())

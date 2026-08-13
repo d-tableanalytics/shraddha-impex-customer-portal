@@ -1,3 +1,34 @@
+const list = (raw) =>
+  String(raw ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+/**
+ * Addresses that must never receive portal mail, whatever a customer record,
+ * spreadsheet import or .env says. These two arrived through the 'Booking CC
+ * Emails' column of the migration sheet and were being copied on live customer
+ * mail; deleting them from the database alone is not enough, because the next
+ * re-import of the same sheet puts them straight back.
+ *
+ * Add to the list via BLOCKED_EMAILS in .env (comma-separated).
+ */
+export const BLOCKED_RECIPIENTS = new Set(
+  [
+    'pankajkannavedia@dtableanalytics.com',
+    'krishnapawar@dtableanalytics.com',
+    ...list(process.env.BLOCKED_EMAILS),
+  ].map((a) => a.toLowerCase()),
+);
+
+/** True when the address is on the blocklist. Case- and space-insensitive. */
+export const isBlockedRecipient = (address) =>
+  BLOCKED_RECIPIENTS.has(String(address ?? '').trim().toLowerCase());
+
+/** Drops every blocked address from a list of recipients. */
+export const stripBlocked = (addresses = []) =>
+  (Array.isArray(addresses) ? addresses : [addresses]).filter((a) => !isBlockedRecipient(a));
+
 /**
  * Company address copied on customer-facing booking mail, so Shraddha Impex
  * keeps a record of every confirmation and PO.
@@ -5,13 +36,9 @@
  * Override via BOOKING_CC_EMAILS in .env (comma-separated) to change or add
  * addresses without touching code. Set it to an empty string to disable.
  */
-const list = (raw) =>
-  String(raw ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-export const COMPANY_CC = list(process.env.BOOKING_CC_EMAILS ?? 'Contact@shraddhaimpex.net');
+export const COMPANY_CC = stripBlocked(
+  list(process.env.BOOKING_CC_EMAILS ?? 'Contact@shraddhaimpex.net'),
+);
 
 /**
  * The Support Team mailbox.
@@ -28,9 +55,11 @@ export const COMPANY_CC = list(process.env.BOOKING_CC_EMAILS ?? 'Contact@shraddh
  * BOOKING_CC_EMAILS/COMPANY_CC so an environment that has not been given the
  * new variable still reaches a real person rather than silently nobody.
  */
-export const SUPPORT_TEAM = process.env.SUPPORT_TEAM_EMAILS !== undefined
-  ? list(process.env.SUPPORT_TEAM_EMAILS)
-  : [...COMPANY_CC];
+export const SUPPORT_TEAM = stripBlocked(
+  process.env.SUPPORT_TEAM_EMAILS !== undefined
+    ? list(process.env.SUPPORT_TEAM_EMAILS)
+    : [...COMPANY_CC],
+);
 
 /**
  * Support's To: address plus any others to copy. Returns null when no support
@@ -43,4 +72,11 @@ export const supportRecipients = () => {
   return { to, cc };
 };
 
-export default { COMPANY_CC, SUPPORT_TEAM, supportRecipients };
+export default {
+  COMPANY_CC,
+  SUPPORT_TEAM,
+  supportRecipients,
+  BLOCKED_RECIPIENTS,
+  isBlockedRecipient,
+  stripBlocked,
+};

@@ -10,7 +10,10 @@
       "Bash(node --check utils/moq.js)",
       "Bash(node --check utils/mailRecipients.js)",
       "Bash(node mailcheck.mjs)",
-      "Bash(node importcheck.mjs)"
+      "Bash(node importcheck.mjs)",
+      "Bash(git log *)",
+      "Bash(node scripts/purge-blocked-emails.js --dry-run)",
+      "Bash(node scripts/purge-blocked-emails.js)"
     ]
   }
 }
