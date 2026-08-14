@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PackageX, ArrowRightCircle, Loader2, Eye, FileSpreadsheet } from "lucide-react";
+import { PackageX, Eye, FileSpreadsheet } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { Pagination } from "../ui/Pagination";
 import { TableSkeleton } from "../ui/TableSkeleton";
@@ -38,20 +38,21 @@ export const groupByIndent = (items) => {
  * Renders the list of indents (unfulfilled reservation quantities),
  * one row per booking confirmation. Click a row to see every SKU it covers.
  *
+ * There is deliberately NO per-line action here. Moving an indent to the
+ * customer's selection list is not something an admin does by hand — it happens
+ * automatically once stock covers the line (see the indent availability
+ * service on the server), so an "action" column offered a second, manual route
+ * to the same outcome and has been removed.
+ *
  * @param {Array}    items        Pending items from the cart store.
  * @param {boolean}  showCustomer Show the customer column (admin view).
  * @param {boolean}  compact      Tighter padding for embedding in a dashboard.
- * @param {Function} onRestore    Admin-only. If provided, renders an action to move
- *                                a indent line back to the customer's selection list.
- * @param {string}   restoringId  _id of the row currently being restored (spinner).
  */
 export const BackordersTable = ({
   items = [],
   loading = false,
   showCustomer = false,
   compact = false,
-  onRestore = null,
-  restoringId = null,
   selectedIds = [],
   toggleSelectId,
   toggleSelectAll,
@@ -71,7 +72,7 @@ export const BackordersTable = ({
   // Skeleton while the first fetch is in flight, so the table doesn't flash
   // "No indents" before the data has had a chance to arrive.
   if (loading) {
-    const cols = 8 + (showCustomer ? 1 : 0) + (onRestore ? 1 : 0);
+    const cols = 8 + (showCustomer ? 1 : 0);
     return (
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -118,7 +119,6 @@ export const BackordersTable = ({
               <th className={`${pad} pr-4 text-center`}>Items</th>
               <th className={`${pad} pr-4 text-center`}>Qty</th>
               <th className={`${pad} pr-4 text-center`}>Details</th>
-              {onRestore && <th className={`${pad} pr-4 text-center`}>Action</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -185,38 +185,6 @@ export const BackordersTable = ({
                       )}
                     </div>
                   </td>
-                  {onRestore && (
-                    <td className={`${pad} pr-4 text-center`}>
-                      {isMulti ? (
-                        <span className="text-[11px] text-slate-400 font-medium">See details</span>
-                      ) : (
-                        (() => {
-                          const inStock =
-                            (primary.product?.availableStock || 0) >= (primary.pendingQuantity || 0);
-                          const busy = restoringId === primary._id;
-                          return (
-                            <button
-                              onClick={() => onRestore(primary)}
-                              disabled={!inStock || busy}
-                              title={
-                                inStock
-                                  ? "Move to the customer's selection list & email them to confirm"
-                                  : "Not enough stock yet to fulfil this indent"
-                              }
-                              className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                              {busy ? (
-                                <Loader2 size={14} className="animate-spin" />
-                              ) : (
-                                <ArrowRightCircle size={14} />
-                              )}
-                              {busy ? "Moving..." : "To Selection List"}
-                            </button>
-                          );
-                        })()
-                      )}
-                    </td>
-                  )}
                 </tr>
               );
             })}
@@ -241,14 +209,10 @@ export const BackordersTable = ({
                     <th className="px-4 py-2.5">Date</th>
                     <th className="px-4 py-2.5 text-center">Pending Qty</th>
                     <th className="px-4 py-2.5 text-center">Current Stock</th>
-                    {onRestore && <th className="px-4 py-2.5 text-center">Action</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {detailPaging.pageItems.map((line) => {
-                    const inStock =
-                      (line.product?.availableStock || 0) >= (line.pendingQuantity || 0);
-                    const busy = restoringId === line._id;
                     return (
                       <tr key={line._id}>
                         <td className="px-4 py-2.5 font-bold text-slate-800">{line.product.code}</td>
@@ -266,27 +230,6 @@ export const BackordersTable = ({
                         <td className="px-4 py-2.5 text-center font-semibold text-slate-600">
                           {line.product.availableStock}
                         </td>
-                        {onRestore && (
-                          <td className="px-4 py-2.5 text-center">
-                            <button
-                              onClick={() => onRestore(line)}
-                              disabled={!inStock || busy}
-                              title={
-                                inStock
-                                  ? "Move to the customer's selection list & email them to confirm"
-                                  : "Not enough stock yet to fulfil this indent"
-                              }
-                              className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                              {busy ? (
-                                <Loader2 size={14} className="animate-spin" />
-                              ) : (
-                                <ArrowRightCircle size={14} />
-                              )}
-                              {busy ? "Moving..." : "To Selection List"}
-                            </button>
-                          </td>
-                        )}
                       </tr>
                     );
                   })}

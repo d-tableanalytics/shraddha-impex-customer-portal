@@ -6,6 +6,7 @@ import { useProductStore } from "../../store/productStore";
 import { useState, useEffect } from "react";
 import { api } from "../../services/api";
 import { useUserStore } from "../../store/userStore";
+import { BOOKING_LIFECYCLE } from "../../constants/bookingLifecycle";
 import toast from "react-hot-toast";
 
 export const OrderToolbar = () => {
@@ -179,10 +180,14 @@ export const OrderToolbar = () => {
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:border-primary-500 text-slate-700 font-semibold"
             >
               <option value="all">All Statuses</option>
-              <option value="PO Received">PO Received</option>
-              <option value="Ready for Dispatch">Ready for Dispatch</option>
-              <option value="Dispatched">Dispatched</option>
-              <option value="Delivered">Delivered</option>
+              {/* Filter by the STORED status, labelled the way the customer
+                  sees it on the timeline and in their email. */}
+              {BOOKING_LIFECYCLE.map((stage) => (
+                <option key={stage.key} value={stage.key}>
+                  {stage.label}
+                </option>
+              ))}
+              <option value="Cancelled">Cancelled</option>
             </select>
           </div>
           <div className="flex flex-col gap-1.5">

@@ -13,6 +13,13 @@ import { findProductBySku, consumeStock, releaseStock } from '../../utils/stockL
 import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
+import {
+  applyBookingStatus,
+  recordExternalStatusChange,
+  getBookingTimeline,
+  resendStatusMail,
+} from './bookingStatus.service.js';
+import { bookingStatusOf, stageLabel } from '../../utils/bookingLifecycle.js';
 
 // Product is stored one-collection-per-brand; brand is implied by the collection.
 const BRAND_MODELS = [
@@ -233,40 +240,170 @@ export const createOrder = async (req, res, next) => {
   }
 };
 
+/**
+ * PUT /api/v1/orders/:id/status — advance a booking by one of its line items.
+ *
+ * Kept because clients hold line-item ids, but it no longer acts on the single
+ * row. A status is a property of the BOOKING, and updating one of five lines
+ * left a booking that was half dispatched and a customer told it was dispatched
+ * outright. It now delegates to the booking-level service, which moves every
+ * line together, writes one timeline entry and sends one email — so a caller
+ * that loops over five line items produces one notification, not five.
+ */
 export const updateOrderStatus = async (req, res, next) => {
   try {
     const { status, remarks } = req.body;
-
-    const allowed = Order.schema.path('status').enumValues;
-    if (!status || !allowed.includes(status)) {
-      return res.status(400).json({ success: false, message: `Invalid status. Allowed: ${allowed.join(', ')}` });
-    }
 
     const order = await Order.findById(req.params.id);
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    // The Order schema is a flat record (no auditLogs/comments/timeline arrays),
-    // so only update fields that actually exist on it.
-    order.status = status;
-    order.statusTimestamp = new Date();
-    if (remarks) order.remarks = remarks;
-
-    await order.save();
-
-    io.emit('order-updated', { orderId: order._id, status });
-
-    // Tell the order's owner their status changed.
-    if (order.user) {
-      notifyUser(order.user, {
-        title: 'Booking Update',
-        message: `Your booking ${order.orderId} is now "${status}".`,
-        type: 'order',
-      });
+    const result = await applyBookingStatus({
+      orderId: order.orderId,
+      status,
+      remarks,
+      actor: req.user,
+      req,
+    });
+    if (!result.ok) {
+      return res.status(result.code).json({ success: false, message: result.message });
     }
 
-    res.status(200).json({ success: true, data: order });
+    // Re-read so the caller gets the row as it now stands rather than the copy
+    // fetched before the update.
+    const updated = await Order.findById(req.params.id);
+    res.status(200).json({
+      success: true,
+      data: updated,
+      changed: result.changed,
+      notified: result.notification || null,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/v1/orders/booking/:orderId/status — the admin panel's status update.
+ *
+ * The route to prefer: one request per booking, whatever it contains.
+ */
+export const updateBookingStatus = async (req, res, next) => {
+  try {
+    const { status, remarks } = req.body;
+    const result = await applyBookingStatus({
+      orderId: req.params.orderId,
+      status,
+      remarks,
+      actor: req.user,
+      req,
+    });
+
+    if (!result.ok) {
+      return res.status(result.code).json({ success: false, message: result.message });
+    }
+
+    res.status(200).json({
+      success: true,
+      // Whether anything moved. A false here is the "no email for a status that
+      // did not actually change" rule being applied, not a failure.
+      changed: result.changed,
+      message: result.changed
+        ? `Booking ${req.params.orderId} moved to "${stageLabel(status)}".`
+        : result.message || 'The booking was already at this status.',
+      data: {
+        orderId: req.params.orderId,
+        status: result.status,
+        previousStatus: result.previousStatus,
+        changedAt: result.changedAt || null,
+        lineItemsUpdated: result.lineItemsUpdated || 0,
+      },
+      notified: result.notification || null,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/v1/orders/booking/:orderId/timeline
+ *
+ * The booking's lifecycle history. The customer who owns it sees the stages and
+ * their timestamps; staff who can see every booking additionally get the
+ * notification log — whether each email was sent, skipped or failed, and why.
+ * The log is withheld from customers deliberately: their own address and a
+ * bounce reason are operational detail they cannot act on.
+ */
+export const getBookingStatusTimeline = async (req, res, next) => {
+  try {
+    const orderId = req.params.orderId;
+    const rows = await Order.find({ orderId });
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    // Same ownership rule as getOrderById, and the same 404 for a booking that
+    // is not the caller's — so this cannot be used to probe which ids exist.
+    const seesEverything = hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS);
+    if (!seesEverything) {
+      const isOwner = String(rows[0].user) === String(req.user._id);
+      if (!isOwner || !canAccessBrand(req.user, rows[0].brand)) {
+        return res.status(404).json({ success: false, message: 'Booking not found.' });
+      }
+    }
+
+    const events = await getBookingTimeline(orderId, rows);
+    const timeline = events.map((e) => ({
+      id: String(e._id),
+      status: e.status,
+      previousStatus: e.previousStatus,
+      changedAt: e.changedAt,
+      changedByName: seesEverything ? e.changedByName : undefined,
+      remarks: e.remarks,
+      // Flagged so the client does not offer a resend against an id that
+      // belongs to no stored document.
+      ...(e.derived ? { derived: true } : {}),
+      ...(seesEverything ? { notification: e.notification } : {}),
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        orderId,
+        currentStatus: bookingStatusOf(rows),
+        timeline,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/orders/booking/status-events/:eventId/resend
+ *
+ * Retry a status email the customer never received. Staff only — this is the
+ * action side of the notification log.
+ */
+export const resendBookingStatusEmail = async (req, res, next) => {
+  try {
+    const result = await resendStatusMail({
+      eventId: req.params.eventId,
+      actor: req.user,
+      req,
+    });
+    if (!result.ok) {
+      return res.status(result.code).json({ success: false, message: result.message });
+    }
+
+    res.status(200).json({
+      success: result.sent,
+      message: result.sent
+        ? 'The notification was sent.'
+        : `The notification could not be sent — ${result.notification?.error || result.notification?.reason}`,
+      notified: result.notification,
+    });
   } catch (error) {
     next(error);
   }
@@ -404,6 +541,9 @@ export const cancelBooking = async (req, res, next) => {
     const now = new Date();
     const reason = String(req.body?.reason || '').trim().slice(0, 300);
     const byName = isOwner ? 'the customer' : `${req.user.name || req.user.email || 'staff'}`;
+    // Captured before the rows are rewritten below — afterwards every line reads
+    // 'Cancelled' and the stage it was cancelled FROM is unrecoverable.
+    const statusBeforeCancel = bookingStatusOf(rows);
 
     const released = [];
     const releasedSkus = new Set();
@@ -439,6 +579,21 @@ export const cancelBooking = async (req, res, next) => {
       req,
       { meta: { orderId: orderNumber, units, lines: released } },
     );
+
+    // Put the cancellation on the lifecycle timeline. No status email goes with
+    // it — the stage descriptions and next-step wording are written for the four
+    // forward stages, and the customer is already told about a cancellation by
+    // the notification below. A timeline that simply stops at the last stage
+    // reached, though, reads as a booking still in progress.
+    await recordExternalStatusChange({
+      orderId: orderNumber,
+      status: 'Cancelled',
+      previousStatus: statusBeforeCancel,
+      rows,
+      actor: req.user,
+      remarks: `Cancelled by ${byName}${reason ? ` — ${reason}` : ''}`,
+      changedAt: now,
+    });
 
     notifyUser(rows[0].user, {
       title: 'Booking cancelled',

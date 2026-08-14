@@ -236,21 +236,10 @@ export const useIndentHistoryStore = create((set, get) => ({
     }
   },
 
-  restoreLine: async (reservationId) => {
-    try {
-      await reservationsApi.restore(reservationId);
-      await get().fetchIndents();
-      // Keep an open drawer in sync with the refreshed data.
-      const open = get().selectedIndent;
-      if (open) {
-        const updated = get().allIndents.find((r) => r.id === open.id);
-        set({ selectedIndent: updated || null });
-      }
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.response?.data?.message || err.message };
-    }
-  },
+  // restoreLine() lived here to back the drawer's "To Selection List" action.
+  // That action has been removed: an indent moves to the customer's selection
+  // list automatically once stock covers it, so there is nothing left to
+  // trigger by hand.
 
   refresh: async () => {
     set({

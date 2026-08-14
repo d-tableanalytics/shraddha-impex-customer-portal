@@ -6,11 +6,8 @@ import {
   Hash,
   Calendar as CalendarIcon,
   PackageX,
-  ArrowRightCircle,
-  Loader2,
   FileText,
 } from "lucide-react";
-import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import toast from "react-hot-toast";
 import { useIndentHistoryStore } from "../../store/indentHistoryStore";
@@ -25,31 +22,16 @@ import { IndentScheduleSection } from "./IndentScheduleSection";
 const PAGE_SIZE = 10;
 
 export const IndentDrawer = () => {
-  const { selectedIndent, setSelectedIndent, restoreLine } = useIndentHistoryStore();
+  const { selectedIndent, setSelectedIndent } = useIndentHistoryStore();
   const { user } = useUserStore();
   const showMsilCode = useShowMsilCode();
   const isAdmin = user?.role === "Admin";
-
-  const [restoringId, setRestoringId] = useState(null);
 
   // Derived before the early return so the paging hook always runs.
   const lines = Array.isArray(selectedIndent?.lines) ? selectedIndent.lines : [];
   const linePaging = usePagination(lines, PAGE_SIZE);
 
   if (!selectedIndent) return null;
-
-  const handleRestore = async (line) => {
-    setRestoringId(line._id);
-    const res = await restoreLine(line._id);
-    setRestoringId(null);
-    if (res.success) {
-      toast.success(
-        `${line.product.code} moved to ${selectedIndent.customer || "the customer"}'s selection list. They've been emailed to confirm.`,
-      );
-    } else {
-      toast.error(res.error || "Could not move indent to selection list.");
-    }
-  };
 
   const buildExport = () => {
     const rows = lines.map((l, i) => ({
@@ -204,14 +186,14 @@ export const IndentDrawer = () => {
                           </th>
                           <th className="px-5 py-3 text-center">Indent Qty</th>
                           <th className="px-5 py-3 text-center">Available</th>
-                          {isAdmin && <th className="px-5 py-3 text-center">Action</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
                         {linePaging.pageItems.map((line) => {
+                          // Still used to colour the available-stock figure —
+                          // a line whose stock has arrived reads green.
                           const inStock =
                             (line.product?.availableStock || 0) >= (line.pendingQuantity || 0);
-                          const busy = restoringId === line._id;
                           return (
                             <tr key={line._id} className="hover:bg-slate-50">
                               <td className="px-5 py-4">
@@ -234,27 +216,6 @@ export const IndentDrawer = () => {
                               >
                                 {line.product.availableStock}
                               </td>
-                              {isAdmin && (
-                                <td className="px-5 py-4 text-center">
-                                  <button
-                                    onClick={() => handleRestore(line)}
-                                    disabled={!inStock || busy}
-                                    title={
-                                      inStock
-                                        ? "Move to the customer's selection list & email them to confirm"
-                                        : "Not enough stock yet to fulfil this indent"
-                                    }
-                                    className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg hover:bg-emerald-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                                  >
-                                    {busy ? (
-                                      <Loader2 size={14} className="animate-spin" />
-                                    ) : (
-                                      <ArrowRightCircle size={14} />
-                                    )}
-                                    {busy ? "Moving..." : "To Selection List"}
-                                  </button>
-                                </td>
-                              )}
                             </tr>
                           );
                         })}
@@ -329,13 +290,16 @@ export const IndentDrawer = () => {
               Status:{" "}
               <span className="font-bold text-slate-600">{selectedIndent.status}</span>
             </span>
+            {/* Reports stock position only. It used to say lines "can be
+                restored now", which described the manual action that has been
+                removed — the move to the selection list is automatic. */}
             {isAdmin && (
               <span className="text-xs font-bold text-slate-500">
                 {readyCount === 0
                   ? "Awaiting stock for every line"
                   : readyCount === selectedIndent.itemCount
-                    ? "All lines can be restored now"
-                    : `${readyCount} of ${selectedIndent.itemCount} lines can be restored now`}
+                    ? "Stock is available for every line"
+                    : `${readyCount} of ${selectedIndent.itemCount} lines have stock available`}
               </span>
             )}
           </div>

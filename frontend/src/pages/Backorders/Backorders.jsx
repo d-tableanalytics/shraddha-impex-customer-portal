@@ -11,11 +11,10 @@ import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
 const PAGE_SIZE = 10;
 
 export const Backorders = () => {
-  const { pendingItems, pendingLoading, fetchPendingReservations, restorePending } = useCartStore();
+  const { pendingItems, pendingLoading, fetchPendingReservations } = useCartStore();
   const { user } = useUserStore();
   const isAdmin = user?.role === "Admin";
   const [page, setPage] = useState(1);
-  const [restoringId, setRestoringId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
 
   const allGroups = pendingItems.length ? groupByIndent(pendingItems) : [];
@@ -96,19 +95,6 @@ export const Backorders = () => {
   useEffect(() => {
     fetchPendingReservations();
   }, [fetchPendingReservations]);
-
-  const handleRestore = async (item) => {
-    setRestoringId(item._id);
-    const res = await restorePending(item._id);
-    setRestoringId(null);
-    if (res.success) {
-      toast.success(
-        `${item.product.code} moved to ${item.customer?.name || "the customer"}'s selection list. They've been emailed to confirm.`,
-      );
-    } else {
-      toast.error(res.error || "Could not move indent to selection list.");
-    }
-  };
 
   const totalPendingQty = pendingItems.reduce(
     (sum, i) => sum + (i.pendingQuantity || 0),

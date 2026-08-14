@@ -14,14 +14,6 @@ import { useState, useEffect } from "react";
 
 const PAGE_SIZE = 10;
 
-// Admin-managed booking lifecycle. Each stage advances to the next.
-const STAGES = ["PO Received", "Ready for Dispatch", "Dispatched", "Delivered"];
-// Map a legacy 'Booked' status onto the first stage for display/progression.
-const normalizeStage = (status) => (status === "Booked" ? "PO Received" : status);
-const nextStageOf = (status) => {
-  const idx = STAGES.indexOf(normalizeStage(status));
-  return idx >= 0 && idx < STAGES.length - 1 ? STAGES[idx + 1] : null;
-};
 import { motion, AnimatePresence } from "framer-motion";
 import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { useUserStore } from "../../store/userStore";
@@ -35,10 +27,27 @@ import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
 import { PackageX } from "lucide-react";
 import toast from "react-hot-toast";
+import {
+  BOOKING_LIFECYCLE,
+  TERMINAL_STATUSES,
+  normalizeStatus,
+  stageLabel,
+  nextStageOf,
+} from "../../constants/bookingLifecycle";
 
 export const OrderDrawer = () => {
-  const { selectedOrder, setSelectedOrder, updateOrderStatus, updateOrderPO, cancelBooking } =
-    useOrderHistoryStore();
+  const {
+    selectedOrder,
+    setSelectedOrder,
+    updateOrderStatus,
+    updateOrderPO,
+    cancelBooking,
+    timelines,
+    timelineLoading,
+    fetchTimeline,
+    resendStatusEmail,
+    resendingEventId,
+  } = useOrderHistoryStore();
   const { user } = useUserStore();
   const { pendingItems, fetchPendingReservations } = useCartStore();
   const showMsilCode = useShowMsilCode();
@@ -76,6 +85,12 @@ export const OrderDrawer = () => {
     if (selectedOrder) fetchPendingReservations();
   }, [selectedOrder?.orderNumber, fetchPendingReservations]);
 
+  // The lifecycle history — when each stage was reached, and (for staff)
+  // whether the customer's email for it actually went.
+  useEffect(() => {
+    if (selectedOrder?.orderNumber) fetchTimeline(selectedOrder.orderNumber);
+  }, [selectedOrder?.orderNumber, fetchTimeline]);
+
   // Derived before the early return so the paging hooks below always run.
   const targetIndent = selectedOrder
     ? selectedOrder.orderNumber.replace(/^SO-|^BO-/, 'PI-')
@@ -106,6 +121,10 @@ export const OrderDrawer = () => {
   const linePaging = usePagination(lineItems, PAGE_SIZE);
   const indentPaging = usePagination(bookingIndents, PAGE_SIZE);
 
+  // Recorded status events for this booking. Empty until the fetch lands — the
+  // timeline still draws all four stages, just without their timestamps.
+  const timeline = timelines[selectedOrder?.orderNumber] || [];
+
   if (!selectedOrder) return null;
 
   const handleCancelBooking = async () => {
@@ -125,12 +144,41 @@ export const OrderDrawer = () => {
   };
 
   const applyStatus = async (newStatus) => {
-    if (busy || newStatus === selectedOrder.status) return;
+    if (busy || normalizeStatus(newStatus) === normalizeStatus(selectedOrder.status)) return;
     setBusy(true);
     const res = await updateOrderStatus(selectedOrder, newStatus);
     setBusy(false);
-    if (res.success) toast.success(`Status updated to ${newStatus}`);
-    else toast.error(res.error || "Failed to update status");
+
+    if (!res.success) {
+      toast.error(res.error || "Failed to update status");
+      return;
+    }
+    if (!res.changed) {
+      // The server refused to re-announce a status the booking already held.
+      toast(res.message || "The booking was already at this status.");
+      return;
+    }
+
+    // The status moved either way — but an admin who is not told the email
+    // failed will assume the customer knows, which is the whole point of
+    // reporting delivery here rather than only in a log.
+    if (res.notified === "sent") {
+      toast.success(`Moved to ${stageLabel(newStatus)} — the customer has been emailed.`);
+    } else if (res.notified === "failed" || res.notified === "skipped") {
+      toast.error(
+        `Moved to ${stageLabel(newStatus)}, but the customer was NOT emailed — ` +
+          `${res.notifyError || "see the timeline"}. You can resend it from the timeline.`,
+        { duration: 8000 },
+      );
+    } else {
+      toast.success(`Moved to ${stageLabel(newStatus)}`);
+    }
+  };
+
+  const handleResend = async (eventId) => {
+    const res = await resendStatusEmail(selectedOrder.orderNumber, eventId);
+    if (res.success) toast.success(res.message || "The notification was sent.");
+    else toast.error(res.message || "The notification could not be sent.");
   };
 
   // Build printable / exportable rows for this order.
@@ -461,38 +509,77 @@ export const OrderDrawer = () => {
               {/* Sidebar */}
               <div className="flex flex-col gap-6">
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col">
-                  <div className="px-5 py-4 border-b border-slate-100">
+                  <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-2">
                     <h3 className="text-sm font-bold text-slate-800">
                       Lifecycle Timeline
                     </h3>
+                    {timelineLoading && (
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                        Loading…
+                      </span>
+                    )}
                   </div>
                   <div className="p-5">
-                    <OrderTimeline currentStatus={selectedOrder.status} />
+                    <OrderTimeline
+                      currentStatus={selectedOrder.status}
+                      history={timeline}
+                      // The delivery log is operational detail. A customer can
+                      // neither act on a bounce reason nor resend the mail, so
+                      // they are shown the stages and their dates only.
+                      showNotifications={isAdmin}
+                      onResend={handleResend}
+                      resendingId={resendingEventId}
+                    />
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Footer Actions — advance through the booking lifecycle */}
-          <div className="px-6 py-4 bg-white border-t border-slate-200 flex items-center justify-between shrink-0">
+          {/* Footer Actions — advance through the booking lifecycle.
+              Every change from here emails the customer, so both controls go
+              through the same applyStatus() and the same one-request-per-
+              booking path. The dropdown exists because the next-stage button
+              alone gives an admin no way to correct a stage set by mistake. */}
+          <div className="px-6 py-4 bg-white border-t border-slate-200 flex items-center justify-between gap-4 shrink-0">
             <span className="text-xs text-slate-400 font-medium">
-              Status: <span className="font-bold text-slate-600">{normalizeStage(selectedOrder.status)}</span>
+              Status:{" "}
+              <span className="font-bold text-slate-600">{stageLabel(selectedOrder.status)}</span>
             </span>
 
-            {isAdmin && (() => {
+            {isAdmin && !TERMINAL_STATUSES.includes(selectedOrder.status) && (() => {
               const next = nextStageOf(selectedOrder.status);
-              return next ? (
-                <ERPButton
-                  variant="primary"
-                  disabled={busy}
-                  onClick={() => applyStatus(next)}
-                >
-                  {busy ? "Updating..." : `Move to ${next}`}
-                  <ArrowRight size={16} className="ml-2" />
-                </ERPButton>
-              ) : (
-                <span className="text-xs font-bold text-emerald-600">Delivered — lifecycle complete</span>
+              const current = normalizeStatus(selectedOrder.status);
+              return (
+                <div className="flex items-center gap-2">
+                  <label className="sr-only" htmlFor="booking-stage">Set booking status</label>
+                  <select
+                    id="booking-stage"
+                    value={current}
+                    disabled={busy}
+                    onChange={(e) => applyStatus(e.target.value)}
+                    className="text-xs font-semibold text-slate-700 border border-slate-300 rounded-lg
+                               px-2.5 py-2 outline-none focus:ring-1 focus:ring-primary-500
+                               disabled:opacity-50 disabled:cursor-not-allowed bg-white"
+                  >
+                    {BOOKING_LIFECYCLE.map((stage) => (
+                      <option key={stage.key} value={stage.key}>
+                        {stage.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {next ? (
+                    <ERPButton variant="primary" disabled={busy} onClick={() => applyStatus(next)}>
+                      {busy ? "Updating..." : `Move to ${stageLabel(next)}`}
+                      <ArrowRight size={16} className="ml-2" />
+                    </ERPButton>
+                  ) : (
+                    <span className="text-xs font-bold text-emerald-600">
+                      Delivered — lifecycle complete
+                    </span>
+                  )}
+                </div>
               );
             })()}
           </div>

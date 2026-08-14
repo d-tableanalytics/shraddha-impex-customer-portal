@@ -42,10 +42,9 @@ export const reservationsApi = {
     return response.data;
   },
 
-  restore: async (id) => {
-    const response = await api.post(`/reservations/${id}/restore`);
-    return response.data.data;
-  },
+  // No restore() wrapper: the "To Selection List" action it served has been
+  // removed from the UI. POST /reservations/:id/restore still exists on the
+  // server for anything calling the API directly.
 
   confirm: async (deliveryLocation, remarks) => {
     const response = await api.post('/reservations/confirm', { deliveryLocation, remarks });

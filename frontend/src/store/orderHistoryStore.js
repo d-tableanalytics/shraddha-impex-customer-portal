@@ -173,19 +173,66 @@ export const useOrderHistoryStore = create((set, get) => ({
     }),
   clearSelection: () => set({ selectedIds: [] }),
 
-  // A booking row can represent several underlying line-item Order documents
-  // (lineItemIds); the status change must apply to all of them together.
+  // A booking row represents several underlying line-item Order documents, and
+  // the status change applies to all of them — so it is sent as ONE
+  // booking-level request. The server moves every line, writes one timeline
+  // entry and emails the customer once.
   updateOrderStatus: async (booking, status, remarks) => {
-    const ids = booking?.lineItemIds?.length ? booking.lineItemIds : [booking?.id];
     try {
-      await ordersApi.updateStatus(ids, status, remarks);
+      const res = await ordersApi.updateStatus(booking.orderNumber, status, remarks);
       await get().fetchOrders();
       // Keep the open drawer in sync with the refreshed booking.
       const updated = get().allOrders.find((o) => o.orderNumber === booking.orderNumber);
       if (updated) set({ selectedOrder: updated });
-      return { success: true };
+      // The timeline gained an entry, so the drawer's copy is now stale.
+      await get().fetchTimeline(booking.orderNumber);
+      return {
+        success: true,
+        changed: res?.changed !== false,
+        message: res?.message,
+        // 'sent' | 'failed' | 'skipped' — so the caller can tell the admin that
+        // the status moved but the customer was not reached.
+        notified: res?.notified?.state || null,
+        notifyError: res?.notified?.error || res?.notified?.reason || null,
+      };
     } catch (err) {
       return { success: false, error: err.response?.data?.message || err.message };
+    }
+  },
+
+  // ── Lifecycle timeline ───────────────────────────────────────────────────
+  // Keyed by booking number so switching bookings in the drawer never shows
+  // the previous booking's history while the new one loads.
+  timelines: {},
+  timelineLoading: false,
+  resendingEventId: null,
+
+  fetchTimeline: async (orderNumber) => {
+    if (!orderNumber) return;
+    set({ timelineLoading: true });
+    try {
+      const data = await ordersApi.getTimeline(orderNumber);
+      set((state) => ({
+        timelines: { ...state.timelines, [orderNumber]: data.timeline || [] },
+        timelineLoading: false,
+      }));
+    } catch {
+      // Non-blocking: the timeline still renders from the booking's current
+      // status, just without the per-stage timestamps.
+      set({ timelineLoading: false });
+    }
+  },
+
+  resendStatusEmail: async (orderNumber, eventId) => {
+    set({ resendingEventId: eventId });
+    try {
+      const res = await ordersApi.resendStatusEmail(eventId);
+      await get().fetchTimeline(orderNumber);
+      return { success: Boolean(res?.success), message: res?.message };
+    } catch (err) {
+      return { success: false, message: err.response?.data?.message || err.message };
+    } finally {
+      set({ resendingEventId: null });
     }
   },
 
@@ -210,6 +257,8 @@ export const useOrderHistoryStore = create((set, get) => ({
       await get().fetchOrders();
       const updated = get().allOrders.find((o) => o.orderNumber === booking.orderNumber);
       if (updated) set({ selectedOrder: updated });
+      // Cancelling closes the lifecycle, which the timeline has to show.
+      await get().fetchTimeline(booking.orderNumber);
       return { success: true, message: res?.message, units: res?.data?.units };
     } catch (err) {
       return { success: false, error: err.response?.data?.message || err.message };

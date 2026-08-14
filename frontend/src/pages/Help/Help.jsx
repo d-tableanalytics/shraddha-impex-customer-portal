@@ -32,7 +32,7 @@ export const Help = () => {
     },
     {
       question: "What is an Indent and when is it raised?",
-      answer: "If your booked quantity exceeds the current available stock for a product, the shortfall is converted into a 'Indent' upon booking confirmation. Once new stock arrives, administrators can release these indents back to your active selection list for confirmation.",
+      answer: "If your booked quantity exceeds the current available stock for a product, the shortfall is converted into a 'Indent' upon booking confirmation. Once new stock arrives that covers the indented quantity, it is released back to your active selection list automatically and you are emailed to confirm — no action is needed from you or from an administrator.",
     },
     {
       question: "Can I upload bookings in bulk?",

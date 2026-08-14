@@ -1,4 +1,5 @@
 import { useOrderHistoryStore } from "../../store/orderHistoryStore";
+import { stageLabel } from "../../constants/bookingLifecycle";
 import { Card, CardContent } from "../ui/Card";
 import {
   FileText,
@@ -20,7 +21,8 @@ export const MetricsCard = () => {
       bg: "bg-primary-50",
     },
     {
-      label: "PO Received",
+      // The lifecycle's first stage, named the way the customer sees it.
+      label: stageLabel("PO Received"),
       value: metrics.poReceived,
       icon: <Inbox size={20} className="text-warning-600" />,
       bg: "bg-warning-50",

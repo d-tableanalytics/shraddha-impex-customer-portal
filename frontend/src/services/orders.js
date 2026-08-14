@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { bookingStatusOf } from "../constants/bookingLifecycle";
 
 export const mapOrder = (order) => {
   if (!order) return null;
@@ -63,11 +64,14 @@ const groupIntoBookings = (rawOrders) => {
   }
 
   return [...byBookingId.values()].map((rows) => {
-    // Prefer a row whose status reflects progress beyond the initial stage if
-    // the group's rows ever diverge; otherwise use the first.
-    const initialStages = ['PO Received', 'Booked'];
-    const primary = rows.find((r) => !initialStages.includes(r.status)) || rows[0];
-    const mapped = mapOrder(primary);
+    // The booking's stage is the LEAST advanced stage any live line sits at —
+    // the same rule the server applies (utils/bookingLifecycle.js), so the
+    // stage shown here is always the one the customer was emailed about.
+    // Previously this preferred the MOST advanced row, which showed a booking
+    // as dispatched while some of its lines were still being prepared.
+    const status = bookingStatusOf(rows);
+    const primary = rows.find((r) => r.status === status) || rows[0];
+    const mapped = { ...mapOrder(primary), status, workflowStage: status };
     const items = rows.flatMap((r) => mapOrder(r).items);
     const totalQuantity = items.reduce(
       (sum, item) => sum + (item.orderQuantity || item.quantity || 0),
@@ -133,13 +137,31 @@ export const ordersApi = {
     return mapOrder(response.data.data);
   },
 
-  // A "booking" spans multiple underlying line-item Order documents that
-  // share one orderId — updating status must apply to every one of them.
-  updateStatus: async (ids, status, remarks) => {
-    const targets = Array.isArray(ids) ? ids : [ids];
-    await Promise.all(
-      targets.map((id) => api.put(`/orders/${id}/status`, { status, remarks })),
-    );
+  // A "booking" spans multiple underlying line-item Order documents that share
+  // one orderId. This used to fire one request per line item, which moved the
+  // rows correctly but sent the customer one email per SKU. One booking-level
+  // request now moves every line, records a single timeline entry and sends
+  // exactly one notification.
+  //
+  // Returns the server's verdict: `changed` is false when the booking was
+  // already at that status (no email), and `notified` reports whether the
+  // customer's email actually went.
+  updateStatus: async (orderNumber, status, remarks) => {
+    const response = await api.put(`/orders/booking/${orderNumber}/status`, { status, remarks });
+    return response.data;
+  },
+
+  // The booking's lifecycle history. Staff additionally receive the per-event
+  // notification log; a customer gets the stages and their timestamps only.
+  getTimeline: async (orderNumber) => {
+    const response = await api.get(`/orders/booking/${orderNumber}/timeline`);
+    return response.data.data;
+  },
+
+  // Retry a status email that never reached the customer. Staff only.
+  resendStatusEmail: async (eventId) => {
+    const response = await api.post(`/orders/booking/status-events/${eventId}/resend`);
+    return response.data;
   },
 
   updatePO: async (orderNumber, poNumber) => {

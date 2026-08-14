@@ -7,6 +7,8 @@ import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { isPoGenerated, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { findProductBySku, releaseStock, consumeStock } from '../../utils/stockLedger.js';
 import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
+import { recordExternalStatusChange } from './bookingStatus.service.js';
+import { bookingStatusOf } from '../../utils/bookingLifecycle.js';
 
 /**
  * Settles the stock held by confirmed bookings.
@@ -161,6 +163,8 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
       const units = lines.reduce((n, l) => n + (l.confirmedQty || 0), 0);
       if (!dryRun) {
         const now = new Date();
+        // Read before the loop rewrites every row to 'Cancelled'.
+        const statusBeforeCancel = bookingStatusOf(lines);
         for (const row of lines) {
           const product = await findProductBySku(row.skuCode);
           if (product) {
@@ -185,6 +189,17 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
           `Booking ${orderId} cancelled after ${PO_DEADLINE_DAYS} days without a PO. ${units} unit(s) returned to stock.`,
           { orderId, units, lines: lines.map((l) => ({ skuCode: l.skuCode, qty: l.confirmedQty })) },
         );
+
+        // The lifecycle timeline the customer sees must show why the booking
+        // stopped. No actor — this is the settlement job, not a person.
+        await recordExternalStatusChange({
+          orderId,
+          status: 'Cancelled',
+          previousStatus: statusBeforeCancel,
+          rows: lines,
+          remarks: `Auto-cancelled: no PO raised within ${PO_DEADLINE_DAYS} days.`,
+          changedAt: now,
+        });
 
         // Tell the customer and the admins.
         const customer = lines[0].user ? await User.findById(lines[0].user).lean() : null;
