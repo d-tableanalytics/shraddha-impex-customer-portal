@@ -142,6 +142,61 @@ export const IMPORT_TEMPLATES = {
     sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 250 },
   },
 
+  'fresh-inventory': {
+    label: 'Fresh Inventory Import',
+    description:
+      'SKU or MSIL Code and a quantity that REPLACES the stock figure on file. A SKU holding 5 '
+      + 'with a sheet saying 155 finishes at 155 — the quantity is the new level, not an amount '
+      + 'received. Use this to restate stock from a fresh count; use Inventory Master to add to it.',
+    permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
+    // Keyed on the SKU even though the sheet may not carry one — an MSIL-only
+    // row has its SKU resolved before this is read, so two rows naming the same
+    // product by different codes are still caught as the duplicate they are.
+    // That matters more here than anywhere else: with REPLACE semantics the
+    // second row would silently win and the first figure would vanish.
+    keyFields: ['skuCode'],
+    // This sheet never creates a SKU. It restates the stock of something that
+    // already exists, and a typo must be reported, not turned into a new part.
+    requireExistingSku: true,
+    resolveBrandFromSku: true,
+    // Either code identifies the row; the SKU is resolved from the MSIL Code
+    // when only that is given. See validateRow() in import.service.js.
+    resolveSkuFromMsil: true,
+    // When BOTH are given they must agree — the cross-check that catches a
+    // column pasted one row out, where every code still exists and every
+    // quantity would land on the wrong part.
+    verifyMsil: true,
+    requireLocation: true,
+    columns: [
+      {
+        header: 'SKU Code', field: 'skuCode', type: 'string', required: false,
+        note: 'Optional if MSIL Code is given. Must already exist.',
+      },
+      {
+        header: 'MSIL Code', field: 'msilCode', type: 'string', required: false,
+        note: 'Optional if SKU Code is given. Used to find the item when the SKU Code is blank, '
+          + 'and checked against the catalogue when both are given.',
+      },
+      {
+        // Floored at zero: this is a stock LEVEL, and no shelf holds -5.
+        header: 'Quantity', field: 'quantity', type: 'int', required: true, min: 0,
+        note: 'The new stock level. It REPLACES the current figure rather than adding to it.',
+      },
+    ],
+    // Guards the one mistake the required-column check cannot see: a row with a
+    // quantity but nothing to apply it to.
+    validate: (row) => (
+      row.skuCode || row.msilCode
+        ? []
+        : [{
+            category: 'required',
+            column: 'SKU Code',
+            message: 'Give either a SKU Code or an MSIL Code — this row identifies no item.',
+          }]
+    ),
+    sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 155 },
+  },
+
   planning: {
     label: 'Planning Parameters',
     description: 'Bulk-update consumption, lead time and safety factor for existing SKUs.',

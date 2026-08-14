@@ -22,6 +22,7 @@ import mongoose from 'mongoose';
  */
 export const IMPORT_TYPES = [
   'inventory-master',
+  'fresh-inventory',
   'planning',
   'opening-stock',
   'stock-update',

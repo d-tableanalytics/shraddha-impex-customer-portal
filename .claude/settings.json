@@ -15,7 +15,9 @@
       "Bash(node scripts/purge-blocked-emails.js --dry-run)",
       "Bash(node scripts/purge-blocked-emails.js)",
       "Bash(node --input-type=module -e ' *)",
-      "Bash(MONGODB_URI=mongodb://localhost:27017/erp_lifecycle_test node --input-type=module -e ' *)"
+      "Bash(MONGODB_URI=mongodb://localhost:27017/erp_lifecycle_test node --input-type=module -e ' *)",
+      "Bash(node --check modules/inventory/import.service.js)",
+      "Bash(node --check modules/inventory/import.templates.js)"
     ]
   }
 }

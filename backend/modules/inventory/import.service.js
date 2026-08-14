@@ -113,9 +113,10 @@ const buildContext = async (importType, { user, jobBrand = null }) => {
     reasonCodes: new Set(),
   };
 
-  if (template.requireExistingSku || template.resolveBrandFromSku || template.verifyMsil) {
+  if (template.requireExistingSku || template.resolveBrandFromSku
+      || template.verifyMsil || template.resolveSkuFromMsil) {
     // skuCode::brand, so the same code under two brands stays two SKUs.
-    const needsMsil = Boolean(template.verifyMsil);
+    const needsMsil = Boolean(template.verifyMsil || template.resolveSkuFromMsil);
     const rows = await Product.find({}, `skuCode brand${needsMsil ? ' msilCode' : ''}`).lean();
     context.skus = new Set(rows.map((p) => `${p.skuCode}::${p.brand}`));
 
@@ -134,6 +135,21 @@ const buildContext = async (importType, { user, jobBrand = null }) => {
     if (needsMsil) {
       context.skuToMsil = new Map();
       for (const p of rows) if (p.skuCode && p.msilCode) context.skuToMsil.set(p.skuCode, p.msilCode);
+    }
+
+    // The reverse lookup, for a sheet where the MSIL Code may be the only
+    // identifier given. Uppercased so a code typed in either case still finds
+    // its part. AMBIGUOUS is recorded rather than resolved for the same reason
+    // skuToBrand does it: one MSIL code against two SKUs cannot be guessed, and
+    // guessing here would restate the stock of the wrong part in silence.
+    if (template.resolveSkuFromMsil) {
+      context.msilToSku = new Map();
+      for (const p of rows) {
+        if (!p.msilCode || !p.skuCode) continue;
+        const key = String(p.msilCode).toUpperCase();
+        const known = context.msilToSku.get(key);
+        context.msilToSku.set(key, known && known !== p.skuCode ? AMBIGUOUS : p.skuCode);
+      }
     }
   }
 
@@ -198,6 +214,38 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
     }
 
     data[col.field] = value;
+  }
+
+  // ── SKU resolved from the MSIL Code ──────────────────────────────────────
+  // FIRST, because everything below identifies the row by its SKU: the brand is
+  // resolved from it, existence is checked on it, and the duplicate key is built
+  // from it. A row that names its part only by MSIL Code has to become a row
+  // with a SKU before any of that can run.
+  //
+  // A stated SKU always wins. The MSIL Code is then a cross-check (verifyMsil),
+  // never a second opinion about which part is meant — silently re-badging a row
+  // onto a different SKU is how a quantity lands on the wrong part.
+  if (template.resolveSkuFromMsil && !data.skuCode && data.msilCode) {
+    const resolved = context.msilToSku?.get(String(data.msilCode).toUpperCase());
+    if (!resolved) {
+      errors.push({
+        category: 'reference', column: 'MSIL Code',
+        message: `MSIL Code ${data.msilCode} is not in the catalogue.`,
+        value: data.msilCode,
+      });
+    } else if (resolved === AMBIGUOUS) {
+      errors.push({
+        category: 'reference', column: 'MSIL Code',
+        message: `MSIL Code ${data.msilCode} belongs to more than one SKU, so this row cannot say `
+          + 'which is meant. Give the SKU Code instead.',
+        value: data.msilCode,
+      });
+    } else {
+      data.skuCode = resolved;
+      // Recorded so the summary can say the row was matched by its MSIL Code —
+      // an operator checking a rejected file needs to know which code was used.
+      data.matchedBy = 'msilCode';
+    }
   }
 
   // ── Brand resolved from the SKU ──────────────────────────────────────────
@@ -870,8 +918,160 @@ const postQuantities = async ({ rows, job, chunkIndex, actor, req }) => {
 /** Planning carries no Quantity column, so no stock step ever runs for it. */
 const processPlanning = (args) => processMaster(args);
 
+/**
+ * Fresh Inventory Import — set stock TO the sheet's figure.
+ *
+ * The opposite of postQuantities(), and deliberately a separate processor
+ * rather than a flag on it. There the sheet describes an intake and the figure
+ * is ADDED: 444 on hand plus a row of 10 finishes at 454. Here the sheet
+ * describes the shelf itself, so 5 on hand with a row of 155 finishes at 155.
+ * Two behaviours that differ on every row do not belong behind a conditional in
+ * one function — the reason the wrong one gets used is that they looked alike.
+ *
+ * The DIFFERENCE is what gets posted, not the target. Writing the level
+ * straight onto the balance would leave the ledger unable to explain how stock
+ * got there, and every projection in the system is a sum of movements. Posting
+ * the delta as a COUNT keeps "what the shelf holds" and "what the ledger says"
+ * the same number, and makes the restatement visible in the stock card next to
+ * every other movement.
+ *
+ * Being absolute, this import is IDEMPOTENT in a way the master sheet is not:
+ * running the same file twice lands on the same figure both times.
+ *
+ * Nothing else about the product is touched — not planning data, not the master
+ * fields, not any other location's balance.
+ */
+const processFreshInventory = async ({ rows, job, chunkIndex, actor, req }) => {
+  const successes = [];
+  const failures = [];
+  if (rows.length === 0) return { successes, failures, refs: [] };
+
+  const balances = await StockBalance.find({
+    $or: rows.map((r) => ({
+      skuCode: r.data.skuCode, brand: r.data.brand, locationCode: r.data.locationCode,
+    })),
+  }).lean();
+  const byKey = new Map(balances.map((b) => [`${b.skuCode}::${b.brand}::${b.locationCode}`, b]));
+
+  const lines = [];
+  const posting = [];
+
+  for (const row of rows) {
+    const d = row.data;
+    const balance = byKey.get(`${d.skuCode}::${d.brand}::${d.locationCode}`);
+    const before = balance?.onHand ?? 0;
+    const reserved = balance?.reserved ?? 0;
+    const target = d.quantity;
+    const delta = target - before;
+
+    // Already at the figure. Reported as a success — the sheet asked for a state
+    // and the state holds — but no movement is written: a zero-quantity line is
+    // refused by the ledger, and rightly so, as nothing moved.
+    if (delta === 0) {
+      successes.push({
+        rowNumber: row.rowNumber,
+        result: { skuCode: d.skuCode, before, after: target, changed: false },
+      });
+      continue;
+    }
+
+    // Reserved units are committed to live bookings. Restating stock below them
+    // does not un-commit anything — it just creates an oversell that surfaces at
+    // dispatch, so it is refused here where it is still visible and fixable.
+    if (target < reserved) {
+      failures.push({
+        rowNumber: row.rowNumber,
+        reason: `${reserved} unit${reserved === 1 ? ' is' : 's are'} reserved against live bookings `
+          + `for ${d.skuCode}, so its stock cannot be set to ${target}.`,
+      });
+      continue;
+    }
+
+    lines.push({
+      // A restatement from a fresh count IS a count variance, which is what the
+      // type means and what puts it in the right place on the stock card.
+      movementType: 'COUNT',
+      skuCode: d.skuCode,
+      brand: d.brand,
+      locationCode: d.locationCode,
+      quantity: delta,
+      beforeQuantity: before,
+      afterQuantity: target,
+      reasonCode: delta > 0 ? 'COUNT_SURPLUS' : 'COUNT_SHORTAGE',
+      note: `Fresh inventory import from ${job.fileName}: set to ${target} (was ${before})`
+        + (d.matchedBy === 'msilCode' ? `, matched by MSIL ${d.msilCode}` : ''),
+    });
+    posting.push(row);
+  }
+
+  if (lines.length === 0) return { successes, failures, refs: [] };
+
+  let result;
+  try {
+    result = await postBatch({
+      idempotencyKey: `import-${job.jobId}-${chunkIndex}-fresh`,
+      workflowType: 'import',
+      referenceType: 'import',
+      referenceId: job.jobId,
+      actor,
+      note: `${IMPORT_TEMPLATES[job.importType].label} ${job.jobId} (chunk ${chunkIndex + 1})`,
+      lines,
+    }, req);
+  } catch (error) {
+    if (isRetryable(error)) throw error;
+    for (const row of posting) failures.push({ rowNumber: row.rowNumber, reason: error.message });
+    return { successes, failures, refs: [] };
+  }
+
+  const posted = await StockMovement.find({ batchId: result.batch.batchId }).lean();
+  if (!result.replayed && posted.length) await applyMovements(posted);
+
+  const touched = [...new Set(posting.map((r) => r.data.skuCode))];
+  await recomputeHealthForSkus(touched);
+  // Without this the portal keeps showing the old figure: availableForSale on
+  // the product is what customers book against, and it is derived from the
+  // ledger rather than written by it.
+  await syncLegacyStock(touched);
+
+  // A restatement UPWARDS puts units on the shelf that customers may be waiting
+  // for, so indents are reconsidered exactly as they are for a goods receipt. A
+  // downward one cannot fulfil anything, so only the surplus is announced — and
+  // the batch id is the replay guard, so reprocessing a chunk cannot tell the
+  // same customer about the same stock twice.
+  const inwardBySku = new Map();
+  for (const line of lines) {
+    if (line.quantity > 0) {
+      inwardBySku.set(line.skuCode, (inwardBySku.get(line.skuCode) || 0) + line.quantity);
+    }
+  }
+  await processAvailableIndents(touched, inwardBySku.size
+    ? { event: 'material-inward', reference: result.batch.batchId, inwardBySku }
+    : {});
+  emitStockUpdated(req, touched, { source: 'import', jobId: job.jobId });
+
+  for (const row of posting) {
+    const line = lines.find((l) => l.skuCode === row.data.skuCode
+      && l.locationCode === row.data.locationCode);
+    successes.push({
+      rowNumber: row.rowNumber,
+      result: {
+        skuCode: row.data.skuCode,
+        before: line?.beforeQuantity ?? null,
+        after: line?.afterQuantity ?? null,
+        changed: true,
+      },
+    });
+  }
+
+  return {
+    successes, failures,
+    refs: [{ kind: 'ledgerBatch', id: result.batch.batchId, chunkIndex }],
+  };
+};
+
 const PROCESSORS = {
   'inventory-master': processMaster,
+  'fresh-inventory': processFreshInventory,
   planning: processPlanning,
 };
 
