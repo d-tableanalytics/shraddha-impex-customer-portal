@@ -37,7 +37,10 @@ jobs:
       - name: Build
         working-directory: frontend
         env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          # Literal, not a secret — it is the public site URL, and holding it as
+          # a secret only meant CI could build against an empty value if it went
+          # missing. Keep in step with deploy.yml.
+          VITE_API_URL: https://erp.shraddhaimpex.net
         run: npm run build
 
   backend:
