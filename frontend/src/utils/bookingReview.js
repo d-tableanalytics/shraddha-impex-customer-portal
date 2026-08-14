@@ -37,10 +37,10 @@ export const computeReview = (lines = []) => {
  * renames the fields, so both flows are reviewed against the same stock figure
  * by the same code.
  *
- * NOT USED BY THE BULK UPLOAD SCREEN ANY MORE. That screen now reviews the
- * Selection List after reserving the rows, because that — not the parsed file —
- * is the set the confirmation commits. Kept for callers that need to review a
- * file before anything is reserved.
+ * Used by the bulk upload screen to show the stock/indent split before the
+ * booking is created. Reading the parsed rows is correct there: the upload books
+ * exactly the selected rows and nothing else, so the file IS the set that gets
+ * committed.
  */
 export const linesFromBulkRows = (rows = []) =>
   rows

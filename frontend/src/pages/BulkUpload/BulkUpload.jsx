@@ -18,30 +18,28 @@ import { api } from "../../services/api";
 import { reservationsApi } from "../../services/reservations";
 import toast from "react-hot-toast";
 import { Download, AlertTriangle, Check, RefreshCw, PackageCheck, PackageX } from "lucide-react";
-import { computeReview } from "../../utils/bookingReview";
-import { ReviewIndentModal } from "../../components/booking/ReviewIndentModal";
+import { computeReview, linesFromBulkRows } from "../../utils/bookingReview";
 import { Modal } from "../../components/ui/Modal";
 import { Button } from "../../components/ui/Button";
 
 export const BulkUpload = () => {
   const navigate = useNavigate();
-  const { file, rows, summary, setFile, setRows, updateRow, removeRow, reset: resetStore } =
+  const { file, rows, summary, setFile, setRows, updateRow, reset: resetStore } =
     useBulkImportStore();
-  const { fetchReservations, confirmBooking } = useCartStore();
+  // Only to refresh the Selection List badge afterwards. An upload no longer
+  // writes to the list, but a booking consumes stock, and any line the customer
+  // is already holding is worth re-reading once the numbers have moved.
+  const { fetchReservations } = useCartStore();
   // Non-MSIL customers upload by SKU Code alone.
   const showMsilCode = useShowMsilCode();
   const [isParsing, setIsParsing] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [excludedRowIds, setExcludedRowIds] = useState([]);
-  // The review popup is opened against the Selection List AFTER the rows have
-  // been reserved, not against the parsed file — see handleContinue.
-  const [pendingReview, setPendingReview] = useState(null);
   const [outcome, setOutcome] = useState(null);
 
   // Clearing the session also clears row exclusions.
   const reset = () => {
     setExcludedRowIds([]);
-    setPendingReview(null);
     resetStore();
   };
 
@@ -100,13 +98,24 @@ export const BulkUpload = () => {
   ).length;
   const canConfirm =
     summary.invalidRows === 0 && selectedCount > 0 && !hasPendingRows && !isConfirming;
-  // A "clean" import (no warnings) gets the highlighted primary confirm.
-  //
-  // The shortfall is NOT worked out from the parsed rows here. It is computed
-  // in handleContinue from the Selection List once the rows are reserved,
-  // because that is the set the confirmation actually commits — a preview built
-  // from the file alone omits lines the customer already held and misstates a
-  // repeat SKU the server merged into an existing line.
+
+  // The rows that will actually be booked, and how they split between stock and
+  // indent. Computed from the SELECTED rows themselves — with the Selection List
+  // out of the flow, the file is now exactly the set that gets committed, so the
+  // preview and the outcome cannot disagree.
+  const selectedRows = rows.filter(
+    (r) => (r.status === "valid" || r.status === "warning") && r.product && selectedRowIds.includes(r.id),
+  );
+  const bookingItems = selectedRows.map((r) => ({
+    productId: r.product.id,
+    quantity: Number(r.quantity) || 0,
+  }));
+  // Shown inline above the button. The blocking review popup is gone — an
+  // uploaded sheet books directly now — so the indent split has to be visible
+  // BEFORE the click rather than announced after it.
+  const shortfall = computeReview(linesFromBulkRows(selectedRows));
+  const indentUnits = shortfall.pending.reduce((n, p) => n + p.pending, 0);
+  const bookableUnits = shortfall.available.reduce((n, a) => n + a.bookable, 0);
 
   const handleRevalidate = async () => {
     setIsParsing(true);
@@ -120,90 +129,41 @@ export const BulkUpload = () => {
     }
   };
 
-  // Creates reservations for all valid rows in parallel, removes the rows
-  // that imported successfully (so a retry never duplicates them), and
-  // returns the failure list.
-  const importValidRows = async () => {
-    const validRows = rows.filter(
-      (r) => (r.status === "valid" || r.status === "warning") && r.product && selectedRowIds.includes(r.id),
-    );
-    const results = await Promise.allSettled(
-      validRows.map((row) => reservationsApi.create(row.product.id, row.quantity)),
-    );
-    const failures = [];
-    results.forEach((r, idx) => {
-      const row = validRows[idx];
-      if (r.status === "fulfilled") {
-        removeRow(row.id);
-      } else {
-        const err = r.reason;
-        failures.push(`${row.skuCode || row.msilCode}: ${err?.response?.data?.message || err?.message || "failed"}`);
-      }
-    });
-    await fetchReservations();
-    return { attempted: validRows.length, failures };
-  };
-
   /**
-   * Step 1 — reserve the selected rows, then REVIEW.
+   * "Continue to Booking" — create the booking, in one step.
    *
-   * This used to stop here and send the user to Create Booking, which is the
-   * reported defect: an uploaded file that was entirely out of stock — a pure
-   * indent — was dumped onto the booking screen, and nothing the file created
-   * ever reached Booking History because nothing was ever confirmed.
+   * The upload used to be staged through the Selection List: this handler
+   * reserved every row, then asked the customer to confirm the list. That was
+   * the wrong shape for a sheet. Uploading a booking sheet IS the instruction to
+   * book, so the second prompt asked the same question twice — and if the
+   * customer closed the page at it, the entire file was left stranded in their
+   * Selection List, where the confirm would later sweep it into an unrelated
+   * booking. Worse, that confirm committed the WHOLE list, so lines the customer
+   * was already holding arrived inside a booking made from a file that never
+   * mentioned them.
    *
-   * The review is still shown, because a file must not get a shortcut past the
-   * check every hand-made booking goes through. What changed is that it is now
-   * computed against the SELECTION LIST as it stands after the import, not
-   * against the parsed rows — the confirm step commits every reserved line the
-   * customer holds, so anything already sitting there must be visible in the
-   * popup rather than swept in unannounced.
+   * One request now reserves and confirms only the selected rows, inside a
+   * single transaction on the server. The sheet either becomes a booking — plus
+   * an indent for anything stock could not cover — or nothing is written and the
+   * rows stay here with the reason. Nothing passes through the Selection List.
    */
   const handleContinue = async () => {
-    setIsConfirming(true);
-    try {
-      const { failures } = await importValidRows();
-      if (failures.length > 0) {
-        // Rows that failed to reserve stay on this screen with their error and
-        // are never carried into the booking — a failed record must not appear
-        // in Booking History as though it had been created.
-        throw new Error(`Some items could not be reserved: ${failures.slice(0, 3).join("; ")}${failures.length > 3 ? "…" : ""}`);
-      }
-
-      // The Selection List as the server sees it — importValidRows has already
-      // refetched it. Read back rather than trusting the parsed rows: the
-      // server merges a repeat SKU into an existing line, so the quantity that
-      // will actually be booked can differ from the quantity in the file.
-      const items = useCartStore.getState().items;
-      if (items.length === 0) {
-        throw new Error("Nothing is on your Selection List to confirm.");
-      }
-      setPendingReview({
-        review: computeReview(items),
-        itemCount: items.length,
-        unitCount: items.reduce((n, i) => n + (i.orderQuantity || 0), 0),
-      });
-    } catch (err) {
-      toast.error(err.message || err.response?.data?.message || "Failed to add the uploaded rows to the Selection List.");
-    } finally {
-      setIsConfirming(false);
+    if (bookingItems.length === 0) {
+      toast.error("Select at least one row to book.");
+      return;
     }
-  };
 
-  /**
-   * Step 2 — confirm, and route on what was actually created.
-   *
-   * The server reports the outcome (`booking`, `indent`, or `booking+indent`)
-   * rather than leaving the client to guess from the totals. Bookings land in
-   * Booking History and indents in Indent History, so a file of out-of-stock
-   * lines is never again announced as a booking that does not exist.
-   */
-  const handleConfirm = async () => {
     setIsConfirming(true);
     try {
-      const result = await confirmBooking();
-      setPendingReview(null);
+      const result = await reservationsApi.directBooking(bookingItems);
+
+      // The upload has been committed, so the session is cleared — the rows are
+      // now a booking and re-submitting them would book them twice.
       reset();
+      // A booking consumes stock and may close an indent the customer was
+      // holding, so the list badge should not keep showing the old position.
+      fetchReservations();
+
       setOutcome({
         outcome: result?.outcome || (result?.totals?.totalConfirmed > 0 ? "booking" : "indent"),
         orderId: result?.orderId || "",
@@ -214,7 +174,12 @@ export const BulkUpload = () => {
         lines: (result?.summary || []).length,
       });
     } catch (err) {
-      toast.error(err.response?.data?.message || err.message || "Failed to confirm the uploaded rows.");
+      // Nothing was written — the whole request is one transaction — so the rows
+      // are still on screen and can be corrected and re-submitted. The server's
+      // message names the offending SKU.
+      toast.error(
+        err.response?.data?.message || err.message || "Failed to create the booking from this upload.",
+      );
     } finally {
       setIsConfirming(false);
     }
@@ -237,8 +202,10 @@ export const BulkUpload = () => {
       />
 
       <p className="text-slate-600">
-        Upload bookings using an Excel template. Lines covered by stock become a booking and
-        appear in <span className="font-semibold">Booking History</span>; anything short becomes
+        Upload bookings using an Excel template, then click{" "}
+        <span className="font-semibold">Continue to Booking</span> to create the booking directly —
+        the sheet does not go through your Selection List. Lines covered by stock become a booking
+        and appear in <span className="font-semibold">Booking History</span>; anything short becomes
         an indent and appears in <span className="font-semibold">Indent History</span>.
       </p>
 
@@ -306,6 +273,31 @@ export const BulkUpload = () => {
                 showMsilCode={showMsilCode}
               />
 
+              {/* What the click will produce, stated before it happens. The
+                  booking is created directly, so there is no review popup to
+                  carry this — and a customer who uploads 900 units of something
+                  with 12 in stock must not discover the split afterwards. */}
+              {indentUnits > 0 && (
+                <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200">
+                  <PackageX size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-sm text-amber-900">
+                    <p className="font-bold">
+                      {bookableUnits > 0
+                        ? `${bookableUnits} unit(s) will be booked now; ${indentUnits} will move to an indent.`
+                        : `None of the ${indentUnits} uploaded unit(s) are in stock — this will raise an indent, not a booking.`}
+                    </p>
+                    <p className="text-xs mt-1 text-amber-800">
+                      {shortfall.pending
+                        .slice(0, 4)
+                        .map((p) => `${p.code} (${p.available} of ${p.requested} in stock)`)
+                        .join(", ")}
+                      {shortfall.pending.length > 4 && ` and ${shortfall.pending.length - 4} more`}
+                      . Indented lines are fulfilled automatically when material is inwarded.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-end mt-4 gap-4">
                 {hasPendingRows && (
                   <ERPButton
@@ -319,9 +311,8 @@ export const BulkUpload = () => {
                     Re-validate Edited Rows
                   </ERPButton>
                 )}
-                {/* One button, and it opens the same review popup the
-                    individual flow opens — the shortfall is reviewed before
-                    the booking is committed, not announced afterwards. */}
+                {/* One button, one step. It creates the booking — the sheet does
+                    not pass through the Selection List. */}
                 <ERPButton
                   variant="success"
                   size="lg"
@@ -330,7 +321,7 @@ export const BulkUpload = () => {
                   className="w-full md:w-auto px-8 shadow-md bg-green-600 hover:bg-green-700 ring-2 ring-green-300"
                 >
                   <Check size={18} className="mr-2 text-white" />
-                  {isConfirming ? "Adding..." : `Review & Confirm (${selectedCount})`}
+                  {isConfirming ? "Creating booking..." : `Continue to Booking (${selectedCount})`}
                 </ERPButton>
               </div>
             </>
@@ -342,18 +333,11 @@ export const BulkUpload = () => {
         </div>
       </div>
 
-      {/* The SAME review popup Create Booking uses. It decides for itself
-          whether this is a plain confirmation or an indent review, so the two
-          screens cannot drift apart on what a shortfall looks like. */}
-      <ReviewIndentModal
-        isOpen={!!pendingReview}
-        onClose={() => setPendingReview(null)}
-        onConfirm={handleConfirm}
-        review={pendingReview?.review || { available: [], pending: [] }}
-        loading={isConfirming}
-        itemCount={pendingReview?.itemCount || 0}
-        unitCount={pendingReview?.unitCount || 0}
-      />
+      {/* No review popup here. A bulk upload books directly, and the split
+          between stock and indent is shown inline above the button instead — see
+          the shortfall notice. The individual booking screen still reviews,
+          because there the customer is assembling a list item by item rather
+          than submitting a file they have already checked. */}
 
       {/* WHERE THE UPLOAD ACTUALLY WENT. A file can produce a booking, an
           indent, or both, and each lives in its own history — so the outcome

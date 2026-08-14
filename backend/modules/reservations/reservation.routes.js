@@ -9,6 +9,7 @@ import {
   updateReservationQuantity,
   cancelReservation,
   confirmBooking,
+  createDirectBooking,
   validateBulk
 } from './reservation.controller.js';
 import { protect } from '../../middlewares/auth.js';
@@ -34,6 +35,9 @@ router.route('/:id')
   .delete(cancelReservation);
 
 router.post('/confirm', confirmBooking);
+// Books a set of lines outright, skipping the Selection List. Used by the bulk
+// upload's "Continue to Booking".
+router.post('/direct-booking', createDirectBooking);
 router.post('/validate-bulk', validateBulk);
 
 export default router;

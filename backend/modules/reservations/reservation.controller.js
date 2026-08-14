@@ -655,15 +655,115 @@ export const cancelReservation = async (req, res, next) => {
   }
 };
 
+/**
+ * Reserve the lines of a DIRECT booking, inside the caller's transaction.
+ *
+ * Used by the bulk-upload flow, which books a whole sheet in one action. The
+ * reservation documents still exist — they are what an unfulfilled line becomes
+ * (the indent), and the confirmation loop below is written against them — but
+ * they are created and consumed within a single request, so the customer's
+ * Selection List is never a place the upload passes through.
+ *
+ * Nothing is merged into lines the customer already holds. A sheet is a
+ * self-contained booking: sweeping in whatever happened to be sitting in the
+ * Selection List is what made an uploaded booking arrive with lines nobody put
+ * in the file. Repeats WITHIN the sheet are merged, because one SKU listed
+ * twice is one line of demand and MOQ has to be judged on the total.
+ *
+ * @param {object[]} items [{ productId, quantity }]
+ */
+const reserveDirectBookingLines = async (req, session, items) => {
+  // Bad lines in an upload are the CUSTOMER's to fix, not a server fault, so
+  // they answer 400 and the upload screen shows the reason against the file.
+  // A bare Error would fall through to the handler's default 500 and read as an
+  // outage for what is usually a mistyped quantity.
+  const badRequest = (message) => {
+    const err = new Error(message);
+    err.statusCode = 400;
+    return err;
+  };
+
+  if (!Array.isArray(items) || items.length === 0) {
+    throw badRequest('At least one booking line is required.');
+  }
+
+  // Merge repeats in the sheet, preserving first-seen order so the summary the
+  // customer gets back reads in the order they uploaded.
+  const byProduct = new Map();
+  for (const item of items) {
+    const productId = item?.productId;
+    const quantity = Number(item?.quantity);
+    if (!productId || !Number.isInteger(quantity) || quantity <= 0) {
+      throw badRequest('Every booking line needs a product and a whole-number quantity greater than zero.');
+    }
+    byProduct.set(String(productId), (byProduct.get(String(productId)) || 0) + quantity);
+  }
+
+  const year = new Date().getFullYear();
+  const reservationDate = new Date();
+  const expiryDate = new Date(reservationDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const docs = [];
+
+  for (const [productId, quantity] of byProduct) {
+    // Brand-scoped, exactly as the single-line path is: a SKU in a brand this
+    // customer cannot access resolves to null and is reported as missing rather
+    // than being bookable by id.
+    const product = await findProductById(productId, session, req.user);
+    if (!product) {
+      throw badRequest(`Product ${productId} not found.`);
+    }
+
+    // The same two gates the individual booking screen applies. They are
+    // re-checked here rather than trusted from validate-bulk: that response is
+    // a preview the client holds, and stock, MOQ and MSIL status can all move
+    // between the preview and the click.
+    enforceMoq(req.user, product, quantity);
+
+    if (msilAppliesTo(req.user) && product.msilCode) {
+      const msilDoc = await MsilCode.findOne({ code: product.msilCode }, null, session ? { session } : {});
+      if (!msilDoc || msilDoc.status !== 'Active') {
+        throw badRequest(`MSIL Code ${product.msilCode} for product ${product.skuCode} is inactive or does not exist.`);
+      }
+    }
+
+    const seq = await nextSequence(`reservation-${year}`, session);
+    docs.push({
+      reservationId: `RES-${year}-${String(seq).padStart(6, '0')}`,
+      customerId: req.user._id,
+      productId: product._id,
+      skuCode: product.skuCode,
+      msilCode: product.msilCode,
+      quantity,
+      reservationDate,
+      expiryDate,
+      status: 'Reserved',
+      reservedBy: req.user._id,
+    });
+  }
+
+  // insertMany returns hydrated documents, which is what the confirmation loop
+  // needs — it calls .save() on each to record the outcome.
+  return Reservation.insertMany(docs, session ? { session } : {});
+};
+
 // Core confirmation logic. All DB writes accept an optional `session` so the
 // whole read-modify-write cycle (stock deduction + order creation + reservation
 // updates) is atomic when transactions are available.
-const runConfirmBooking = async (req, session) => {
-  const reservations = await Reservation.find(
-    { customerId: req.user._id, status: 'Reserved' },
-    null,
-    session ? { session } : {}
-  );
+//
+// `items` selects WHICH lines are committed:
+//   omitted — the Selection List confirmation: everything the customer holds.
+//   given   — a direct booking: these lines only, reserved here and confirmed
+//             in the same breath, never touching the Selection List.
+// Everything after the line set is identical for both, so a booking made from a
+// sheet and one made from the list cannot diverge in what they produce.
+const runConfirmBooking = async (req, session, { items = null } = {}) => {
+  const reservations = items
+    ? await reserveDirectBookingLines(req, session, items)
+    : await Reservation.find(
+        { customerId: req.user._id, status: 'Reserved' },
+        null,
+        session ? { session } : {}
+      );
   if (reservations.length === 0) {
     throw new Error('No active reservations to confirm.');
   }
@@ -796,22 +896,35 @@ const runConfirmBooking = async (req, session) => {
 // that raises an indent cannot tell the two audiences different things — see
 // sendBookingMails() and sendIndentRaisedMails() there.
 
-export const confirmBooking = async (req, res, next) => {
+/**
+ * Commit a confirmation and report what it produced.
+ *
+ * Shared by both entry points — the Selection List's Confirm and the bulk
+ * upload's Continue to Booking — because everything from the commit onwards is
+ * the same job: work out whether a booking, an indent, or both were created,
+ * notify, email, and answer with the outcome. The two differ only in where
+ * their lines come from, which is `options.items`.
+ *
+ * @param {object}   [options.items] Direct-booking lines. Omit to confirm the
+ *                                   customer's Selection List.
+ */
+const runConfirmationRequest = async (req, res, next, { items = null } = {}) => {
   const session = await mongoose.startSession();
+  const tag = items ? 'createDirectBooking' : 'confirmBooking';
   let result;
   try {
     try {
       // Preferred path: run everything inside a single ACID transaction.
       session.startTransaction();
-      result = await runConfirmBooking(req, session);
+      result = await runConfirmBooking(req, session, { items });
       await session.commitTransaction();
     } catch (txErr) {
       await session.abortTransaction();
       if (isTransactionUnsupported(txErr)) {
         // Standalone MongoDB (no replica set) — transactions unavailable.
         // Nothing was committed, so it's safe to re-run without a session.
-        console.warn('[confirmBooking] Transactions unsupported — running without a transaction.');
-        result = await runConfirmBooking(req, null);
+        console.warn(`[${tag}] Transactions unsupported — running without a transaction.`);
+        result = await runConfirmBooking(req, null, { items });
       } else {
         throw txErr;
       }
@@ -933,6 +1046,32 @@ export const confirmBooking = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * POST /api/v1/reservations/confirm
+ *
+ * Confirm everything in the customer's Selection List.
+ */
+export const confirmBooking = (req, res, next) => runConfirmationRequest(req, res, next);
+
+/**
+ * POST /api/v1/reservations/direct-booking
+ *
+ * Book a set of lines outright, with no Selection List step. This is what the
+ * bulk upload's "Continue to Booking" calls: an uploaded sheet is already an
+ * explicit instruction to book, so staging it in the Selection List asked the
+ * customer to say yes to the same thing twice — and left the whole sheet
+ * stranded in their list if they closed the page at the second prompt.
+ *
+ * All-or-nothing. One transaction covers reserving and confirming every line, so
+ * a sheet cannot half-book: either the whole file becomes a booking (and, for
+ * anything short of stock, an indent) or nothing is written and the rows stay on
+ * the upload screen with the reason.
+ *
+ * Body: { items: [{ productId, quantity }], poNumber?, remarks? }
+ */
+export const createDirectBooking = (req, res, next) =>
+  runConfirmationRequest(req, res, next, { items: req.body?.items });
 
 export const validateBulk = async (req, res, next) => {
   try {
