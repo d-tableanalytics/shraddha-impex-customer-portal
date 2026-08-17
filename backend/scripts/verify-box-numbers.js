@@ -62,6 +62,8 @@ const {
 } = await import('../utils/boxNoVisibility.js');
 const { IMPORT_TEMPLATES, headersFor, matchHeaders, coerce } =
   await import('../modules/inventory/import.templates.js');
+const { suppliesBoxNo, boxRowKey, boxNumberChanges } =
+  await import('../modules/inventory/boxNumber.rules.js');
 const { shapeBooking } = await import('../modules/sales/booking.shape.js');
 
 // The frontend mirror. Plain ESM with no imports of its own, so it loads here
@@ -303,6 +305,107 @@ eq('a blank cell is null', coerce(boxSpec, null).value, null);
 eq('an Excel rich-text cell reads its display string',
   coerce(boxSpec, { richText: [{ text: 'B-' }, { text: '12' }] }).value, 'B-12');
 
+// ── Blank means KEEP, never CLEAR ────────────────────────────────────────────
+// Box numbers are set once in a while, but these sheets are uploaded constantly
+// for their quantities — so the overwhelmingly common row carries no box number
+// at all and must leave the mapping exactly as it was.
+console.log('\n   a blank or absent Box No leaves the existing mapping alone');
+
+check('a supplied box number counts as supplied', suppliesBoxNo({ boxNo: 'B-12' }));
+check('a blank cell supplies nothing', !suppliesBoxNo({ boxNo: null }));
+check('an empty string supplies nothing', !suppliesBoxNo({ boxNo: '' }));
+check('an absent column supplies nothing', !suppliesBoxNo({ boxNo: undefined }));
+check('a row object with no boxNo key at all supplies nothing', !suppliesBoxNo({ skuCode: 'X' }));
+check('an undefined row does not throw', !suppliesBoxNo(undefined));
+// A box literally named "0" is a real box, not a blank.
+check('a box number of "0" IS supplied (not treated as blank)', suppliesBoxNo({ boxNo: '0' }));
+
+// The real header-matching and coercion, run the way validateRow runs them, so
+// this covers the actual path a spreadsheet takes rather than a paraphrase.
+const cellToData = (type, headerRow, values) => {
+  const { mapping } = matchHeaders(type, headerRow);
+  const data = {};
+  for (const col of IMPORT_TEMPLATES[type].columns) {
+    const index = mapping[col.field];
+    data[col.field] = coerce(col, index === undefined ? null : values[index]).value;
+  }
+  return data;
+};
+
+for (const type of SHEETS) {
+  const full = headersFor(type);
+  const noBoxCol = full.filter((h) => h !== 'Box No');
+  const boxIdx = full.indexOf('Box No');
+
+  const blank = [...full].fill(null); blank[boxIdx] = '';
+  check(`${type}: an EMPTY Box No cell yields no write`,
+    !suppliesBoxNo(cellToData(type, full, blank)));
+
+  const spaces = [...full].fill(null); spaces[boxIdx] = '   ';
+  check(`${type}: a whitespace-only Box No cell yields no write`,
+    !suppliesBoxNo(cellToData(type, full, spaces)));
+
+  check(`${type}: a file with NO Box No column yields no write`,
+    !suppliesBoxNo(cellToData(type, noBoxCol, [...noBoxCol].fill('x'))));
+
+  const filled = [...full].fill(null); filled[boxIdx] = 'B-12';
+  check(`${type}: a populated Box No cell DOES yield a write`,
+    suppliesBoxNo(cellToData(type, full, filled)));
+}
+
+// The corollary: a non-admin uploading a sheet with the column left blank is
+// never blocked, because the row is asking for nothing.
+check('a non-admin is never blocked by a blank Box No column',
+  errsFor('inventory-master', { ...base, boxNo: null }, false).length === 0
+  && errsFor('inventory-master', { ...base, boxNo: '' }, false).length === 0);
+
+// ── A supplied Box No REPLACES what is on file ───────────────────────────────
+console.log('\n   a populated Box No replaces the existing mapping');
+
+const staged = (skuCode, boxNo, brand = 'Koken', rowNumber = 1) =>
+  ({ rowNumber, data: { skuCode, brand, boxNo } });
+const onFile = new Map([
+  [boxRowKey('SKU1', 'Koken'), 'B-12'],
+  [boxRowKey('SKU2', 'Koken'), null],   // exists, no box mapped yet
+  [boxRowKey('SKU1', 'BIX'), 'X-1'],    // same code, different brand
+]);
+
+eq('an existing box number is replaced by the new one',
+  boxNumberChanges([staged('SKU1', 'C-99')], onFile),
+  [{ skuCode: 'SKU1', brand: 'Koken', from: 'B-12', to: 'C-99' }]);
+
+eq('a SKU with no box yet gets its first mapping',
+  boxNumberChanges([staged('SKU2', 'A-1')], onFile),
+  [{ skuCode: 'SKU2', brand: 'Koken', from: null, to: 'A-1' }]);
+
+eq('a SKU not on file at all is treated as a first mapping',
+  boxNumberChanges([staged('SKU9', 'N-1')], onFile),
+  [{ skuCode: 'SKU9', brand: 'Koken', from: null, to: 'N-1' }]);
+
+// Re-uploading an exported sheet must not read as thousands of changes.
+eq('re-supplying the SAME box number is not a change',
+  boxNumberChanges([staged('SKU1', 'B-12')], onFile), []);
+
+eq('replacement is per brand, not per SKU code',
+  boxNumberChanges([staged('SKU1', 'C-99'), staged('SKU1', 'Y-2', 'BIX', 2)], onFile),
+  [
+    { skuCode: 'SKU1', brand: 'Koken', from: 'B-12', to: 'C-99' },
+    { skuCode: 'SKU1', brand: 'BIX', from: 'X-1', to: 'Y-2' },
+  ]);
+
+eq('a mixed batch reports only the rows that actually moved',
+  boxNumberChanges(
+    [staged('SKU1', 'B-12', 'Koken', 1), staged('SKU2', 'A-1', 'Koken', 2)],
+    onFile,
+  ).map((c) => c.skuCode),
+  ['SKU2']);
+
+check('the from/to pair is carried so the change is reversible from the audit trail',
+  (() => {
+    const [c] = boxNumberChanges([staged('SKU1', 'C-99')], onFile);
+    return c.from === 'B-12' && c.to === 'C-99';
+  })());
+
 // ── 5. Mail recipients ───────────────────────────────────────────────────────
 console.log('\n5. MAIL RECIPIENTS');
 
@@ -382,10 +485,19 @@ check('processMaster does not $set boxNo itself (applyBoxNumbers owns the write)
 check('applyBoxNumbers reads the previous value before writing',
   /const prior = await Product\.find\(/.test(impSvc)
   && impSvc.indexOf('const prior = await Product.find(') < impSvc.indexOf('bulkWrite(ops'));
-check('applyBoxNumbers only writes rows that actually changed',
-  /\.filter\(\(c\) => c\.from !== c\.to\)/.test(impSvc));
+check('applyBoxNumbers uses the shared change-detection, not its own copy',
+  /boxNumberChanges\(carrying, before\)/.test(impSvc)
+  && !/\.filter\(\(c\) => c\.from !== c\.to\)/.test(impSvc));
+check('the write replaces the stored value with the sheet\'s',
+  /\$set: \{ boxNo: c\.to \}/.test(impSvc));
 check('applyBoxNumbers only touches rows that landed',
   /landed\.has\(r\.rowNumber\)/.test(impSvc));
+// One definition of "blank means keep", shared by the validator and the writer.
+check('the writer uses the shared suppliesBoxNo rule, not its own copy',
+  /suppliesBoxNo\(r\.data\)/.test(impSvc)
+  && !/r\.data\?\.boxNo !== undefined/.test(impSvc));
+check('nothing anywhere clears a box number from an import',
+  !/boxNo: null/.test(impSvc));
 check('fresh inventory applies box numbers on every exit path (wrapper)',
   /const processFreshInventory = async \(args\) => \{/.test(impSvc)
   && /await restateStock\(args\)/.test(impSvc));
@@ -403,6 +515,23 @@ const rawRowResponses = [...prodCtl.matchAll(/data:\s*([A-Za-z_$][\w$]*)\s*[,}]/
 eq('no product endpoint returns catalogue rows unfiltered', rawRowResponses, []);
 check('the catalogue endpoints strip boxNo (list, brand list, single)',
   (prodCtl.match(/withCatalogueBoxNoVisibility\(/g) || []).length >= 3);
+
+// A downloaded file leaves the app and gets forwarded, so an export column that
+// is not gated the same way as the on-screen one is a worse leak than the
+// column itself. Both drawers build their export columns with a `showBoxNo`
+// guard; assert the guard is actually there rather than trusting review.
+const orderDrawer = src('frontend/src/components/drawer/OrderDrawer.jsx');
+const salesDrawer = src('frontend/src/components/drawer/SalesBookingDrawer.jsx');
+for (const [name, code] of [['order drawer', orderDrawer], ['sales desk drawer', salesDrawer]]) {
+  check(`${name}: the export gates Box No on showBoxNo`,
+    /\.\.\.\(showBoxNo \? \[\{ key: "boxNo", label: "Box No" \}\] : \[\]\)/.test(code));
+  check(`${name}: showBoxNo comes from the line-item rule`,
+    /canViewLineItemBoxNo\(user\)/.test(code));
+}
+check('the sales desk items table offers a download',
+  /handleDownload/.test(salesDrawer) && /exportToExcel/.test(salesDrawer));
+check('the sales desk download is lazy-loaded (keeps xlsx out of the main bundle)',
+  /import\("\.\.\/\.\.\/utils\/exportUtils"\)/.test(salesDrawer));
 
 // sales.controller.js cannot be imported here (it pulls in the socket server,
 // which boots the app), so the one thing the extraction could break — the named

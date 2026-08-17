@@ -12,6 +12,7 @@ import { Product, createProductModel } from '../../models/Product.js';
 import { nextSequence } from '../../models/Counter.js';
 
 import { IMPORT_TEMPLATES, matchHeaders, coerce } from './import.templates.js';
+import { suppliesBoxNo, boxRowKey, boxNumberChanges } from './boxNumber.rules.js';
 import { readerFor, MAX_ROWS } from './import.parser.js';
 import { postBatch } from './ledger.service.js';
 import { applyMovements, syncLegacyStock } from './balance.service.js';
@@ -703,9 +704,10 @@ export const errorReport = async (jobId, { page = 1, limit = 100, category = nul
  * that already matches what is on file.
  */
 const applyBoxNumbers = async ({ rows, landed, job, chunkIndex, actor, req }) => {
-  const carrying = rows.filter((r) => (
-    r.data?.boxNo !== undefined && r.data?.boxNo !== null && landed.has(r.rowNumber)
-  ));
+  // suppliesBoxNo() is the shared definition of "this row supplies one" — a
+  // blank cell, or a file with no Box No column, leaves the existing mapping
+  // untouched rather than clearing it.
+  const carrying = rows.filter((r) => suppliesBoxNo(r.data) && landed.has(r.rowNumber));
   if (carrying.length === 0) return;
 
   // Read the CURRENT values rather than reusing the validation context: an
@@ -715,16 +717,12 @@ const applyBoxNumbers = async ({ rows, landed, job, chunkIndex, actor, req }) =>
     { skuCode: { $in: [...new Set(carrying.map((r) => r.data.skuCode))] } },
     'skuCode brand boxNo',
   ).lean();
-  const before = new Map(prior.map((p) => [`${p.skuCode}::${p.brand}`, p.boxNo || null]));
+  const before = new Map(prior.map((p) => [boxRowKey(p.skuCode, p.brand), p.boxNo || null]));
 
-  const changes = carrying
-    .map((r) => ({
-      skuCode: r.data.skuCode,
-      brand: r.data.brand,
-      from: before.get(`${r.data.skuCode}::${r.data.brand}`) ?? null,
-      to: r.data.boxNo,
-    }))
-    .filter((c) => c.from !== c.to);
+  // A supplied box number REPLACES what is on file. boxNumberChanges() filters
+  // out the rows supplying the value already stored, so re-uploading an
+  // exported sheet is not recorded as having re-boxed the whole catalogue.
+  const changes = boxNumberChanges(carrying, before);
   if (changes.length === 0) return;
 
   // Grouped by brand: the discriminator model scopes the write to its own

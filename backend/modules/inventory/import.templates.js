@@ -1,5 +1,6 @@
 import { VALID_SEASONS, VALID_STATUSES } from '../../utils/productFields.js';
 import { PERMISSIONS } from '../../middlewares/rbac.js';
+import { suppliesBoxNo, boxRowKey } from './boxNumber.rules.js';
 
 /**
  * Import template registry (IMS Module M9).
@@ -125,10 +126,11 @@ const BOX_NO = {
  * enforcing it differently.
  */
 const validateBoxNo = (row, context) => {
-  if (row.boxNo === null || row.boxNo === undefined) return [];
+  // Nothing supplied → nothing to permission-check, whoever is uploading.
+  if (!suppliesBoxNo(row)) return [];
   if (context?.canSetBoxNo) return [];
 
-  const current = context?.skuToBoxNo?.get(`${row.skuCode}::${row.brand}`) ?? null;
+  const current = context?.skuToBoxNo?.get(boxRowKey(row.skuCode, row.brand)) ?? null;
   if (current === row.boxNo) return [];
 
   // A row that identifies no item at all is already being reported by the

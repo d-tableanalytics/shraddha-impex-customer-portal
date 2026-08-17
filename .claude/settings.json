@@ -22,7 +22,8 @@
       "Bash(node --check modules/orders/order.controller.js)",
       "Bash(node --check modules/sales/sales.controller.js)",
       "Bash(awk 'NR>=380 && NR<=455 && /populate|customerId|export const restoreBackorder|Reservation.findOne|Reservation.findById/ {print NR\": \"$0}' backend/modules/reservations/reservation.controller.js)",
-      "Bash(node scripts/verify-box-numbers.js)"
+      "Bash(node scripts/verify-box-numbers.js)",
+      "Bash(node -e ' *)"
     ]
   }
 }

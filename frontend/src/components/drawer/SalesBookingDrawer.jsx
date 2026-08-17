@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
-  Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle,
+  Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle, Download,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
@@ -79,6 +79,44 @@ export const SalesBookingDrawer = () => {
     } else {
       toast.error(res.error);
     }
+  };
+
+  /**
+   * Download the items table as Excel.
+   *
+   * Exports the DRAFT — what is on screen — rather than the last saved state,
+   * so the file always matches the table it was downloaded from. With unsaved
+   * edits pending those two differ, which is why the button says so below.
+   *
+   * Columns mirror the visible ones, Box No included only when the viewer is
+   * allowed to see it: a downloaded pick list must not carry a column the same
+   * user cannot see on screen.
+   */
+  const handleDownload = () => {
+    if (draft.length === 0) return toast.error("Nothing to download — this booking has no lines.");
+
+    const rows = draft.map((l, i) => ({
+      sr: i + 1,
+      skuCode: l.skuCode || "-",
+      msilCode: l.msilCode || "-",
+      boxNo: l.boxNo || "-",
+      quantity: Number(l.quantity) || 0,
+    }));
+    const columns = [
+      { key: "sr", label: "S.No" },
+      { key: "skuCode", label: "SKU Code" },
+      { key: "msilCode", label: "MSIL Code" },
+      ...(showBoxNo ? [{ key: "boxNo", label: "Box No" }] : []),
+      { key: "quantity", label: "Quantity" },
+    ];
+
+    // Loaded on demand: the xlsx bundle is large and most visits to this drawer
+    // never download anything.
+    import("../../utils/exportUtils").then(({ exportToExcel }) => {
+      const ok = exportToExcel(rows, columns, `Booking_${selected.orderId}`);
+      if (ok) toast.success(`Downloaded ${rows.length} line(s).`);
+      else toast.error("Download failed.");
+    });
   };
 
   const handleRaisePo = async () => {
@@ -198,14 +236,30 @@ export const SalesBookingDrawer = () => {
                   <Package size={18} className="text-primary-600" />
                   <h3 className="text-sm font-bold text-slate-800">Booking Items</h3>
                 </div>
-                {editable && (
+                <div className="flex items-center gap-2">
+                  {/* Available whether or not the booking is editable — a locked
+                      booking is exactly the one the warehouse picks against. */}
                   <button
-                    onClick={addLine}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-700 bg-primary-50 border border-primary-200 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition-all"
+                    onClick={handleDownload}
+                    disabled={draft.length === 0}
+                    title={
+                      dirty
+                        ? "Downloads the lines as shown, including your unsaved edits"
+                        : "Download these lines as Excel"
+                    }
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:text-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    <Plus size={14} /> Add product
+                    <Download size={14} /> Download
                   </button>
-                )}
+                  {editable && (
+                    <button
+                      onClick={addLine}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-700 bg-primary-50 border border-primary-200 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition-all"
+                    >
+                      <Plus size={14} /> Add product
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="overflow-x-auto">
