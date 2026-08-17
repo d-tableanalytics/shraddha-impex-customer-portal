@@ -9,6 +9,7 @@ import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { allowedBrandModels, canAccessBrand, brandFilter } from '../../utils/brandAccess.js';
 import { isBookingLocked, canOverrideLock } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
+import { withBoxNoVisibility } from '../../utils/boxNoVisibility.js';
 import { findProductBySku, consumeStock, releaseStock } from '../../utils/stockLedger.js';
 import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
@@ -92,7 +93,11 @@ export const getOrders = async (req, res, next) => {
     const seesEverything = hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS);
     const query = seesEverything ? {} : { ...brandFilter(req.user), user: req.user._id };
     const orders = await Order.find(query).sort({ createdAt: -1 });
-    res.status(200).json({ success: true, data: orders });
+    // The box number rides on every order row. It is shown on the line items to
+    // Sales and Admin only, so it is removed from the payload here rather than
+    // merely hidden by the client — this endpoint serves a customer their own
+    // bookings, and a hidden column is still in the response.
+    res.status(200).json({ success: true, data: withBoxNoVisibility(orders, req.user) });
   } catch (error) {
     next(error);
   }
@@ -113,7 +118,7 @@ export const getOrderById = async (req, res, next) => {
         return res.status(404).json({ success: false, message: 'Order not found' });
       }
     }
-    res.status(200).json({ success: true, data: order });
+    res.status(200).json({ success: true, data: withBoxNoVisibility(order, req.user) });
   } catch (error) {
     next(error);
   }

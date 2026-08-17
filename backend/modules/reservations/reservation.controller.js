@@ -396,7 +396,10 @@ export const restoreBackorder = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Only an admin can move a indent to the selection list.' });
     }
 
-    const reservation = await Reservation.findById(req.params.id).populate('customerId', 'user email company');
+    // bookingCcEmails is selected because the notification below copies the
+    // customer's own Cc list, as every other customer-facing mail does.
+    const reservation = await Reservation.findById(req.params.id)
+      .populate('customerId', 'user email company bookingCcEmails');
     if (!reservation) {
       throw new Error('Indent not found.');
     }
@@ -480,7 +483,11 @@ export const restoreBackorder = async (req, res, next) => {
         <p>Thank you.</p>
       `;
       // Fire-and-forget: email failure should not fail the request.
-      sendEmail(customer.email, subject, body).catch((e) =>
+      // Copied to the company addresses like every other customer-facing mail —
+      // this one was going out with no Cc at all.
+      sendEmail(customer.email, subject, body, {
+        cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC],
+      }).catch((e) =>
         console.error('[restoreBackorder] email error', e)
       );
     }

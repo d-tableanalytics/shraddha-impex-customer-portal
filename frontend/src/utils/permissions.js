@@ -22,6 +22,7 @@ export const PERMISSIONS = {
   // need reopening for each module; only the M1 four are used by any screen yet.
   VIEW_INVENTORY: "view_inventory",
   MANAGE_INVENTORY_MASTER: "manage_inventory_master",
+  MANAGE_BOX_NUMBER: "manage_box_number",
   CONFIGURE_INVENTORY: "configure_inventory",
   EXPORT_INVENTORY: "export_inventory",
   VIEW_STOCK_LEDGER: "view_stock_ledger",
@@ -114,6 +115,40 @@ export const canUseInventoryMaster = (user) =>
 export const canEditPlanning = (user) =>
   hasPermission(user, PERMISSIONS.MANAGE_INVENTORY_MASTER);
 
+/**
+ * Who may add or change the SKU → box number mapping. Admin only.
+ *
+ * Deliberately narrower than canEditPlanning: an Inventory Manager maintains
+ * planning inputs but must not move a SKU's box, because the box number is
+ * quoted on every PO and read off by the warehouse. Sales cannot reach the
+ * inventory master at all and so never sees the field as editable.
+ */
+export const canEditBoxNo = (user) =>
+  hasPermission(user, PERMISSIONS.MANAGE_BOX_NUMBER);
+
+/**
+ * Who sees the box number ON THE INVENTORY SCREENS — the master list, the
+ * catalogue and their exports. Everyone who works the business's own stock:
+ * Admin, Sales, and the inventory roles who pick and count against it.
+ * Customers are excluded; it is an internal picking location.
+ */
+export const canViewBoxNo = (user) =>
+  isAdmin(user) || isSales(user) || INVENTORY_ROLES.includes(user?.role);
+
+/**
+ * Who sees the box number ON A BOOKING'S LINE ITEMS — the sales desk, the order
+ * drawer, the SKU picker that feeds them. SALES AND ADMIN ONLY, which is
+ * narrower than canViewBoxNo above.
+ *
+ * The two rules are separate on purpose. A line item belongs to a customer's
+ * booking, and the order drawer that renders it is the customer's own order
+ * history screen — so the audience there is not "internal staff" but
+ * specifically the desk that acts on the booking. Widening this to match the
+ * inventory rule would put a picking location in front of the customer who
+ * placed the order.
+ */
+export const canViewLineItemBoxNo = (user) => isAdmin(user) || isSales(user);
+
 export const canConfigureInventory = (user) =>
   hasPermission(user, PERMISSIONS.CONFIGURE_INVENTORY);
 
@@ -135,6 +170,9 @@ export default {
   canRaisePo,
   canUseInventoryMaster,
   canEditPlanning,
+  canEditBoxNo,
+  canViewBoxNo,
+  canViewLineItemBoxNo,
   canConfigureInventory,
   canAdjustStock,
 };

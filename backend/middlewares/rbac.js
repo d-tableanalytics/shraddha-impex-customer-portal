@@ -28,6 +28,7 @@ export const PERMISSIONS = {
   // by the roles that will need them when their module ships.
   VIEW_INVENTORY: 'view_inventory',                     // (M1) list, detail, health, dashboard
   MANAGE_INVENTORY_MASTER: 'manage_inventory_master',   // (M1) edit planning parameters
+  MANAGE_BOX_NUMBER: 'manage_box_number',               // (M1) add/change the SKU → box number mapping
   CONFIGURE_INVENTORY: 'configure_inventory',           // (M1) thresholds, reason codes, locations
   EXPORT_INVENTORY: 'export_inventory',                 // (M1) export lists and reports
   VIEW_STOCK_LEDGER: 'view_stock_ledger',               // (M2) movement history
@@ -53,6 +54,15 @@ export const PERMISSIONS = {
  *
  * CONFIGURE_INVENTORY is Admin-only: a threshold change silently reclassifies
  * thousands of SKUs, so it sits with the role that already owns global settings.
+ *
+ * MANAGE_BOX_NUMBER is Admin-only for the same reason, and is deliberately NOT
+ * granted to Inventory Manager despite that role holding
+ * MANAGE_INVENTORY_MASTER. The box number is the physical picking location for
+ * a SKU: it is quoted on every PO and read off by the warehouse, so it must
+ * stay stable and change only when the packing actually changes. Splitting it
+ * out of the planning permission is what stops it drifting as an ordinary
+ * master-data edit. Sales holds neither permission and so cannot reach it at
+ * all.
  */
 const ROLE_PERMISSIONS = {
   Admin: ['*'],

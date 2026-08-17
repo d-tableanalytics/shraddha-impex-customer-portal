@@ -7,9 +7,8 @@ import { io } from '../../server.js';
 import { notifyUser } from '../../utils/notify.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
-import {
-  assertBookingEditable, lockState, isPlaceholderPo, poDueAt, PO_DEADLINE_DAYS,
-} from '../../utils/bookingLock.js';
+import { assertBookingEditable, isPlaceholderPo } from '../../utils/bookingLock.js';
+import { boxKey, currentBoxNumbers, shapeBooking } from './booking.shape.js';
 import {
   findProductBySku, reserveStock, releaseStock, consumeStock,
   adjustReservedQty, adjustConsumedQty,
@@ -33,42 +32,6 @@ const loadBooking = async (orderId, session = null) => {
 };
 
 // Audit writing lives in utils/auditLog.js — see recordAudit().
-
-// Collapse the flat Order rows into one booking object for the review screen.
-const shapeBooking = (rows) => {
-  const first = rows[0];
-  const bookingDate = first.date || first.orderTimestamp || first.createdAt;
-  const lock = lockState(rows);
-  return {
-    orderId: first.orderId,
-    customer: first.company || null,
-    user: first.user,
-    brand: first.brand,
-    date: bookingDate,
-    // Deadline for raising the PO. Sent as an absolute timestamp so the UI can
-    // tick a live countdown without refetching; null once the PO exists, since
-    // the booking is no longer at risk of auto-cancellation.
-    poDueAt: lock.locked ? null : poDueAt(bookingDate),
-    poDeadlineDays: PO_DEADLINE_DAYS,
-    status: first.status,
-    remarks: first.remarks || null,
-    emailId: first.emailId || null,
-    phoneNumber: first.phoneNumber || null,
-    ...lock,
-    totalQuantity: rows.reduce((n, r) => n + (r.confirmedQty || 0), 0),
-    lineCount: rows.length,
-    lines: rows.map((r) => ({
-      id: r._id,
-      skuCode: r.skuCode,
-      msilCode: r.msilCode || null,
-      brand: r.brand,
-      category: r.category || null,
-      bookedQty: r.bookedQty || 0,
-      confirmedQty: r.confirmedQty || 0,
-      pendingQty: r.pendingQty || 0,
-    })),
-  };
-};
 
 const esc = (v) =>
   String(v ?? '')
@@ -94,6 +57,9 @@ const buildChangeSummary = async (rows, orderId) => {
     if (from === 0 && to > 0) type = 'added';
     else if (to > from) type = 'increased';
     else if (to < from) type = 'reduced';
+    // NO boxNo here. This summary exists only to build the email that goes to
+    // the CUSTOMER, and the box number is an internal picking location shown to
+    // Sales and Admin alone — see canViewLineItemBoxNo() on the frontend.
     return { skuCode: r.skuCode, msilCode: r.msilCode || null, from, to, type };
   });
 
@@ -226,7 +192,9 @@ export const getBookings = async (req, res, next) => {
       byBooking.get(r.orderId).push(r);
     }
 
-    const all = [...byBooking.values()].map(shapeBooking);
+    // One lookup for every row on the screen, not one per booking.
+    const boxNumbers = await currentBoxNumbers(rows);
+    const all = [...byBooking.values()].map((b) => shapeBooking(b, boxNumbers));
 
     // Counts come from the UNFILTERED set (search still applies) so the tabs
     // keep showing the same totals whichever one is selected — otherwise
@@ -257,7 +225,10 @@ export const getBookingDetail = async (req, res, next) => {
     if (!rows.length) {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
-    res.status(200).json({ success: true, data: shapeBooking(rows) });
+    res.status(200).json({
+      success: true,
+      data: shapeBooking(rows, await currentBoxNumbers(rows)),
+    });
   } catch (error) {
     next(error);
   }
@@ -479,7 +450,7 @@ export const updateBookingItems = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: shapeBooking(updated),
+      data: shapeBooking(updated, await currentBoxNumbers(updated)),
       changes,
     });
   } catch (error) {
@@ -521,6 +492,25 @@ export const raisePo = async (req, res, next) => {
     }
 
     const now = new Date();
+
+    // Re-stamp the box numbers from the product master before the PO is
+    // committed. Each row carries the box number that was mapped when the line
+    // was BOOKED, which can be weeks old; if an admin has since re-boxed the
+    // SKU, the PO must quote where the goods are now or the warehouse picks the
+    // wrong shelf. This is the point at which the snapshot stops being stale
+    // data and becomes the record of what was ordered, so it is the point at
+    // which it has to be right.
+    const boxNumbers = await currentBoxNumbers(rows);
+    const reBoxed = [];
+    for (const row of rows) {
+      const current = boxNumbers.get(boxKey(row.skuCode, row.brand));
+      // `undefined` means the product could not be resolved at all — leave the
+      // existing snapshot alone rather than blanking it.
+      if (current === undefined || current === (row.boxNo || null)) continue;
+      reBoxed.push({ skuCode: row.skuCode, from: row.boxNo || null, to: current });
+      await Order.updateOne({ _id: row._id }, { $set: { boxNo: current } });
+    }
+
     await Order.updateMany(
       { orderId },
       { $set: { poNumber, poGeneratedAt: now, poGeneratedBy: req.user._id } },
@@ -553,9 +543,13 @@ export const raisePo = async (req, res, next) => {
     await recordAudit(
       req.user,
       'PO Generated',
-      `PO ${poNumber} raised for booking ${orderId} by ${req.user.user || req.user.email}. Booking is now locked.`,
+      `PO ${poNumber} raised for booking ${orderId} by ${req.user.user || req.user.email}. `
+      + `Booking is now locked.`
+      + (reBoxed.length
+        ? ` ${reBoxed.length} line(s) picked up a box number changed since booking.`
+        : ''),
       req,
-      { meta: { orderId, poNumber, poGeneratedAt: now } },
+      { meta: { orderId, poNumber, poGeneratedAt: now, reBoxed } },
     );
 
     // Tell the customer their PO is through — in-app, and by email with a

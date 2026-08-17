@@ -8,6 +8,9 @@ const mapProduct = (p) => {
     id:             p._id,
     code:           p.skuCode,          // real field name from migration
     msilCode:       p.msilCode || null,
+    // The SKU → box number mapping. Read-only everywhere it is shown; only an
+    // admin can change it, through the inventory master.
+    boxNo:          p.boxNo || null,
     name:           p.skuCode,          // products have no "name" column — use SKU as label
     brand:          p.vendorName || null,
     category:       Array.isArray(p.category) ? p.category.join(', ') : (p.category || null),

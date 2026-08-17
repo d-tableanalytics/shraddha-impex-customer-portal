@@ -23,6 +23,7 @@ import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
+import { canViewLineItemBoxNo } from "../../utils/permissions";
 import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
 import { PackageX } from "lucide-react";
@@ -51,6 +52,9 @@ export const OrderDrawer = () => {
   const { user } = useUserStore();
   const { pendingItems, fetchPendingReservations } = useCartStore();
   const showMsilCode = useShowMsilCode();
+  // This drawer is also the customer's own order-history view, so the box
+  // number is limited to the desk that acts on the booking.
+  const showBoxNo = canViewLineItemBoxNo(user);
   const isAdmin = user?.role === "Admin";
 
   const [busy, setBusy] = useState(false);
@@ -191,6 +195,7 @@ export const OrderDrawer = () => {
         sr: i + 1,
         code: p.code || p.name || "-",
         msil: p.msilCode || selectedOrder.msilCode || "-",
+        boxNo: p.boxNo || selectedOrder.boxNo || "-",
         qty,
       };
     });
@@ -198,6 +203,9 @@ export const OrderDrawer = () => {
       { key: "sr", label: "S.No" },
       { key: "code", label: "SKU / Product" },
       ...(showMsilCode ? [{ key: "msil", label: "MSIL Code" }] : []),
+      // Gated identically to the on-screen column — a printed pick list must
+      // not carry a column the same user cannot see in the drawer.
+      ...(showBoxNo ? [{ key: "boxNo", label: "Box No" }] : []),
       { key: "qty", label: "Qty" },
     ];
     const title = `Booking ${selectedOrder.orderNumber}${selectedOrder.customer ? ` - ${selectedOrder.customer}` : ""}`;
@@ -408,6 +416,10 @@ export const OrderDrawer = () => {
                               Shown only to users MSIL codes apply to — the same rule
                               used everywhere else (utils/msilVisibility on the server). */}
                           {showMsilCode && <th className="px-5 py-3">MSIL Code</th>}
+                          {/* Beside the codes and before the quantity, so the row
+                              reads the way it is picked: which part, which box,
+                              how many. */}
+                          {showBoxNo && <th className="px-5 py-3">Box No</th>}
                           <th className="px-5 py-3 text-center">Qty</th>
                         </tr>
                       </thead>
@@ -420,6 +432,13 @@ export const OrderDrawer = () => {
                             {showMsilCode && (
                               <td className="px-5 py-4 font-medium text-slate-700">
                                 {item.product.msilCode || "—"}
+                              </td>
+                            )}
+                            {showBoxNo && (
+                              <td className="px-5 py-4 font-mono font-bold text-slate-700">
+                                {item.product.boxNo || (
+                                  <span className="font-sans font-normal text-slate-400">—</span>
+                                )}
                               </td>
                             )}
                             <td className="px-5 py-4 text-center font-bold text-slate-700">

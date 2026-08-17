@@ -19,7 +19,7 @@ import { bandLabel } from '../../utils/inventoryFormat';
 import { useInventoryStore } from '../../store/inventoryStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
-import { canUseInventoryMaster, canEditPlanning, canAdjustStock } from '../../utils/permissions';
+import { canUseInventoryMaster, canEditPlanning, canEditBoxNo, canAdjustStock } from '../../utils/permissions';
 import { onStockUpdated } from '../../services/socketService';
 
 /**
@@ -64,7 +64,7 @@ const Balance = ({ label, value, accent }) => (
  * move only through the stock ledger (BR-03), and the server rejects them here
  * regardless of what the UI offers.
  */
-const DetailPanel = ({ item, onClose, canEdit, onSave, saving }) => {
+const DetailPanel = ({ item, onClose, canEdit, canEditBox, onSave, saving }) => {
   const [form, setForm] = useState(null);
 
   useEffect(() => {
@@ -103,7 +103,10 @@ const DetailPanel = ({ item, onClose, canEdit, onSave, saving }) => {
         peak: Number(form.dacPeak),
       },
       status: form.status,
-      boxNo: form.boxNo || null,
+      // Omitted entirely for a non-admin rather than sent unchanged, so a
+      // planning save never depends on the server tolerating a field the
+      // caller is not allowed to set.
+      ...(canEditBox ? { boxNo: form.boxNo || null } : {}),
       vendorName: form.vendorName || null,
     });
   };
@@ -215,7 +218,13 @@ const DetailPanel = ({ item, onClose, canEdit, onSave, saving }) => {
                 disabled={!canEdit} placeholder="Optional — falls back to the SKU code"
               />
             </div>
-            <Input label="Box No" value={form.boxNo} onChange={set('boxNo')} disabled={!canEdit} />
+            <Input
+              label="Box No"
+              value={form.boxNo}
+              onChange={set('boxNo')}
+              disabled={!canEditBox}
+              placeholder={canEditBox ? 'e.g. B-12' : undefined}
+            />
             <Input label="Vendor" value={form.vendorName} onChange={set('vendorName')} disabled={!canEdit} />
 
             <div className="w-full flex flex-col gap-1.5">
@@ -230,6 +239,17 @@ const DetailPanel = ({ item, onClose, canEdit, onSave, saving }) => {
           </div>
           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
             A SKU still holding or owing stock cannot be deactivated.
+          </p>
+          {/* The box number is the one field on this panel the warehouse acts
+              on directly, so both the "who" and the "when" are stated rather
+              than left to a disabled input to imply. */}
+          <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
+            {canEditBox
+              ? 'Box No should stay put once mapped — change it only when the packing '
+                + 'itself changes, such as a different quantity per box or box size. '
+                + 'Every PO raised after the change quotes the new box number.'
+              : 'Box No is maintained by an administrator. It appears here, on POs '
+                + 'and on the sales desk, but cannot be edited from this screen.'}
           </p>
         </div>
       </div>
@@ -344,6 +364,9 @@ export const InventoryMaster = () => {
   if (user && !canUseInventoryMaster(user)) return <Navigate to="/" replace />;
 
   const canEdit = canEditPlanning(user);
+  // Narrower than canEdit on purpose — an Inventory Manager maintains planning
+  // inputs but only an Admin may move a SKU's box. Enforced server-side too.
+  const canEditBox = canEditBoxNo(user);
   const canAdjust = canAdjustStock(user);
   const brands = allowedBrands(user);
   const missingInputs = items.filter((i) => !i.hasPlanningInputs).length;
@@ -521,6 +544,9 @@ export const InventoryMaster = () => {
                   )}
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">SKU</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">MSIL</th>
+                  {/* Sits beside the two codes deliberately: SKU, MSIL and box
+                      number are read together when picking against a PO. */}
+                  <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">Box No</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">Brand / Category</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs text-right">On Hand</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs text-right">Reserved</th>
@@ -534,7 +560,7 @@ export const InventoryMaster = () => {
                 {filtering && (
                   <TableSkeleton
                     rows={items.length || 10}
-                    columns={8 + (canEdit ? 1 : 0) + (canAdjust ? 1 : 0)}
+                    columns={9 + (canEdit ? 1 : 0) + (canAdjust ? 1 : 0)}
                   />
                 )}
 
@@ -566,6 +592,18 @@ export const InventoryMaster = () => {
                       )}
                     </td>
                     <td className="px-6 py-4 font-semibold text-slate-600">{item.msilCode || '—'}</td>
+                    <td className="px-6 py-4">
+                      {item.boxNo ? (
+                        <span className="font-mono font-bold text-slate-700">{item.boxNo}</span>
+                      ) : (
+                        <span
+                          className="text-slate-400"
+                          title="No box number mapped for this SKU yet"
+                        >
+                          —
+                        </span>
+                      )}
+                    </td>
                     <td className="px-6 py-4">
                       <span className="font-bold text-slate-700 text-xs block">{item.brand}</span>
                       <span className="text-[11px] text-slate-500 font-medium">
@@ -622,7 +660,7 @@ export const InventoryMaster = () => {
                 {!filtering && items.length === 0 && (
                   <tr>
                     <td
-                      colSpan={8 + (canEdit ? 1 : 0) + (canAdjust ? 1 : 0)}
+                      colSpan={9 + (canEdit ? 1 : 0) + (canAdjust ? 1 : 0)}
                       className="px-6 py-12 text-center text-slate-500 font-medium"
                     >
                       No products match these filters.
@@ -662,6 +700,7 @@ export const InventoryMaster = () => {
                 item={selected}
                 onClose={closeItem}
                 canEdit={canEdit}
+                canEditBox={canEditBox}
                 onSave={handleSave}
                 saving={saving}
               />

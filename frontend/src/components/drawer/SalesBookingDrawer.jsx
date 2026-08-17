@@ -11,14 +11,20 @@ import { ERPButton } from "../ui/ERPButton";
 import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { PoCountdown } from "../ui/PoCountdown";
 import { ProductSearchDropdown } from "../ui/ProductSearchDropdown";
-import { canEditBooking, canRaisePo, hasPermission, PERMISSIONS } from "../../utils/permissions";
+import { canEditBooking, canRaisePo, canViewLineItemBoxNo, hasPermission, PERMISSIONS } from "../../utils/permissions";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
+//
+// `boxNo` rides along read-only: the desk never sets it, it is derived from the
+// SKU. The server sends the CURRENT mapping while the PO is pending and the
+// stamped one once it is raised, so what is shown here is always the box the
+// PO will quote.
 const toDraft = (booking) =>
   (booking?.lines || []).map((l) => ({
     id: l.id,
     skuCode: l.skuCode,
     msilCode: l.msilCode,
+    boxNo: l.boxNo,
     quantity: l.confirmedQty,
   }));
 
@@ -43,6 +49,7 @@ export const SalesBookingDrawer = () => {
 
   const locked = selected.locked;
   const editable = canEditBooking(user, selected);
+  const showBoxNo = canViewLineItemBoxNo(user);
   const mayRaise = canRaisePo(user, selected);
   const isOverride = locked && hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
 
@@ -53,7 +60,8 @@ export const SalesBookingDrawer = () => {
   const setLine = (idx, patch) =>
     setDraft((d) => d.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   const removeLine = (idx) => setDraft((d) => d.filter((_, i) => i !== idx));
-  const addLine = () => setDraft((d) => [...d, { id: null, skuCode: "", quantity: 1 }]);
+  const addLine = () =>
+    setDraft((d) => [...d, { id: null, skuCode: "", msilCode: null, boxNo: null, quantity: 1 }]);
 
   const handleSave = async () => {
     if (draft.length === 0) return toast.error("A booking must keep at least one line.");
@@ -206,6 +214,7 @@ export const SalesBookingDrawer = () => {
                     <tr>
                       <th className="px-5 py-3 w-[45%]">SKU / Product</th>
                       <th className="px-5 py-3">MSIL Code</th>
+                      {showBoxNo && <th className="px-5 py-3">Box No</th>}
                       <th className="px-5 py-3 text-center w-[18%]">Quantity</th>
                       {editable && <th className="px-5 py-3 text-center">Remove</th>}
                     </tr>
@@ -219,7 +228,14 @@ export const SalesBookingDrawer = () => {
                               value={line.skuCode}
                               placeholder="Search SKU…"
                               onChange={(p) =>
-                                setLine(idx, { skuCode: p?.code || "", msilCode: p?.msilCode || null })
+                                // Box number follows the SKU, so picking a
+                                // different product shows its box immediately —
+                                // no save round-trip needed to see it.
+                                setLine(idx, {
+                                  skuCode: p?.code || "",
+                                  msilCode: p?.msilCode || null,
+                                  boxNo: p?.boxNo || null,
+                                })
                               }
                             />
                           ) : (
@@ -227,6 +243,17 @@ export const SalesBookingDrawer = () => {
                           )}
                         </td>
                         <td className="px-5 py-3 text-slate-500">{line.msilCode || "—"}</td>
+                        {showBoxNo && (
+                          <td className="px-5 py-3">
+                            {line.boxNo ? (
+                              <span className="font-mono font-bold text-slate-700">{line.boxNo}</span>
+                            ) : (
+                              <span className="text-slate-400" title="No box number mapped for this SKU">
+                                —
+                              </span>
+                            )}
+                          </td>
+                        )}
                         <td className="px-5 py-3">
                           <input
                             type="number"
@@ -259,6 +286,12 @@ export const SalesBookingDrawer = () => {
                 <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 text-xs text-slate-500">
                   Saving adjusts inventory immediately: raising a quantity reserves more stock,
                   lowering it or removing a line returns the difference.
+                  {showBoxNo && (
+                    <>
+                      {" "}Box numbers come from the product master and are maintained by an
+                      administrator — the PO will quote whatever is mapped at the moment it is raised.
+                    </>
+                  )}
                 </div>
               )}
             </div>

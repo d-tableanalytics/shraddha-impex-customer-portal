@@ -1,6 +1,7 @@
 import Reservation from '../../models/Reservation.js';
 import AuditLog from '../../models/AuditLog.js';
 import { sendEmail } from '../../utils/mailer.js';
+import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { notifyUser } from '../../utils/notify.js';
 
 // Helper to log audit events
@@ -115,6 +116,9 @@ const notifyStage = async (stageKey, customer, items) => {
      <p>${stage.intro(items)}</p>
      ${itemsTable(items, { showExpiry: stage.showExpiry })}
      <p>${stage.outro(items)}</p>`,
+    // Copied to the company addresses like every other customer-facing mail —
+    // these expiry warnings were going out with no Cc at all.
+    { cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC] },
   );
 };
 

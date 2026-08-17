@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Search, Loader2 } from "lucide-react";
 import { useProductStore } from "../../store/productStore";
+import { useUserStore } from "../../store/userStore";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
+import { canViewLineItemBoxNo } from "../../utils/permissions";
 
 export const ProductSearchDropdown = ({
   placeholder = "Search Product Code...",
@@ -13,6 +15,10 @@ export const ProductSearchDropdown = ({
   const [isOpen, setIsOpen] = useState(false);
 
   const showMsilCode = useShowMsilCode();
+  // This dropdown picks the SKU a line item is built from, so it follows the
+  // line-item rule: Sales and Admin see the box, the customer placing the order
+  // does not.
+  const showBoxNo = canViewLineItemBoxNo(useUserStore((s) => s.user));
 
   const searchResults = useProductStore((state) => state.searchResults);
   const searching = useProductStore((state) => state.searching);
@@ -123,6 +129,14 @@ export const ProductSearchDropdown = ({
                   </div>
                   <span className="text-xs text-slate-500 font-medium tracking-wide">
                     {product.brand?.toUpperCase()} | {product.category || 'Uncategorized'}
+                    {showBoxNo && product.boxNo && (
+                      <>
+                        {' | '}
+                        <span className="font-mono font-bold text-slate-600">
+                          Box {product.boxNo}
+                        </span>
+                      </>
+                    )}
                   </span>
                 </li>
               ))}

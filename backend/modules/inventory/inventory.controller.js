@@ -2,6 +2,7 @@ import { Product } from '../../models/Product.js';
 import StockBalance from '../../models/StockBalance.js';
 import StockHealth from '../../models/StockHealth.js';
 import { allowedBrands, canAccessBrand } from '../../utils/brandAccess.js';
+import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
 import { prefixMatch } from '../../utils/searchQuery.js';
@@ -75,11 +76,35 @@ const PLANNING_FIELDS = [
   'leadTime',
   'safetyFactor',
   'moq',
-  'boxNo',
   'vendorName',
   'status',
   'category',
 ];
+
+// The SKU → box number mapping. NOT in PLANNING_FIELDS, because it is not a
+// planning input and does not carry the same permission: it is the physical
+// picking location quoted on every PO, so only MANAGE_BOX_NUMBER (Admin) may
+// set it. Handled on its own below so a caller without that permission gets a
+// 403 saying why, rather than having the field silently dropped from a save
+// that otherwise succeeds.
+const BOX_NUMBER_FIELD = 'boxNo';
+
+/**
+ * Normalise a submitted box number, or throw for an invalid one.
+ *
+ * Empty string means "no mapping" and is stored as null, so a cleared field and
+ * a never-set field read identically everywhere downstream.
+ */
+const normaliseBoxNo = (raw) => {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'string' && typeof raw !== 'number') {
+    throw new Error('Box number must be text.');
+  }
+  const value = String(raw).trim();
+  if (!value) return null;
+  if (value.length > 40) throw new Error('Box number cannot be longer than 40 characters.');
+  return value;
+};
 
 // Nested planning inputs, handled separately so a partial update does not wipe
 // the siblings it did not mention.
@@ -498,6 +523,35 @@ export const updatePlanning = async (req, res, next) => {
       updates[field] = req.body[field];
     }
 
+    // ── Box number, on its own permission ───────────────────────────────────
+    // The UI disables the field for everyone but an Admin, but the UI is never
+    // the control: an Inventory Manager posting the field directly is refused
+    // here. A no-op submission (same value re-sent by a form that renders the
+    // field read-only) is allowed through so a planning save is not blocked by
+    // a value nobody is actually changing.
+    let boxNoChange = null;
+    if (BOX_NUMBER_FIELD in req.body) {
+      let nextBoxNo;
+      try {
+        nextBoxNo = normaliseBoxNo(req.body[BOX_NUMBER_FIELD]);
+      } catch (e) {
+        errors.push(e.message);
+      }
+
+      if (nextBoxNo !== undefined && nextBoxNo !== (doc.boxNo ?? null)) {
+        if (!hasPermission(req.user, PERMISSIONS.MANAGE_BOX_NUMBER)) {
+          return res.status(403).json({
+            success: false,
+            message:
+              'Only an administrator can add or change a box number. '
+              + 'The rest of your changes were not saved — resubmit without the box number.',
+          });
+        }
+        updates[BOX_NUMBER_FIELD] = nextBoxNo;
+        boxNoChange = { from: doc.boxNo ?? null, to: nextBoxNo };
+      }
+    }
+
     // Nested consumption figures, merged so a partial update keeps its siblings.
     if (req.body.dailyAvgConsumption && typeof req.body.dailyAvgConsumption === 'object') {
       for (const key of DAC_KEYS) {
@@ -599,6 +653,23 @@ export const updatePlanning = async (req, res, next) => {
       req,
       { meta: { skuCode: doc.skuCode, brand: doc.brand, before, after: updates } },
     );
+
+    // A box number change gets its OWN trail entry, separate from the planning
+    // one above. It is expected to be rare and it changes what the warehouse
+    // picks and what every subsequent PO quotes, so "when did this SKU move
+    // box, and who moved it" has to be answerable without reading the diff of
+    // an unrelated planning edit.
+    if (boxNoChange) {
+      await recordAudit(
+        req.user,
+        'Box Number Updated',
+        `Box number for ${doc.brand} ${doc.skuCode} changed from `
+        + `${boxNoChange.from ?? 'none'} to ${boxNoChange.to ?? 'none'}. `
+        + 'Subsequent POs will quote the new box number.',
+        req,
+        { meta: { skuCode: doc.skuCode, brand: doc.brand, ...boxNoChange } },
+      );
+    }
 
     // HEALTH TRIGGER 2 of 3 — BR-04. Lead time, consumption, season, safety
     // factor and status all feed Max Level, so an edit here changes the band.

@@ -22,6 +22,7 @@ import { DEFAULT_REASON_CODE } from './adjustment.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { emitStockUpdated } from '../../utils/stockEvents.js';
 import { allowedBrands, ALL_BRANDS } from '../../utils/brandAccess.js';
+import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { normaliseSeason, normaliseStatus } from '../../utils/productFields.js';
 
 /**
@@ -111,14 +112,33 @@ const buildContext = async (importType, { user, jobBrand = null }) => {
     jobBrand,
     locations: new Map(),
     reasonCodes: new Set(),
+    // Whether this uploader may CHANGE a box number. The sheet carries the
+    // column for everyone, because an Inventory Manager routinely edits an
+    // exported file that already has box numbers in it and must not have every
+    // row rejected for leaving them alone. Only a row that actually moves a SKU
+    // to a different box needs the permission — the same rule the single-SKU
+    // editor applies. See the inventory-master template's validate().
+    canSetBoxNo: hasPermission(user, PERMISSIONS.MANAGE_BOX_NUMBER),
   };
 
   if (template.requireExistingSku || template.resolveBrandFromSku
       || template.verifyMsil || template.resolveSkuFromMsil) {
     // skuCode::brand, so the same code under two brands stays two SKUs.
     const needsMsil = Boolean(template.verifyMsil || template.resolveSkuFromMsil);
-    const rows = await Product.find({}, `skuCode brand${needsMsil ? ' msilCode' : ''}`).lean();
+    const needsBox = Boolean(template.tracksBoxNo);
+    const rows = await Product.find(
+      {},
+      `skuCode brand${needsMsil ? ' msilCode' : ''}${needsBox ? ' boxNo' : ''}`,
+    ).lean();
     context.skus = new Set(rows.map((p) => `${p.skuCode}::${p.brand}`));
+
+    // Current mapping, so a row can be told apart from one that merely repeats
+    // what is already on file. Without it there is no way to distinguish "the
+    // user is moving this SKU to a new box" from "the user re-uploaded the
+    // export they downloaded", and the two need different answers.
+    if (needsBox) {
+      context.skuToBoxNo = new Map(rows.map((p) => [`${p.skuCode}::${p.brand}`, p.boxNo || null]));
+    }
 
     // A sheet with no Brand column resolves it from the SKU. Built only when
     // the template asks for it, and it deliberately records AMBIGUITY rather
@@ -403,8 +423,10 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
   }
 
   // ── Type-specific rules ──────────────────────────────────────────────────
+  // `context` is passed as well as the row: a rule like "may this uploader move
+  // this SKU's box" needs both the value and what is currently on file.
   if (errors.length === 0 && typeof template.validate === 'function') {
-    errors.push(...template.validate(data));
+    errors.push(...template.validate(data, context));
   }
 
   const valid = errors.length === 0;
@@ -664,6 +686,74 @@ export const errorReport = async (jobId, { page = 1, limit = 100, category = nul
 // { successes: [{ rowNumber, result }], failures: [{ rowNumber, reason }], refs }
 // and NEVER writes to a projection itself.
 
+/**
+ * Write the sheet's box numbers onto the product master, for rows that landed.
+ *
+ * Shared by the two sheets that carry the column. It is applied AFTER the rest
+ * of the row has succeeded and only to rows in `landed`, so a row rejected for
+ * its quantity does not quietly re-box the SKU anyway.
+ *
+ * A blank cell leaves the existing mapping alone rather than clearing it, like
+ * every other optional field on these sheets — there is no way to unmap a box
+ * through an import, which is deliberate: a cleared cell is far more often an
+ * empty column than an instruction.
+ *
+ * Validation has already refused any row where a non-admin tried to CHANGE a
+ * box number, so anything reaching here is either an admin's edit or a value
+ * that already matches what is on file.
+ */
+const applyBoxNumbers = async ({ rows, landed, job, chunkIndex, actor, req }) => {
+  const carrying = rows.filter((r) => (
+    r.data?.boxNo !== undefined && r.data?.boxNo !== null && landed.has(r.rowNumber)
+  ));
+  if (carrying.length === 0) return;
+
+  // Read the CURRENT values rather than reusing the validation context: an
+  // earlier chunk of this same file may already have moved one, and the audit
+  // trail has to show what each chunk actually changed.
+  const prior = await Product.find(
+    { skuCode: { $in: [...new Set(carrying.map((r) => r.data.skuCode))] } },
+    'skuCode brand boxNo',
+  ).lean();
+  const before = new Map(prior.map((p) => [`${p.skuCode}::${p.brand}`, p.boxNo || null]));
+
+  const changes = carrying
+    .map((r) => ({
+      skuCode: r.data.skuCode,
+      brand: r.data.brand,
+      from: before.get(`${r.data.skuCode}::${r.data.brand}`) ?? null,
+      to: r.data.boxNo,
+    }))
+    .filter((c) => c.from !== c.to);
+  if (changes.length === 0) return;
+
+  // Grouped by brand: the discriminator model scopes the write to its own
+  // brand, exactly as M1 does.
+  const byBrand = new Map();
+  for (const c of changes) {
+    if (!byBrand.has(c.brand)) byBrand.set(c.brand, []);
+    byBrand.get(c.brand).push({
+      updateOne: { filter: { skuCode: c.skuCode }, update: { $set: { boxNo: c.to } } },
+    });
+  }
+  for (const [brand, ops] of byBrand) {
+    await createProductModel(brand).bulkWrite(ops, { ordered: false });
+  }
+
+  // Box numbers that actually MOVED get their own trail entry, matching what
+  // the single-SKU editor records. A box change is quoted on every PO raised
+  // afterwards, so "which SKUs moved box, when, and on whose authority" has to
+  // be answerable without reconstructing it from an import file.
+  await recordAudit(
+    actor,
+    'Box Number Updated',
+    `${changes.length} box number(s) changed by import ${job.jobId} (chunk ${chunkIndex + 1}). `
+    + 'Subsequent POs will quote the new box numbers.',
+    req,
+    { meta: { jobId: job.jobId, chunkIndex, changes } },
+  );
+};
+
 /** Products are the master itself — written directly, with M1's own normalisers. */
 const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
   const successes = [];
@@ -680,6 +770,10 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
 
     const set = {
       ...(d.msilCode !== undefined && d.msilCode !== null ? { msilCode: d.msilCode } : {}),
+      // boxNo is deliberately NOT set here. applyBoxNumbers() below is the sole
+      // writer, and it has to read the PREVIOUS value to know what changed —
+      // writing it here too would mean it read back its own write, find nothing
+      // changed, and never record the audit entry.
       ...(d.description !== undefined && d.description !== null ? { description: d.description } : {}),
       ...(d.category?.length ? { category: d.category } : {}),
       ...(d.uom ? { uom: d.uom } : {}),
@@ -748,6 +842,11 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
   // only. Never a full rebuild. This is also what raises or clears the Planning
   // alerts in M8, through the event the health service emits.
   if (affectedSkus.length) await recomputeHealthForSkus(affectedSkus);
+
+  // Box numbers, for the rows whose master write landed.
+  await applyBoxNumbers({
+    rows, landed: new Set(successes.map((s) => s.rowNumber)), job, chunkIndex, actor, req,
+  });
 
   // Quantity, where the sheet carries one, is a STOCK figure and cannot be
   // written to the product — it goes through the ledger like any other stock
@@ -938,10 +1037,12 @@ const processPlanning = (args) => processMaster(args);
  * Being absolute, this import is IDEMPOTENT in a way the master sheet is not:
  * running the same file twice lands on the same figure both times.
  *
- * Nothing else about the product is touched — not planning data, not the master
- * fields, not any other location's balance.
+ * Nothing else about the product is touched — not planning data, not any other
+ * master field, not any other location's balance. The ONE exception is the box
+ * number, applied by the wrapper below rather than here, so that this function
+ * remains purely a stock restatement.
  */
-const processFreshInventory = async ({ rows, job, chunkIndex, actor, req }) => {
+const restateStock = async ({ rows, job, chunkIndex, actor, req }) => {
   const successes = [];
   const failures = [];
   if (rows.length === 0) return { successes, failures, refs: [] };
@@ -1067,6 +1168,29 @@ const processFreshInventory = async ({ rows, job, chunkIndex, actor, req }) => {
     successes, failures,
     refs: [{ kind: 'ledgerBatch', id: result.batch.batchId, chunkIndex }],
   };
+};
+
+/**
+ * Fresh Inventory = restate the stock, then apply any box numbers the sheet
+ * carried.
+ *
+ * Wrapped rather than folded into restateStock() because that function returns
+ * from three different places — early when every row is already at its figure,
+ * early again when the ledger batch fails, and at the end on the normal path.
+ * A box write placed inside it would be skipped by two of the three, and the
+ * skip that matters most is the first: a sheet whose quantities are all
+ * unchanged is precisely the one being uploaded to correct box numbers.
+ *
+ * `landed` is taken from the successes, so a row rejected for its quantity —
+ * reserved stock, a failed batch — does not re-box the SKU anyway.
+ */
+const processFreshInventory = async (args) => {
+  const outcome = await restateStock(args);
+  await applyBoxNumbers({
+    ...args,
+    landed: new Set(outcome.successes.map((s) => s.rowNumber)),
+  });
+  return outcome;
 };
 
 const PROCESSORS = {

@@ -45,6 +45,9 @@ export const EXPORTS = {
       { header: 'SKU Code', get: (r) => r.skuCode },
       { header: 'Brand', get: (r) => r.brand },
       { header: 'MSIL Code', get: (r) => nul(r.msilCode) },
+      // Beside the two codes, so a downloaded sheet reads the same way the
+      // screen does: SKU, MSIL, box.
+      { header: 'Box No', get: (r) => nul(r.boxNo) },
       { header: 'Description', get: (r) => nul(r.description) },
       { header: 'Category', get: (r) => (r.category || []).join(', ') },
       { header: 'UOM', get: (r) => nul(r.uom) },

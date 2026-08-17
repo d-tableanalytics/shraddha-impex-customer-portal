@@ -6,6 +6,7 @@ import { onStockUpdated } from '../../services/socketService';
 import { useUserStore } from '../../store/userStore';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
 import { allowedBrands } from '../../utils/brandAccess';
+import { canViewBoxNo } from '../../utils/permissions';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { SkuLookupModal } from '../../components/inventory/SkuLookupModal';
@@ -20,6 +21,10 @@ export const Inventory = () => {
   const { user } = useUserStore();
   const isAdmin = user?.role === "Admin";
   const showMsilCode = useShowMsilCode();
+  // This screen serves customers as well as staff. A box number is an internal
+  // picking location, so it is shown to the people who pick and quote against
+  // it and hidden from the customers who order against the SKU.
+  const showBoxNo = canViewBoxNo(user);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
@@ -97,6 +102,7 @@ export const Inventory = () => {
       const cols = [
         { key: 'code', label: 'SKU Code' },
         ...(showMsilCode ? [{ key: 'msilCode', label: 'MSIL Code', format: (v) => v || '-' }] : []),
+        ...(showBoxNo ? [{ key: 'boxNo', label: 'Box No', format: (v) => v || '-' }] : []),
         { key: 'name', label: 'Product Name' },
         { key: 'brand', label: 'Brand' },
         { key: 'category', label: 'Category' },
@@ -215,6 +221,7 @@ export const Inventory = () => {
                 <tr>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">SKU Code</th>
                   {showMsilCode && <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">MSIL Code</th>}
+                  {showBoxNo && <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">Box No</th>}
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">Product Name</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">Brand / Category</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs text-center">In Stock</th>
@@ -222,7 +229,7 @@ export const Inventory = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filtering && (
-                  <TableSkeleton rows={items.length || PAGE_SIZE} columns={showMsilCode ? 5 : 4} />
+                  <TableSkeleton rows={items.length || PAGE_SIZE} columns={4 + (showMsilCode ? 1 : 0) + (showBoxNo ? 1 : 0)} />
                 )}
                 <AnimatePresence>
                   {!filtering && items.map(product => (
@@ -235,6 +242,11 @@ export const Inventory = () => {
                     >
                       <td className="px-6 py-4 font-bold text-slate-900">{product.code}</td>
                       {showMsilCode && <td className="px-6 py-4 font-semibold text-slate-600">{product.msilCode || '-'}</td>}
+                      {showBoxNo && (
+                        <td className="px-6 py-4 font-mono font-bold text-slate-700">
+                          {product.boxNo || <span className="font-sans font-normal text-slate-400">-</span>}
+                        </td>
+                      )}
                       <td className="px-6 py-4 font-semibold text-slate-800">{product.name}</td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col">
@@ -256,7 +268,7 @@ export const Inventory = () => {
                 </AnimatePresence>
                 {!inventoryLoading && items.length === 0 && (
                   <tr>
-                    <td colSpan={showMsilCode ? 5 : 4} className="px-6 py-12 text-center text-slate-500 font-medium">
+                    <td colSpan={4 + (showMsilCode ? 1 : 0) + (showBoxNo ? 1 : 0)} className="px-6 py-12 text-center text-slate-500 font-medium">
                       No products found matching your search.
                     </td>
                   </tr>

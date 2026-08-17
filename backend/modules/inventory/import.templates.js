@@ -100,16 +100,67 @@ const SKU = { header: 'SKU Code', field: 'skuCode', type: 'string', required: tr
 const BRAND = { header: 'Brand', field: 'brand', type: 'string', required: true, note: 'Koken, BIX or IMADA.' };
 const NOTE = { header: 'Note', field: 'note', type: 'string', required: false };
 
+const BOX_NO = {
+  header: 'Box No', field: 'boxNo', type: 'string', required: false,
+  note: 'The box this SKU is picked from. Blank LEAVES THE EXISTING BOX ALONE — '
+    + 'it does not clear it. Administrators only: anyone else may leave the column '
+    + 'as exported, but changing a value is refused. Quoted on every PO raised '
+    + 'after the change, so set it only when the packing itself changes.',
+};
+
+/**
+ * The box-number rule, shared by every sheet carrying the column.
+ *
+ * Box numbers are Admin-only on every other write path (the single-SKU editor
+ * refuses a non-admin, the bulk editor omits the field entirely), so an import
+ * cannot be the way around that.
+ *
+ * The check is per row and on the CHANGE, not on the column's presence.
+ * Rejecting any row that merely carries a box number would break the ordinary
+ * round trip — export the sheet, edit the figures, re-upload — for exactly the
+ * Inventory Managers who run it, since the master export includes the column. A
+ * row repeating what is already on file is asking for nothing and is allowed.
+ *
+ * Lives here rather than in each template so the two sheets cannot drift into
+ * enforcing it differently.
+ */
+const validateBoxNo = (row, context) => {
+  if (row.boxNo === null || row.boxNo === undefined) return [];
+  if (context?.canSetBoxNo) return [];
+
+  const current = context?.skuToBoxNo?.get(`${row.skuCode}::${row.brand}`) ?? null;
+  if (current === row.boxNo) return [];
+
+  // A row that identifies no item at all is already being reported by the
+  // sheet's own rule; naming "undefined" here would just be noise.
+  const subject = row.skuCode || 'this row';
+
+  return [{
+    category: 'permission',
+    column: 'Box No',
+    message: current
+      ? `Only an administrator can change a box number. ${subject} is mapped to `
+        + `box ${current}; leave the cell at ${current} or clear it to keep the existing mapping.`
+      : `Only an administrator can set a box number. Clear the Box No cell for ${subject}.`,
+    value: row.boxNo,
+  }];
+};
+
 /* ── The registry ───────────────────────────────────────────────────────── */
 
 export const IMPORT_TEMPLATES = {
   'inventory-master': {
     label: 'Inventory Master',
     description:
-      'SKU and quantity. A SKU already in the catalogue has its Quantity ADDED to stock; a SKU '
-      + 'that is new is created, and its Quantity becomes the opening stock. '
-      + 'A NEGATIVE quantity (e.g. -5) is DEDUCTED from stock instead.',
+      'SKU, quantity and box number. A SKU already in the catalogue has its Quantity ADDED to '
+      + 'stock; a SKU that is new is created, and its Quantity becomes the opening stock. '
+      + 'A NEGATIVE quantity (e.g. -5) is DEDUCTED from stock instead. '
+      + 'Box No sets the SKU → box mapping, and only an administrator can change it.',
     permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
+    // Loads the current SKU → box mapping into the validation context, so a row
+    // repeating the box number already on file can be told apart from one
+    // moving the SKU to a different box. Only the latter needs MANAGE_BOX_NUMBER.
+    tracksBoxNo: true,
     keyFields: ['skuCode'],
     // Deliberately NOT requireExistingSku: creating what is missing is half of
     // what this sheet is for.
@@ -138,8 +189,10 @@ export const IMPORT_TEMPLATES = {
         note: 'Positive adds to stock (or sets opening stock for a new SKU). '
           + 'Negative deducts, e.g. -5. Blank leaves stock alone.',
       },
+      BOX_NO,
     ],
-    sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 250 },
+    validate: validateBoxNo,
+    sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 250, 'Box No': 'B-12' },
   },
 
   'fresh-inventory': {
@@ -147,8 +200,11 @@ export const IMPORT_TEMPLATES = {
     description:
       'SKU or MSIL Code and a quantity that REPLACES the stock figure on file. A SKU holding 5 '
       + 'with a sheet saying 155 finishes at 155 — the quantity is the new level, not an amount '
-      + 'received. Use this to restate stock from a fresh count; use Inventory Master to add to it.',
+      + 'received. Use this to restate stock from a fresh count; use Inventory Master to add to it. '
+      + 'Box No sets the SKU → box mapping, and only an administrator can change it.',
     permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
+    // Same rule as the master sheet — see validateBoxNo().
+    tracksBoxNo: true,
     // Keyed on the SKU even though the sheet may not carry one — an MSIL-only
     // row has its SKU resolved before this is read, so two rows naming the same
     // product by different codes are still caught as the duplicate they are.
@@ -182,19 +238,22 @@ export const IMPORT_TEMPLATES = {
         header: 'Quantity', field: 'quantity', type: 'int', required: true, min: 0,
         note: 'The new stock level. It REPLACES the current figure rather than adding to it.',
       },
+      BOX_NO,
     ],
     // Guards the one mistake the required-column check cannot see: a row with a
-    // quantity but nothing to apply it to.
-    validate: (row) => (
-      row.skuCode || row.msilCode
+    // quantity but nothing to apply it to. Both problems are reported together
+    // rather than one per upload — see the note on validateRow().
+    validate: (row, context) => [
+      ...(row.skuCode || row.msilCode
         ? []
         : [{
             category: 'required',
             column: 'SKU Code',
             message: 'Give either a SKU Code or an MSIL Code — this row identifies no item.',
-          }]
-    ),
-    sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 155 },
+          }]),
+      ...validateBoxNo(row, context),
+    ],
+    sample: { 'SKU Code': '14405M-10', 'MSIL Code': '', Quantity: 155, 'Box No': 'B-12' },
   },
 
   planning: {

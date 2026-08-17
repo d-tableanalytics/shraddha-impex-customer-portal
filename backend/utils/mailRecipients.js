@@ -29,16 +29,45 @@ export const isBlockedRecipient = (address) =>
 export const stripBlocked = (addresses = []) =>
   (Array.isArray(addresses) ? addresses : [addresses]).filter((a) => !isBlockedRecipient(a));
 
+/** Drops repeats, comparing addresses case-insensitively. */
+const dedupe = (addresses) => {
+  const seen = new Set();
+  return addresses.filter((a) => {
+    const key = String(a).trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 /**
- * Company address copied on customer-facing booking mail, so Shraddha Impex
- * keeps a record of every confirmation and PO.
+ * The company's own booking mailbox, so Shraddha Impex keeps a record of every
+ * confirmation and PO.
  *
  * Override via BOOKING_CC_EMAILS in .env (comma-separated) to change or add
  * addresses without touching code. Set it to an empty string to disable.
  */
-export const COMPANY_CC = stripBlocked(
-  list(process.env.BOOKING_CC_EMAILS ?? 'Contact@shraddhaimpex.net'),
-);
+const COMPANY_MAILBOX = list(process.env.BOOKING_CC_EMAILS ?? 'Contact@shraddhaimpex.net');
+
+/**
+ * Addresses copied on EVERY customer-facing mail, whatever else is configured.
+ *
+ * Kept apart from COMPANY_MAILBOX rather than merged into its default, because
+ * that default disappears the moment BOOKING_CC_EMAILS is set — so an
+ * environment that overrides the company mailbox would silently stop copying
+ * these too. "Every mail to a customer" has to survive that.
+ *
+ * Override via ALWAYS_CC_EMAILS in .env (comma-separated); set it to an empty
+ * string to disable.
+ */
+const ALWAYS_CC = list(process.env.ALWAYS_CC_EMAILS ?? 'kinjal@shraddhaimpex.net');
+
+/**
+ * Everything copied on customer-facing booking mail. The mailer de-duplicates
+ * this against the To: address and drops blocked entries again, so a customer
+ * who is also on one of these lists is not copied on their own mail.
+ */
+export const COMPANY_CC = stripBlocked(dedupe([...COMPANY_MAILBOX, ...ALWAYS_CC]));
 
 /**
  * The Support Team mailbox.
@@ -52,13 +81,18 @@ export const COMPANY_CC = stripBlocked(
  * customer is told "your indent", support is told which customer it belongs to.
  *
  * Override via SUPPORT_TEAM_EMAILS in .env (comma-separated). It falls back to
- * BOOKING_CC_EMAILS/COMPANY_CC so an environment that has not been given the
- * new variable still reaches a real person rather than silently nobody.
+ * the company mailbox so an environment that has not been given the new
+ * variable still reaches a real person rather than silently nobody.
+ *
+ * The fallback is COMPANY_MAILBOX, NOT COMPANY_CC. Support mail is internal and
+ * is not mail to a customer, so the always-copy addresses above do not belong
+ * on it — falling back to COMPANY_CC would quietly enrol every one of them as a
+ * support recipient.
  */
 export const SUPPORT_TEAM = stripBlocked(
   process.env.SUPPORT_TEAM_EMAILS !== undefined
     ? list(process.env.SUPPORT_TEAM_EMAILS)
-    : [...COMPANY_CC],
+    : [...COMPANY_MAILBOX],
 );
 
 /**

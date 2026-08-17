@@ -17,7 +17,12 @@
       "Bash(node --input-type=module -e ' *)",
       "Bash(MONGODB_URI=mongodb://localhost:27017/erp_lifecycle_test node --input-type=module -e ' *)",
       "Bash(node --check modules/inventory/import.service.js)",
-      "Bash(node --check modules/inventory/import.templates.js)"
+      "Bash(node --check modules/inventory/import.templates.js)",
+      "Bash(node --check utils/boxNoVisibility.js)",
+      "Bash(node --check modules/orders/order.controller.js)",
+      "Bash(node --check modules/sales/sales.controller.js)",
+      "Bash(awk 'NR>=380 && NR<=455 && /populate|customerId|export const restoreBackorder|Reservation.findOne|Reservation.findById/ {print NR\": \"$0}' backend/modules/reservations/reservation.controller.js)",
+      "Bash(node scripts/verify-box-numbers.js)"
     ]
   }
 }

@@ -1,6 +1,7 @@
 import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
 import { canAccessBrand, allowedBrandModels } from '../../utils/brandAccess.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
+import { withCatalogueBoxNoVisibility } from '../../utils/boxNoVisibility.js';
 import { prefixMatch } from '../../utils/searchQuery.js';
 
 // Map brand param → correct Mongoose model
@@ -127,7 +128,10 @@ export const getInventory = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: merged,
+      // Box numbers are an internal picking location. The catalogue rows are
+      // returned whole, so a customer would otherwise receive boxNo in the JSON
+      // even though their table has no column for it.
+      data: withCatalogueBoxNoVisibility(merged, req.user),
       pagination: { total, page, pages: Math.ceil(total / limit) || 1 },
       // KPI tiles describe the whole catalogue, so they ignore the search filter.
       totals: {
@@ -169,7 +173,7 @@ export const getProducts = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: products,
+      data: withCatalogueBoxNoVisibility(products, req.user),
       pagination: { total, page: Number(page), pages: Math.ceil(total / Number(limit)) },
     });
   } catch (error) {
@@ -199,7 +203,7 @@ export const getProductByCode = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    res.status(200).json({ success: true, data: product });
+    res.status(200).json({ success: true, data: withCatalogueBoxNoVisibility(product, req.user) });
   } catch (error) {
     next(error);
   }
@@ -216,7 +220,11 @@ export const createProduct = async (req, res, next) => {
     }
 
     const product = await Model.create(req.body);
-    res.status(201).json({ success: true, data: product });
+    // Admin-only route, so this filter is a no-op today. Applied anyway so the
+    // invariant is "no catalogue response returns a raw row", which is a rule
+    // that can be checked; "no catalogue response except the ones behind an
+    // admin guard" is one that quietly rots.
+    res.status(201).json({ success: true, data: withCatalogueBoxNoVisibility(product, req.user) });
   } catch (error) {
     next(error);
   }

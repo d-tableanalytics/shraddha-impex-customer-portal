@@ -13,6 +13,10 @@ export const mapOrder = (order) => {
       // The Order document carries the MSIL code, but it was never mapped
       // through, so every MSIL display in the drawer rendered blank.
       msilCode: order.msilCode || null,
+      // The box this line is picked from, stamped onto the order row when the
+      // booking was created. Shown on the line items to Sales and Admin only —
+      // see canViewLineItemBoxNo().
+      boxNo: order.boxNo || null,
       warehouse: 'Default',
       availableStock: order.requestedQty || 0,
       unit: 'PCS'
@@ -81,6 +85,7 @@ const groupIntoBookings = (rawOrders) => {
     const lineItems = rows.map((r) => ({
       skuCode: r.skuCode,
       msilCode: r.msilCode || null,
+      boxNo: r.boxNo || null,
       bookedQty: r.bookedQty ?? r.requestedQty ?? 0,   // originally booked
       confirmedQty: r.confirmedQty ?? r.requestedQty ?? 0, // fulfilled from stock
       pendingQty: r.pendingQty ?? 0,                    // indent (unfulfilled)
