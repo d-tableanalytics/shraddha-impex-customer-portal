@@ -548,6 +548,74 @@ for (const name of imported) {
 check('the moved helpers are gone from sales.controller (no duplicate definition)',
   !/^const shapeBooking = /m.test(salesCtl) && !/^const currentBoxNumbers = /m.test(salesCtl));
 
+// ── 7. Data fidelity ─────────────────────────────────────────────────────────
+// An imported value must survive the round trip unchanged. Inventory codes are
+// full of characters that other layers want to reinterpret — regex
+// metacharacters in search, markup characters in a printed sheet.
+console.log('\n7. DATA FIDELITY (special characters survive unchanged)');
+
+const { prefixMatch } = await import('../utils/searchQuery.js');
+const { escapeHtml } = await import(
+  pathToFileURL(path.join(REPO, 'frontend', 'src', 'utils', 'escapeHtml.js')).href
+);
+
+const SPECIALS = [
+  'A&B-1', 'SKU<10>', 'X"Y', "O'Brien", 'A/B\\C', '50%', 'C++', '#12',
+  'Ø-12', 'café', '日本語', 'B–12', 'A,B', 'A;B', 'A|B', 'A  B',
+  '007', '1/2', '3-4', '+91', '=SUM(A1)', '-5', '@here', '13012M.52-10',
+  'M8 x 1.25', '(A)[B]{C}', 'A*B?C', 'A$B^C',
+];
+
+console.log('\n   import coercion returns the value verbatim');
+const skuSpec = IMPORT_TEMPLATES['inventory-master'].columns.find((c) => c.field === 'skuCode');
+const mangled = SPECIALS.filter((v) => coerce(skuSpec, v).value !== v);
+eq('no special character is altered by cell coercion', mangled, []);
+const boxMangled = SPECIALS.filter((v) => coerce(boxSpec, v).value !== v);
+eq('the same holds for the Box No column', boxMangled, []);
+// Trimming is the ONE intended change, and only at the edges.
+eq('only surrounding whitespace is trimmed', coerce(skuSpec, '  A B  ').value, 'A B');
+eq('internal spacing is preserved exactly', coerce(skuSpec, 'A   B').value, 'A   B');
+eq('a leading zero is not dropped', coerce(skuSpec, '0012').value, '0012');
+eq('a leading = is stored as text, not read as a formula',
+  coerce(skuSpec, '=SUM(A1)').value, '=SUM(A1)');
+
+console.log('\n   search matches these codes literally');
+for (const v of ['13012M.52-10', 'A*B?C', '(A)[B]{C}', 'A$B^C', 'C++']) {
+  const re = prefixMatch(v);
+  check(`"${v}" matches itself`, re.test(v));
+  // The metacharacter must not match something else: `.` matching any char is
+  // how a search for one SKU quietly returns a different one.
+  const decoy = v.replace(/[.*+?^${}()[\]|\\]/g, 'Z');
+  check(`"${v}" does not match its metacharacter-substituted twin`,
+    decoy === v || !re.test(decoy));
+}
+
+console.log('\n   a printed sheet shows the stored value');
+eq('markup characters are escaped, not dropped',
+  escapeHtml('A<B>C'), 'A&amp;lt;B&amp;gt;C'.replace(/&amp;(lt|gt);/g, '&$1;'));
+eq('an ampersand is escaped once, not twice', escapeHtml('Nut & Bolt'), 'Nut &amp; Bolt');
+eq('ampersand is replaced first (no double-escaping)',
+  escapeHtml('<'), '&lt;');
+eq('quotes are escaped', escapeHtml('X"Y'), 'X&quot;Y');
+eq('null and undefined render as empty, not as the word',
+  [escapeHtml(null), escapeHtml(undefined)], ['', '']);
+// Round trip: what the browser parses back out must equal what went in.
+const unescape = (s) => s
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  .replace(/&amp;/g, '&');
+const lost = SPECIALS.filter((v) => unescape(escapeHtml(v)) !== v);
+eq('every special value survives escape → render unchanged', lost, []);
+
+check('printData escapes cells, headers and the title',
+  (() => {
+    const eu = src('frontend/src/utils/exportUtils.js');
+    return /escapeHtml\(cellValue\(item, col\)\)/.test(eu)
+      && /escapeHtml\(col\.label\)/.test(eu)
+      && /const safeTitle = escapeHtml\(title\)/.test(eu)
+      && !/<td>\$\{cellValue/.test(eu);
+  })());
+
 // ── Summary ──────────────────────────────────────────────────────────────────
 console.log('\n' + '='.repeat(60));
 console.log(`${passed} passed, ${failed} failed`);

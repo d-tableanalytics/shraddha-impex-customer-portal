@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { escapeHtml } from './escapeHtml';
 
 // Resolve a cell value for a column, honouring an optional col.format(value, item).
 const cellValue = (item, col) => {
@@ -75,16 +76,20 @@ export const printData = (data, columns, title = 'Report') => {
       return false;
     }
 
-    const tableHeaders = columns.map(col => `<th>${col.label}</th>`).join('');
+    // Every interpolated value is escaped. Inventory codes routinely contain
+    // <, > and &, and unescaped they are parsed as markup — the printed cell
+    // then shows something other than the value it came from.
+    const safeTitle = escapeHtml(title);
+    const tableHeaders = columns.map(col => `<th>${escapeHtml(col.label)}</th>`).join('');
     const tableRows = data.map(item => {
-      const rowData = columns.map(col => `<td>${cellValue(item, col)}</td>`).join('');
+      const rowData = columns.map(col => `<td>${escapeHtml(cellValue(item, col))}</td>`).join('');
       return `<tr>${rowData}</tr>`;
     }).join('');
 
     const htmlContent = `
       <html>
         <head>
-          <title>${title}</title>
+          <title>${safeTitle}</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 20px; }
             h1 { color: #1e3a8a; font-size: 24px; margin-bottom: 5px; }
@@ -99,7 +104,7 @@ export const printData = (data, columns, title = 'Report') => {
           </style>
         </head>
         <body>
-          <h1>${title}</h1>
+          <h1>${safeTitle}</h1>
           <p>Generated on: ${new Date().toLocaleString()}</p>
           <table>
             <thead><tr>${tableHeaders}</tr></thead>
