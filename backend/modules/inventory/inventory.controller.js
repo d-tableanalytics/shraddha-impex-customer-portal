@@ -41,12 +41,17 @@ const SORT_SPECS = {
 const STOCK_SORTS = new Set(['stock-asc', 'stock-desc']);
 
 /**
- * Balances for one page of products, summed across locations.
+ * Balances for a set of products, summed across locations.
  *
- * A SKU may hold stock in several locations while this list has one row per
- * SKU, so the figures are totals — matching what the Health screen shows.
+ * A SKU may hold stock in several locations while these screens show one row
+ * per SKU, so the figures are totals — matching what the Health screen shows.
+ *
+ * Used for a whole page AND for a single product. It was named
+ * `balancesForPage` and called only by the list, which is how the detail panel
+ * came to render every balance as zero: shapeItem() defaults `balance` to null,
+ * so a caller that forgot to join it in got 0/0/0/0 rather than an error.
  */
-const balancesForPage = async (docs) => {
+const balancesFor = async (docs) => {
   const skus = [...new Set(docs.map((d) => d.skuCode).filter(Boolean))];
   if (skus.length === 0) return new Map();
 
@@ -193,6 +198,17 @@ const shapeItem = (doc, { showMsil, balance = null }) => {
     ),
     updatedAt: doc.updatedAt,
   };
+};
+
+/**
+ * Balance for ONE product, or null when the ledger has no position for it.
+ *
+ * Exists so the single-product paths cannot silently omit the join the way they
+ * previously did — the key format lives here rather than at each call site.
+ */
+const balanceFor = async (doc) => {
+  const balances = await balancesFor([doc]);
+  return balances.get(`${doc.skuCode}::${doc.brand}`) ?? null;
 };
 
 /** Ceiling on one lookup. Large enough for a real sheet, bounded all the same. */
@@ -452,7 +468,7 @@ export const listItems = async (req, res, next) => {
     ]);
 
     // One indexed read for the page's SKUs, summed across locations.
-    const balances = await balancesForPage(docs);
+    const balances = await balancesFor(docs);
 
     res.status(200).json({
       success: true,
@@ -489,7 +505,10 @@ export const getItem = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: shapeItem(doc, { showMsil: msilAppliesTo(req.user) }),
+      data: shapeItem(doc, {
+        showMsil: msilAppliesTo(req.user),
+        balance: await balanceFor(doc),
+      }),
     });
   } catch (error) {
     next(error);
@@ -679,7 +698,10 @@ export const updatePlanning = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: shapeItem(updated, { showMsil: msilAppliesTo(req.user) }),
+      data: shapeItem(updated, {
+        showMsil: msilAppliesTo(req.user),
+        balance: await balanceFor(updated),
+      }),
     });
   } catch (error) {
     next(error);

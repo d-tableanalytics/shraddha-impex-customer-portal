@@ -513,6 +513,18 @@ const rawRowResponses = [...prodCtl.matchAll(/data:\s*([A-Za-z_$][\w$]*)\s*[,}]/
   .map((m) => m[1])
   .filter((name) => ['merged', 'products', 'product', 'rows', 'items'].includes(name));
 eq('no product endpoint returns catalogue rows unfiltered', rawRowResponses, []);
+// shapeItem() defaults `balance` to null, so a caller that forgets to join the
+// stock projection in gets a silent 0/0/0/0 instead of an error. That is exactly
+// how the detail panel came to contradict the list it was opened from. Every
+// call site must pass a balance.
+const shapeCalls = invCtl.split('shapeItem(').slice(1);
+const missingBalance = shapeCalls
+  .map((chunk, i) => ({ i, head: chunk.slice(0, 220) }))
+  .filter((c) => !/balance/.test(c.head));
+eq('every shapeItem() call joins in a stock balance', missingBalance.map((c) => c.i), []);
+check('the single-product paths use the balanceFor() helper',
+  (invCtl.match(/await balanceFor\(/g) || []).length >= 2);
+
 check('the catalogue endpoints strip boxNo (list, brand list, single)',
   (prodCtl.match(/withCatalogueBoxNoVisibility\(/g) || []).length >= 3);
 
