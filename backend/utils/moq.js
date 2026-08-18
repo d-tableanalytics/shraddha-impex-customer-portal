@@ -33,14 +33,37 @@ export const isMsilCustomer = (user) =>
   String(user?.customerCategory ?? '').trim().toUpperCase() === 'MSIL';
 
 /**
+ * Shraddha Impex's own people, identified by their company email domain.
+ *
+ * MOQ is a rule for CUSTOMERS. Staff ordering through the portal — sales
+ * raising a booking on someone's behalf, anyone testing a flow — are not the
+ * party the minimum exists to constrain, so it does not apply to them.
+ *
+ * Matched on the full "@domain" suffix, never a bare "shraddhaimpex.net"
+ * substring: the leading @ is what stops `someone@notshraddhaimpex.net` from
+ * being read as staff. A subdomain such as `a@mail.shraddhaimpex.net` is
+ * deliberately NOT matched — it is a different mail domain, and quietly
+ * exempting it would be a guess.
+ *
+ * Case and whitespace tolerant for the same reason the category check is:
+ * the field is filled by admin data entry and sheet imports.
+ */
+export const COMPANY_EMAIL_DOMAIN = '@shraddhaimpex.net';
+
+export const isCompanyUser = (user) =>
+  String(user?.email ?? '').trim().toLowerCase().endsWith(COMPANY_EMAIL_DOMAIN);
+
+/**
  * Whether MOQ validation runs for this user at all.
  *
- * Two ways out: being an MSIL customer, and the per-user 'SKIP' override on the
- * account (User.moq), which predates the category field and is still how a
- * specific Non-MSIL account is exempted by hand.
+ * Three ways out: being an MSIL customer, being Shraddha Impex staff (company
+ * email domain), and the per-user 'SKIP' override on the account (User.moq),
+ * which predates the category field and is still how a specific Non-MSIL
+ * account is exempted by hand.
  */
 export const moqAppliesTo = (user) => {
   if (isMsilCustomer(user)) return false;
+  if (isCompanyUser(user)) return false;
   if (String(user?.moq ?? '').trim().toUpperCase() === 'SKIP') return false;
   return true;
 };
@@ -79,4 +102,7 @@ export const enforceMoq = (user, product, quantity) => {
   if (message) throw new Error(message);
 };
 
-export default { isMsilCustomer, moqAppliesTo, effectiveMoq, moqError, enforceMoq };
+export default {
+  isMsilCustomer, isCompanyUser, COMPANY_EMAIL_DOMAIN,
+  moqAppliesTo, effectiveMoq, moqError, enforceMoq,
+};

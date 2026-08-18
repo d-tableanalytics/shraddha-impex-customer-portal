@@ -628,6 +628,67 @@ check('printData escapes cells, headers and the title',
       && !/<td>\$\{cellValue/.test(eu);
   })());
 
+// ── 8. MOQ exemption for Shraddha Impex staff ────────────────────────────────
+// backend/utils/moq.js and frontend/src/utils/moq.js both say MUST MATCH. When
+// they drift, the client either blocks a quantity the server would accept or
+// offers one it will reject — so both are evaluated here against the same
+// inputs rather than read side by side.
+console.log('');
+console.log('8. MOQ — Shraddha Impex staff exemption');
+
+const beMoq = await import('../utils/moq.js');
+const feMoq = await import(
+  pathToFileURL(path.join(REPO, 'frontend', 'src', 'utils', 'moq.js')).href
+);
+
+const product = { skuCode: 'SKU1', moq: 100 };
+const CASES = [
+  ['staff, plain',            { email: 'kinjal@shraddhaimpex.net' },                    false],
+  ['staff, uppercase',        { email: 'KINJAL@SHRADDHAIMPEX.NET' },                    false],
+  ['staff, padded',           { email: '  kinjal@shraddhaimpex.net  ' },                false],
+  ['staff, Contact@',         { email: 'Contact@shraddhaimpex.net' },                   false],
+  ['customer, other domain',  { email: 'buyer@acme.com' },                              true],
+  // The leading @ is what makes this safe — a lookalike domain must NOT match.
+  ['lookalike domain',        { email: 'x@notshraddhaimpex.net' },                      true],
+  ['subdomain (not matched)', { email: 'x@mail.shraddhaimpex.net' },                    true],
+  ['domain in local part',    { email: 'shraddhaimpex.net@acme.com' },                  true],
+  ['no email at all',         {},                                                       true],
+  ['null email',              { email: null },                                          true],
+];
+
+for (const [label, user, moqShouldApply] of CASES) {
+  check(`${label}: MOQ ${moqShouldApply ? 'applies' : 'does NOT apply'} (server)`,
+    beMoq.moqAppliesTo(user) === moqShouldApply);
+  check(`${label}: client agrees with server`,
+    feMoq.moqAppliesTo(user) === beMoq.moqAppliesTo(user));
+  check(`${label}: effectiveMoq agrees`,
+    feMoq.effectiveMoq(user, product) === beMoq.effectiveMoq(user, product));
+}
+
+console.log('');
+console.log('   the exemption behaves as "MOQ 1" — i.e. no restriction');
+const staff = { email: 'kinjal@shraddhaimpex.net' };
+const customer = { email: 'buyer@acme.com' };
+eq('staff get no effective MOQ against a product with MOQ 100',
+  beMoq.effectiveMoq(staff, product), 0);
+check('staff may order a single unit', beMoq.moqError(staff, product, 1) === null);
+check('a customer may not order below the MOQ',
+  typeof beMoq.moqError(customer, product, 1) === 'string');
+check('a customer may order at the MOQ', beMoq.moqError(customer, product, 100) === null);
+
+console.log('');
+console.log('   the existing exemptions still work');
+check('MSIL customers remain exempt',
+  !beMoq.moqAppliesTo({ email: 'x@acme.com', customerCategory: 'MSIL' }));
+check("the per-account 'SKIP' override still works",
+  !beMoq.moqAppliesTo({ email: 'x@acme.com', moq: 'SKIP' }));
+check('an ordinary customer is still subject to MOQ',
+  beMoq.moqAppliesTo({ email: 'x@acme.com', customerCategory: 'Non-MSIL' }));
+
+check('both modules declare the same company domain',
+  beMoq.COMPANY_EMAIL_DOMAIN === feMoq.COMPANY_EMAIL_DOMAIN
+  && beMoq.COMPANY_EMAIL_DOMAIN === '@shraddhaimpex.net');
+
 // ── Summary ──────────────────────────────────────────────────────────────────
 console.log('\n' + '='.repeat(60));
 console.log(`${passed} passed, ${failed} failed`);

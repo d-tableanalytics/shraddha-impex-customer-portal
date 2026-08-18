@@ -27,9 +27,25 @@
 export const isMsilCustomer = (user) =>
   String(user?.customerCategory ?? "").trim().toUpperCase() === "MSIL";
 
+/**
+ * Shraddha Impex's own people, identified by their company email domain.
+ *
+ * MOQ is a rule for CUSTOMERS, so it does not apply to staff ordering through
+ * the portal. Matched on the full "@domain" suffix so that
+ * `someone@notshraddhaimpex.net` is not read as staff.
+ *
+ * MUST MATCH backend/utils/moq.js.
+ */
+export const COMPANY_EMAIL_DOMAIN = "@shraddhaimpex.net";
+
+export const isCompanyUser = (user) =>
+  String(user?.email ?? "").trim().toLowerCase().endsWith(COMPANY_EMAIL_DOMAIN);
+
 /** Whether MOQ validation applies to this user at all. */
 export const moqAppliesTo = (user) => {
   if (isMsilCustomer(user)) return false;
+  // Shraddha Impex staff — MOQ constrains customers, not our own people.
+  if (isCompanyUser(user)) return false;
   // The per-user 'SKIP' override on the account, honoured by the server too.
   if (String(user?.moq ?? "").trim().toUpperCase() === "SKIP") return false;
   return true;
@@ -53,4 +69,7 @@ export const moqError = (user, product, quantity) => {
   return `Quantity must be at least the MOQ (${moq})`;
 };
 
-export default { isMsilCustomer, moqAppliesTo, effectiveMoq, moqError };
+export default {
+  isMsilCustomer, isCompanyUser, COMPANY_EMAIL_DOMAIN,
+  moqAppliesTo, effectiveMoq, moqError,
+};
