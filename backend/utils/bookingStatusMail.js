@@ -19,7 +19,8 @@
 import { sendEmail } from './mailer.js';
 import { COMPANY_CC } from './mailRecipients.js';
 import { esc, customerBlock } from './indentMail.js';
-import { stageOf, stageIndex, stageLabel, BOOKING_LIFECYCLE } from './bookingLifecycle.js';
+import { stageOf, stageIndex, stageLabel, stageCopy, BOOKING_LIFECYCLE } from './bookingLifecycle.js';
+import { termsFor } from './transactionTerms.js';
 
 const CELL = 'padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
 const HEAD = 'padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; '
@@ -35,18 +36,25 @@ export const fmtDateTime = (d) => {
   });
 };
 
-/** The headline box: booking id, the stage it has reached, and when. */
-const statusBox = ({ orderId, status, changedAt, poNumber }) => `
+/**
+ * The headline box: the reference the customer quotes, the stage reached, when.
+ *
+ * Once a PO exists the PO NUMBER is the headline and the booking id drops to a
+ * secondary line — before that it is the other way round. Leading with a
+ * booking id on a purchase order is what made these mails read as being about
+ * a different transaction.
+ */
+const statusBox = ({ status, changedAt, terms }) => `
   <div style="margin: 18px 0; padding: 14px 18px; background: #f0f6ff; border: 1px solid #cfe0f7; border-radius: 4px;">
-    <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">Booking ID</div>
-    <div style="font-size: 22px; font-weight: bold; color: #1a5b9e; font-family: monospace; margin-top: 2px;">${esc(orderId)}</div>
+    <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">${esc(terms.referenceLabel)}</div>
+    <div style="font-size: 22px; font-weight: bold; color: #1a5b9e; font-family: monospace; margin-top: 2px;">${esc(terms.reference)}</div>
     <div style="margin-top: 10px; font-size: 13px; color: #1a5b9e;">
       Current status:
       <strong style="text-transform: uppercase; letter-spacing: 0.4px;">${esc(stageLabel(status))}</strong>
     </div>
     <div style="margin-top: 4px; font-size: 12px; color: #5a7ca8;">
       Updated on: <strong>${esc(fmtDateTime(changedAt))}</strong>
-      ${poNumber && poNumber !== '-' ? ` &nbsp;·&nbsp; PO: <strong>${esc(poNumber)}</strong>` : ''}
+      ${terms.isPo ? ` &nbsp;·&nbsp; Ref: <strong>${esc(terms.orderId)}</strong>` : ''}
     </div>
   </div>`;
 
@@ -57,7 +65,7 @@ const statusBox = ({ orderId, status, changedAt, poNumber }) => `
  * order, so the email and the portal never appear to disagree about where the
  * booking is. Inline table markup rather than flexbox — Outlook.
  */
-const lifecycleStrip = (status) => {
+const lifecycleStrip = (status, terms) => {
   const current = stageIndex(status);
   const rows = BOOKING_LIFECYCLE.map((stage, idx) => {
     const done = current >= 0 && idx < current;
@@ -77,7 +85,7 @@ const lifecycleStrip = (status) => {
 
   return `
     <h4 style="margin: 22px 0 6px; font-size: 12px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">
-      Booking progress
+      ${esc(terms.progressHeading)}
     </h4>
     <table style="border-collapse: collapse; margin: 0 0 16px;">${rows}</table>`;
 };
@@ -124,33 +132,38 @@ export const buildStatusMail = ({
   const stage = stageOf(status);
   if (!stage) return null;
 
+  // Booking or Purchase Order — decided once, then used for the subject, the
+  // body, the headline box and the progress heading alike.
+  const terms = termsFor({ orderId, poNumber });
+  const copy = stageCopy(stage, terms.nounLower);
+
   const name = customer?.user || customer?.name || customer?.company || 'Customer';
   const movedFrom = previousStatus ? stageLabel(previousStatus) : null;
 
   const body = `
     <p>Hi ${esc(name)},</p>
-    <p>There is an update on your booking. It has moved
+    <p>There is an update on your ${esc(terms.nounLower)}. It has moved
        ${movedFrom ? `from <strong>${esc(movedFrom)}</strong> ` : ''}to
        <strong>${esc(stage.label)}</strong>.</p>
 
-    ${statusBox({ orderId, status, changedAt, poNumber })}
+    ${statusBox({ status, changedAt, terms })}
 
     <p style="margin: 16px 0; padding: 12px 16px; background: #f6faf7; border-left: 4px solid #1a7f37; font-size: 14px;">
-      ${esc(stage.description)}
-      ${stage.nextStep ? ` ${esc(stage.nextStep)}` : ''}
+      ${esc(copy.description)}
+      ${copy.nextStep ? ` ${esc(copy.nextStep)}` : ''}
     </p>
 
-    ${lifecycleStrip(status)}
+    ${lifecycleStrip(status, terms)}
     ${customerBlock(customer)}
     ${linesTable(lines)}
 
     <p style="font-size: 13px; color: #666;">
-      You can follow this booking's full timeline at any time from
-      <strong>Booking History</strong> in your portal.
+      You can follow this ${esc(terms.nounLower)}'s full timeline at any time from
+      <strong>${esc(terms.historyScreen)}</strong> in the ${esc(terms.portal)}.
     </p>
     <p>Thank you for your business.</p>`;
 
-  return { subject: stage.subject(orderId), body };
+  return { subject: stage.subject(terms.reference, terms.noun), body };
 };
 
 /**

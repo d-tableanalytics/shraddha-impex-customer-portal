@@ -22,29 +22,31 @@ export const BOOKING_LIFECYCLE = [
   {
     key: 'PO Received',
     label: 'Booking Received',
-    // Subject lines follow the brief: "Your Booking #<id> is Ready for Dispatch".
-    subject: (id) => `Your Booking #${id} has been Received`,
+    // Subject lines follow the brief: "Your Booking #<id> is Ready for Dispatch",
+    // with the noun and the reference swapping to Purchase Order once one is
+    // raised — see utils/transactionTerms.js.
+    subject: (ref, noun = 'Booking') => `Your ${noun} #${ref} has been Received`,
     // One sentence describing the stage the booking has just reached.
-    description: 'Your booking has been successfully received and is being processed.',
+    description: (noun = 'booking') => `Your ${noun} has been successfully received and is being processed.`,
     // What happens next. Null on the terminal stage, where there is no next step.
-    nextStep: 'No action is needed from your side — we will email you again as soon as '
-      + 'your booking is prepared and ready for dispatch.',
+    nextStep: (noun = 'booking') => 'No action is needed from your side — we will email you again '
+      + `as soon as your ${noun} is prepared and ready for dispatch.`,
     // In-app bell notification wording.
     notification: 'has been received and is being processed',
   },
   {
     key: 'Ready for Dispatch',
     label: 'Ready for Dispatch',
-    subject: (id) => `Your Booking #${id} is Ready for Dispatch`,
-    description: 'Your booking has been processed and is now ready for dispatch.',
+    subject: (ref, noun = 'Booking') => `Your ${noun} #${ref} is Ready for Dispatch`,
+    description: (noun = 'booking') => `Your ${noun} has been processed and is now ready for dispatch.`,
     nextStep: 'We will notify you once it has been dispatched.',
     notification: 'is ready for dispatch',
   },
   {
     key: 'Dispatched',
     label: 'Dispatched',
-    subject: (id) => `Your Booking #${id} has been Dispatched`,
-    description: 'Your booking has been dispatched and is on its way.',
+    subject: (ref, noun = 'Booking') => `Your ${noun} #${ref} has been Dispatched`,
+    description: (noun = 'booking') => `Your ${noun} has been dispatched and is on its way.`,
     nextStep: 'You will receive a final confirmation once it has been delivered. '
       + 'Please keep your PO reference handy for the delivery.',
     notification: 'has been dispatched',
@@ -52,8 +54,8 @@ export const BOOKING_LIFECYCLE = [
   {
     key: 'Delivered',
     label: 'Delivered',
-    subject: (id) => `Your Booking #${id} has been Delivered`,
-    description: 'Your booking has been successfully delivered.',
+    subject: (ref, noun = 'Booking') => `Your ${noun} #${ref} has been Delivered`,
+    description: (noun = 'booking') => `Your ${noun} has been successfully delivered.`,
     nextStep: null,
     notification: 'has been delivered',
   },
@@ -74,6 +76,24 @@ export const TERMINAL_STATUSES = ['Cancelled'];
 /** Map a stored status onto its lifecycle key. Legacy 'Booked' is stage one. */
 export const normalizeStatus = (status) =>
   status === LEGACY_FIRST_STAGE ? 'PO Received' : status;
+
+/**
+ * Resolve a stage's customer-facing copy for the noun in force.
+ *
+ * `description` and `nextStep` are declared as either a plain string or a
+ * function of the noun, depending on whether the sentence mentions the
+ * transaction at all ("We will notify you once it has been dispatched" reads
+ * the same either way). Callers must not care which: they ask here and get
+ * strings, so no template has to remember to invoke one and not the other.
+ */
+export const stageCopy = (stage, noun = 'booking') => {
+  const text = (v) => (typeof v === 'function' ? v(noun) : (v || ''));
+  return {
+    label: stage?.label ?? '',
+    description: text(stage?.description),
+    nextStep: text(stage?.nextStep),
+  };
+};
 
 /** The lifecycle entry for a stored status, or null for Cancelled/unknown. */
 export const stageOf = (status) => {

@@ -43,11 +43,21 @@ export const productsApi = {
     return { data: response.data.data || [], summary: response.data.summary };
   },
 
-  // Search across the active user's accessible brand(s)
-  search: async (query, brand = 'koken') => {
-    if (!query) return [];
-    const response = await api.get(`/products/${brand}?search=${encodeURIComponent(query)}`);
-    return (response.data.data || []).map(mapProduct);
+  // Search across the active user's accessible brand(s).
+  //
+  // Paged rather than "the first 50 and nothing else": a one-character term
+  // matches thousands of SKUs, and the picker pulls further pages as the list
+  // is scrolled. `total` comes back so the UI can say how many matched, which
+  // is what tells someone their term is too broad.
+  search: async (query, brand = 'koken', { limit = 100, page = 1 } = {}) => {
+    if (!query) return { items: [], total: 0, page: 1, hasMore: false };
+    const params = new URLSearchParams({
+      search: query, limit: String(limit), page: String(page),
+    });
+    const response = await api.get(`/products/${brand}?${params.toString()}`);
+    const items = (response.data.data || []).map(mapProduct);
+    const total = response.data.pagination?.total ?? items.length;
+    return { items, total, page, hasMore: page * limit < total };
   },
 
   getAll: async (brand = 'koken', limit) => {

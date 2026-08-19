@@ -2,7 +2,7 @@ import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js'
 import { canAccessBrand, allowedBrandModels } from '../../utils/brandAccess.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
 import { withCatalogueBoxNoVisibility } from '../../utils/boxNoVisibility.js';
-import { prefixMatch } from '../../utils/searchQuery.js';
+import { prefixMatch, containsMatch, escapedTerm } from '../../utils/searchQuery.js';
 
 // Map brand param → correct Mongoose model
 const getModel = (brand) => {
@@ -148,7 +148,13 @@ export const getInventory = async (req, res, next) => {
 export const getProducts = async (req, res, next) => {
   try {
     const { brand } = req.params;
-    const { search, category, limit = 50, page = 1 } = req.query;
+    const { search, category } = req.query;
+    // Clamped. The picker asks for a page at a time and scrolls for more, so an
+    // unbounded `limit` from the client would let one request pull the whole
+    // catalogue into a dropdown. The ceiling is generous enough for the
+    // all-brands catalogue fetch that also uses this route.
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 2000);
+    const page = Math.max(Number(req.query.page) || 1, 1);
     const Model = getModel(brand);
 
     if (!Model) {
@@ -159,22 +165,56 @@ export const getProducts = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Access to this brand is restricted for your account.' });
     }
 
+    // CONTAINS, not starts-with. This is the SKU picker: a buyer knows a
+    // fragment of the code ("52-10") far more often than how it begins, and
+    // measurement showed the anchor was costing a full index walk anyway
+    // without buying the matches back. See utils/searchQuery.js.
     const query = {};
-    const anchored = prefixMatch(search);
-    if (anchored) {
-      query.$or = [{ skuCode: anchored }, { msilCode: anchored }];
+    const term = typeof search === 'string' ? search.trim() : '';
+    const matcher = containsMatch(term);
+    if (matcher) {
+      query.$or = [{ skuCode: matcher }, { msilCode: matcher }];
     }
     if (category) query.category = category;
 
+    const skip = (page - 1) * limit;
+
+    // Ranked so that what the user is most likely to mean comes first: codes
+    // STARTING with the term, then codes merely containing it, alphabetical
+    // within each group. Without this, typing "1" returns fifty codes with a 1
+    // buried somewhere and the obvious "1..." matches are nowhere in sight —
+    // technically "all matches", practically unusable.
+    const pipeline = matcher
+      ? [
+        { $match: query },
+        {
+          $addFields: {
+            _rank: {
+              $cond: [
+                // ^term against the SKU. `options: 'i'` mirrors the matcher.
+                { $regexMatch: { input: { $ifNull: ['$skuCode', ''] }, regex: `^${escapedTerm(term)}`, options: 'i' } },
+                0,
+                1,
+              ],
+            },
+          },
+        },
+        { $sort: { _rank: 1, skuCode: 1 } },
+        { $skip: skip },
+        { $limit: limit },
+        { $unset: '_rank' },
+      ]
+      : [{ $match: query }, { $sort: { skuCode: 1 } }, { $skip: skip }, { $limit: limit }];
+
     const [products, total] = await Promise.all([
-      Model.find(query).limit(Number(limit)).skip((Number(page) - 1) * Number(limit)),
+      Model.aggregate(pipeline),
       Model.countDocuments(query),
     ]);
 
     res.status(200).json({
       success: true,
       data: withCatalogueBoxNoVisibility(products, req.user),
-      pagination: { total, page: Number(page), pages: Math.ceil(total / Number(limit)) },
+      pagination: { total, page, pages: Math.ceil(total / limit) || 1 },
     });
   } catch (error) {
     next(error);

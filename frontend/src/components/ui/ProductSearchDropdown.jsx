@@ -23,11 +23,25 @@ export const ProductSearchDropdown = ({
   const searchResults = useProductStore((state) => state.searchResults);
   const searching = useProductStore((state) => state.searching);
   const searchProducts = useProductStore((state) => state.searchProducts);
+  const searchTotal = useProductStore((state) => state.searchTotal);
+  const searchHasMore = useProductStore((state) => state.searchHasMore);
+  const searchLoadingMore = useProductStore((state) => state.searchLoadingMore);
+  const loadMoreSearchResults = useProductStore((state) => state.loadMoreSearchResults);
   const clearSearchResults = useProductStore(
     (state) => state.clearSearchResults,
   );
 
   const containerRef = useRef(null);
+  const listRef = useRef(null);
+
+  // Pull the next page when the list is scrolled near its end. A one-character
+  // term matches thousands of SKUs; rendering them all at once would freeze the
+  // browser, so they arrive a page at a time and every match stays reachable.
+  const handleListScroll = (e) => {
+    if (!searchHasMore || searchLoadingMore) return;
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - (scrollTop + clientHeight) < 80) loadMoreSearchResults();
+  };
 
   useEffect(() => {
     setInputValue(value);
@@ -48,20 +62,40 @@ export const ProductSearchDropdown = ({
     };
   }, []);
 
+  // What the user has TYPED, as opposed to what the field is displaying. The
+  // two differ when the parent pushes a value in (after a selection, or a
+  // reset), and searching on the displayed value would fire a pointless request
+  // for the full code every time a line is picked.
+  const [term, setTerm] = useState("");
+
+  // One request per pause, not one per keystroke. 300ms matches the other
+  // search boxes in the app. Without it, typing an 11-character SKU fired
+  // eleven catalogue queries, the widest of which is the slowest.
+  useEffect(() => {
+    if (!term.trim()) {
+      clearSearchResults();
+      return undefined;
+    }
+    const timer = setTimeout(() => searchProducts(term), 300);
+    return () => clearTimeout(timer);
+    // searchProducts and clearSearchResults are stable zustand actions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [term]);
+
   const handleInputChange = (e) => {
     const val = e.target.value;
     setInputValue(val);
+    setTerm(val);
     setIsOpen(true);
-    if (val.trim()) {
-      searchProducts(val);
-    } else {
-      clearSearchResults();
-      onChange(null);
-    }
+    if (!val.trim()) onChange(null);
   };
 
   const handleSelect = (product) => {
     setInputValue(product.code);
+    // Cleared, not set to the code: the debounce watches `term`, and leaving
+    // the picked code in it would fire one more search for a line already
+    // chosen. Typing again sets it afresh.
+    setTerm("");
     setIsOpen(false);
     onChange(product);
   };
@@ -99,7 +133,11 @@ export const ProductSearchDropdown = ({
       )}
 
       {isOpen && inputValue.trim().length > 0 && (
-        <div className="absolute top-[100%] left-0 right-0 z-50 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-[300px] overflow-y-auto">
+        <div
+          ref={listRef}
+          onScroll={handleListScroll}
+          className="absolute top-full left-0 right-0 z-50 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-[300px] overflow-y-auto"
+        >
           {searching && searchResults.length === 0 ? (
             <div className="px-4 py-3 text-sm text-slate-500 flex items-center gap-2">
               <Loader2 size={14} className="animate-spin text-primary-500" />
@@ -107,7 +145,7 @@ export const ProductSearchDropdown = ({
             </div>
           ) : !searching && searchResults.length === 0 ? (
             <div className="px-4 py-3 text-sm text-slate-500 italic">
-              No matching records found.
+              No results found.
             </div>
           ) : (
             <ul className="py-1">
@@ -141,6 +179,27 @@ export const ProductSearchDropdown = ({
                 </li>
               ))}
             </ul>
+          )}
+
+          {/* Count first, then the loader. Someone typing "1" needs to see that
+              6,000 SKUs matched — that is the signal to type more, and without
+              it a capped list looks like the whole answer. */}
+          {searchResults.length > 0 && (
+            <div className="sticky bottom-0 px-4 py-2 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-500 flex items-center justify-between gap-2">
+              <span>
+                Showing {searchResults.length.toLocaleString()} of{' '}
+                {searchTotal.toLocaleString()}
+              </span>
+              {searchLoadingMore ? (
+                <span className="flex items-center gap-1.5 text-primary-600 font-semibold">
+                  <Loader2 size={12} className="animate-spin" /> Loading…
+                </span>
+              ) : searchHasMore ? (
+                <span className="text-slate-400">Scroll for more</span>
+              ) : (
+                <span className="text-slate-400">All matches shown</span>
+              )}
+            </div>
           )}
         </div>
       )}

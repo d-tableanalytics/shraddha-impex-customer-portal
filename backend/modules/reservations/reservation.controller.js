@@ -10,6 +10,7 @@ import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { allowedBrandModels, canAccessBrand } from '../../utils/brandAccess.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
+import { termsFor } from '../../utils/transactionTerms.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
@@ -337,10 +338,24 @@ export const scheduleIndent = async (req, res, next) => {
       const notes = lines.filter((l) => l.scheduleNote)
         .map((l) => l.skuCode + ': ' + l.scheduleNote).join('<br>');
 
+      // Which transaction is this schedule against? An indent carries the PO of
+      // the confirmation that produced it, so once that PO exists this IS a
+      // purchase order schedule and has to say so. Only when every line in the
+      // mail belongs to the SAME PO can it be named — a mixed batch is still
+      // just indent scheduling, and claiming otherwise would be wrong for half
+      // the rows.
+      const poNumbers = [...new Set(lines.map((l) => l.poNumber).filter((n) => n && n !== '-'))];
+      const onOnePo = poNumbers.length === 1 && lines.every((l) => l.poNumber === poNumbers[0]);
+      const terms = termsFor({ poNumber: onOnePo ? poNumbers[0] : null });
+
       const html = [
         '<p>Dear ' + (customer.name || customer.company || 'Customer') + ',</p>',
-        '<p>We have scheduled the expected availability for the following indented item'
-          + (lines.length === 1 ? '' : 's') + ':</p>',
+        terms.isPo
+          ? '<p>The <strong>' + terms.scheduleNoun + '</strong> for <strong>'
+            + terms.reference + '</strong> has been updated. The expected availability for the '
+            + 'following item' + (lines.length === 1 ? ' is' : 's are') + ' shown below:</p>'
+          : '<p>We have scheduled the expected availability for the following indented item'
+            + (lines.length === 1 ? '' : 's') + ':</p>',
         '<table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;">',
         '<thead><tr style="background:#f5f5f5;">',
         '<th style="padding:8px 12px;text-align:left;">SKU</th>',
@@ -352,18 +367,23 @@ export const scheduleIndent = async (req, res, next) => {
         '<p>Thank you.</p>',
       ].join('');
 
+      const scheduleSubject = terms.isPo
+        ? 'Purchase Order ' + terms.reference + ' - schedule updated ('
+          + lines.length + ' item' + (lines.length === 1 ? '' : 's') + ')'
+        : 'Indent availability scheduled - ' + lines.length + ' item' + (lines.length === 1 ? '' : 's');
+
       // Fire-and-forget: the schedule is saved, and a mail failure must not
       // report the whole operation as failed.
       sendEmail(
         customer.email,
-        'Indent availability scheduled - ' + lines.length + ' item' + (lines.length === 1 ? '' : 's'),
+        scheduleSubject,
         html,
         { cc: COMPANY_CC },
       ).catch((e) => console.error('[Indent] schedule email failed:', e.message));
 
       sendNotification(
         customer._id,
-        'Indent availability scheduled',
+        terms.isPo ? 'Purchase Order schedule updated' : 'Indent availability scheduled',
         lines.length + ' indented item' + (lines.length === 1 ? ' has' : 's have') + ' an expected availability date.',
       );
       emailed += 1;

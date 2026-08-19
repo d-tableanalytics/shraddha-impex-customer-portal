@@ -689,6 +689,79 @@ check('both modules declare the same company domain',
   beMoq.COMPANY_EMAIL_DOMAIN === feMoq.COMPANY_EMAIL_DOMAIN
   && beMoq.COMPANY_EMAIL_DOMAIN === '@shraddhaimpex.net');
 
+// ── 9. Email terminology follows the transaction stage ─────────────────
+// A booking becomes a Purchase Order the moment a PO is raised. Every mail sent
+// after that has to say so — subject, body, headline box and progress heading —
+// or the customer is reading about a "booking" they no longer have.
+console.log('');
+console.log('9. EMAIL TERMINOLOGY (booking -> purchase order)');
+
+const { buildStatusMail } = await import('../utils/bookingStatusMail.js');
+const { termsFor, PORTAL_NAME, isPurchaseOrder } = await import('../utils/transactionTerms.js');
+
+const STAGES = ['PO Received', 'Ready for Dispatch', 'Dispatched', 'Delivered'];
+const mailFor = (poNumber, status) => buildStatusMail({
+  customer: { user: 'Acme', email: 'a@acme.com' },
+  orderId: 'BO-2026-000042',
+  status,
+  changedAt: new Date(0),
+  poNumber,
+  lines: [{ skuCode: 'S1', msilCode: 'M1', quantity: 5 }],
+});
+
+console.log('   before a PO exists');
+for (const st of STAGES) {
+  const m = mailFor('-', st);
+  check(`${st}: subject says Booking`, m.subject.includes('Booking #BO-2026-000042'));
+  check(`${st}: headline box is the Booking ID`, m.body.includes('Booking ID'));
+}
+
+console.log('   once converted to a purchase order');
+// Wording that must NOT survive the conversion.
+const BANNED = ['Booking ID', 'Booking Portal', 'Booking schedule', 'your booking', 'this booking'];
+for (const st of STAGES) {
+  const m = mailFor('PO-2026-000007', st);
+  check(`${st}: subject names the purchase order`,
+    m.subject.includes('Purchase Order #PO-2026-000007'));
+  check(`${st}: subject no longer says Booking`, !m.subject.includes('Booking'));
+  const leaked = BANNED.filter((b) => m.body.toLowerCase().includes(b.toLowerCase()));
+  eq(`${st}: no booking wording left in the body`, leaked, []);
+  check(`${st}: headline box is the PO number`,
+    m.body.includes('Purchase Order No.') && m.body.includes('PO-2026-000007'));
+  check(`${st}: progress heading follows the stage`,
+    m.body.includes('Purchase Order progress') && !m.body.includes('Booking progress'));
+  check(`${st}: signs off as the ${PORTAL_NAME}`, m.body.includes(PORTAL_NAME));
+}
+
+console.log('   the rule itself');
+check('a placeholder PO is not a purchase order',
+  !isPurchaseOrder('-') && !isPurchaseOrder('') && !isPurchaseOrder(null) && !isPurchaseOrder(undefined));
+check('a real PO number is', isPurchaseOrder('PO-2026-000007'));
+eq('schedule wording follows the stage',
+  [termsFor({ poNumber: '-' }).scheduleNoun, termsFor({ poNumber: 'PO-9' }).scheduleNoun],
+  ['Booking schedule', 'Purchase Order schedule']);
+eq('the portal is named consistently',
+  [termsFor({ poNumber: '-' }).portal, termsFor({ poNumber: 'PO-9' }).portal],
+  [PORTAL_NAME, PORTAL_NAME]);
+check('the booking id is still available for the conversion mail',
+  termsFor({ orderId: 'BO-1', poNumber: 'PO-9' }).orderId === 'BO-1');
+
+console.log('   no template still calls the portal the "Booking Portal"');
+const mailerSrc = src('backend/utils/mailer.js');
+check('the mail shell is named for the portal, not for bookings',
+  mailerSrc.includes('Shraddha Impex Portal Notification')
+  && !/Shraddha Impex Booking Portal/.test(mailerSrc));
+
+const salesSrc = src('backend/modules/sales/sales.controller.js');
+check('the conversion email leads with the purchase order',
+  salesSrc.includes('Purchase Order No.') && salesSrc.includes('converted into a Purchase Order'));
+check('the conversion subject names the PO, not the booking',
+  /Your Purchase Order #\$\{poNumber\} has been raised/.test(salesSrc));
+
+const resSrc = src('backend/modules/reservations/reservation.controller.js');
+check('the schedule email switches to Purchase Order wording',
+  resSrc.includes('terms.scheduleNoun') && resSrc.includes('Purchase Order schedule updated'));
+
 // ── Summary ──────────────────────────────────────────────────────────────────
 console.log('\n' + '='.repeat(60));
 console.log(`${passed} passed, ${failed} failed`);

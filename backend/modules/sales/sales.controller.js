@@ -119,21 +119,28 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
       <td style="${cell} ${tone[l.type]}">${esc(changeLabel(l))}</td>
     </tr>`).join('');
 
+  // THE CONVERSION EMAIL. From here on the transaction is a Purchase Order, so
+  // this mail leads with the PO number — that is the reference the customer will
+  // quote from now on. The booking id stays, demoted to a back-reference, purely
+  // so they can reconcile which booking became this PO; it is the one mail that
+  // legitimately spans both names.
   return `
     <p>Hi ${esc(customerName)},</p>
-    <p>Your booking <strong>${esc(orderId)}</strong> has been processed and
-       PO No. <strong>${esc(poNumber)}</strong> has been punched against it.</p>
+    <p>Your booking has been processed and converted into a Purchase Order.
+       <strong>PO No. ${esc(poNumber)}</strong> has been raised against it, and
+       all further updates will refer to this purchase order.</p>
 
     <div style="margin: 18px 0; padding: 14px 18px; background: #f0f6ff; border: 1px solid #cfe0f7; border-radius: 4px;">
-      <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">Booking ID</div>
-      <div style="font-size: 20px; font-weight: bold; color: #1a5b9e; font-family: monospace;">${esc(orderId)}</div>
-      <div style="margin-top: 10px; font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">PO Number</div>
-      <div style="font-size: 20px; font-weight: bold; color: #1a5b9e; font-family: monospace;">${esc(poNumber)}</div>
+      <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">Purchase Order No.</div>
+      <div style="font-size: 22px; font-weight: bold; color: #1a5b9e; font-family: monospace;">${esc(poNumber)}</div>
+      <div style="margin-top: 10px; font-size: 11px; color: #5a7ca8; letter-spacing: 0.3px;">
+        Raised against booking reference <strong style="font-family: monospace;">${esc(orderId)}</strong>
+      </div>
     </div>
 
     ${summary.changed
-      ? `<p><strong>Please note:</strong> some items were adjusted before the PO was raised. The changes are shown below.</p>`
-      : `<p>All items were processed exactly as you booked them — no quantities were changed.</p>`}
+      ? `<p><strong>Please note:</strong> some items were adjusted before this purchase order was raised. The changes are shown below.</p>`
+      : `<p>All items were carried onto the purchase order exactly as you booked them — no quantities were changed.</p>`}
 
     <table style="border-collapse: collapse; margin: 0 0 8px; width: 100%;">
       <thead>
@@ -558,10 +565,10 @@ export const raisePo = async (req, res, next) => {
 
     if (updated[0]?.user) {
       notifyUser(updated[0].user, {
-        title: 'PO Generated',
+        title: 'Purchase Order Raised',
         message: summary.changed
-          ? `PO ${poNumber} raised for booking ${orderId}. Some quantities were adjusted — see your email.`
-          : `PO ${poNumber} has been raised for your booking ${orderId}.`,
+          ? `Purchase Order ${poNumber} has been raised. Some quantities were adjusted — see your email.`
+          : `Purchase Order ${poNumber} has been raised and is now being processed.`,
         type: 'order',
       });
 
@@ -574,9 +581,12 @@ export const raisePo = async (req, res, next) => {
           poNumber,
           summary,
         });
+        // Subject names the PURCHASE ORDER, not the booking: this is the mail
+        // that tells the customer the reference has changed, and every mail
+        // after it uses the PO number.
         const subject = summary.changed
-          ? `PO ${poNumber} raised for booking ${orderId} — items adjusted`
-          : `PO ${poNumber} raised for booking ${orderId}`;
+          ? `Your Purchase Order #${poNumber} has been raised — items adjusted`
+          : `Your Purchase Order #${poNumber} has been raised`;
 
         // Fire-and-forget: the PO is already committed, so a mail failure must
         // not fail the request.
