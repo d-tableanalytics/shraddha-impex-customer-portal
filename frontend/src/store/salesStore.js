@@ -66,10 +66,10 @@ export const useSalesStore = create((set, get) => ({
     }
   },
 
-  raisePo: async (orderId, poNumber) => {
+  raisePo: async (orderId, poData) => {
     set({ saving: true });
     try {
-      const updated = await salesApi.raisePo(orderId, poNumber);
+      const updated = await salesApi.raisePo(orderId, poData);
       set({ selected: updated, saving: false });
       await get().fetchBookings();
       return { success: true, poNumber: updated.poNumber };

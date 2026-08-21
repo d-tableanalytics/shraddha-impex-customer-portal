@@ -60,7 +60,7 @@ export const customerBlock = (customer = {}, { audience = 'customer' } = {}) => 
   // Phone and Customer Category are for the people who have to ACT on the mail,
   // not for the customer it is addressed to. Reading their own phone number
   // back is noise, and "Customer Category" is an internal classification
-  // (MSIL / Non-MSIL) that drives our pricing and MOQ rules — it is not
+  // (MSIL / Regular Customer) that drives our pricing and MOQ rules — it is not
   // something the customer asked to be told about themselves.
   //
   // Support keeps both: its copy is the operational record, and a support

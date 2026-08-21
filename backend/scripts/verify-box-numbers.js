@@ -683,7 +683,7 @@ check('MSIL customers remain exempt',
 check("the per-account 'SKIP' override still works",
   !beMoq.moqAppliesTo({ email: 'x@acme.com', moq: 'SKIP' }));
 check('an ordinary customer is still subject to MOQ',
-  beMoq.moqAppliesTo({ email: 'x@acme.com', customerCategory: 'Non-MSIL' }));
+  beMoq.moqAppliesTo({ email: 'x@acme.com', customerCategory: 'Regular Customer' }));
 
 check('both modules declare the same company domain',
   beMoq.COMPANY_EMAIL_DOMAIN === feMoq.COMPANY_EMAIL_DOMAIN

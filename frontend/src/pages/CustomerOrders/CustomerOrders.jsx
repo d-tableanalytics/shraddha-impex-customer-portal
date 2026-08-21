@@ -48,11 +48,11 @@ export const CustomerOrders = () => {
 
   const { user } = useUserStore();
 
-  // MOQ is enforced only for Non-MSIL customers; MSIL customers are exempt.
+  // MOQ is enforced only for Regular customers; MSIL customers are exempt.
   // Both the classification and the rule come from utils/moq.js, which mirrors
   // backend/utils/moq.js — re-deriving `customerCategory === "MSIL"` here is
   // what let a category stored as 'msil' reclassify an MSIL customer as
-  // Non-MSIL and put them behind an MOQ they are exempt from.
+  // Regular Customer and put them behind an MOQ they are exempt from.
   const isMsil = isMsilCustomer(user);
   const showMsilCode = useShowMsilCode();
   const productMoq = effectiveMoq(user, selectedProduct);
@@ -92,7 +92,7 @@ export const CustomerOrders = () => {
       return;
     }
 
-    // Non-MSIL customers must book at least the product's MOQ. It is a
+    // Regular customers must book at least the product's MOQ. It is a
     // minimum, not a pack size — the multiple-of check that used to sit here
     // was never enforced by the server, so it refused quantities the same
     // customer could push through Bulk Upload unchallenged.
@@ -262,7 +262,7 @@ export const CustomerOrders = () => {
             </div>
 
             {/* STOCK AVAILABILITY — shown just above Booking Qty. MOQ column is
-                shown only for Non-MSIL customers; MSIL customers have no MOQ. */}
+                shown only for Regular customers; MSIL customers have no MOQ. */}
             <div className="flex flex-col p-4 bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
               <div className="absolute top-0 left-0 w-1 h-full bg-[#1a5b9e]/80 rounded-l-xl"></div>
               <div className="flex items-center gap-2 mb-3">
@@ -317,7 +317,7 @@ export const CustomerOrders = () => {
                 />
               </div>
               {errors.quantity && <span className="text-xs text-red-500 mt-1 font-semibold">{errors.quantity.message}</span>}
-              {/* MOQ reminder for Non-MSIL: quantity must be at least the MOQ. */}
+              {/* MOQ reminder for Regular Customer: quantity must be at least the MOQ. */}
               {moqApplies && selectedProduct && (
                 Number.isInteger(watchQuantity) && watchQuantity >= 1 && watchQuantity < productMoq ? (
                   <span className="text-xs text-red-500 mt-1 font-semibold">

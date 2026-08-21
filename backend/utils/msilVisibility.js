@@ -5,7 +5,7 @@ import { INVENTORY_ROLES } from '../middlewares/rbac.js';
  *
  * MSIL Codes are only meaningful to Admins, to MSIL customers (who order by
  * them), to anyone explicitly flagged, and to internal inventory staff. For
- * everyone else the code is ignored entirely: a Non-MSIL customer is never
+ * everyone else the code is ignored entirely: a Regular customer is never
  * failed on an MSIL Code being missing, unknown, mismatched or inactive,
  * because it does not apply to them.
  *
@@ -16,7 +16,7 @@ import { INVENTORY_ROLES } from '../middlewares/rbac.js';
  */
 export const msilAppliesTo = (user) =>
   user?.role === 'Admin' ||
-  // Sales work the desk for MSIL and Non-MSIL customers alike, so they must be
+  // Sales work the desk for MSIL and Regular customers alike, so they must be
   // able to see and quote an MSIL Code — a category is a property of the
   // customer they are serving, not of the salesperson.
   user?.role === 'Sales' ||

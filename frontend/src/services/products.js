@@ -5,24 +5,37 @@ import { api } from "./api";
 const mapProduct = (p) => {
   if (!p) return null;
   return {
-    id:             p._id,
-    code:           p.skuCode,          // real field name from migration
+    id:             p._id || p.id,
+    code:           p.skuCode || p.code,
     msilCode:       p.msilCode || null,
     // The SKU → box number mapping. Read-only everywhere it is shown; only an
     // admin can change it, through the inventory master.
     boxNo:          p.boxNo || null,
-    name:           p.skuCode,          // products have no "name" column — use SKU as label
-    brand:          p.vendorName || null,
+    name:           p.skuCode || p.name,
+    brand:          p.brand || p.vendorName || null,
+    vendorName:     p.vendorName || null,
     category:       Array.isArray(p.category) ? p.category.join(', ') : (p.category || null),
     warehouse:      null,               // not in Product schema
-    availableStock: p.availableForSale ?? 0,
-    reservedStock:  p.bookedQuantity  ?? 0,
-    unit:           'PCS',
+    availableStock: p.availableForSale ?? p.availableStock ?? 0,
+    reservedStock:  p.bookedQuantity  ?? p.reservedStock ?? 0,
+    unit:           p.uom || 'PCS',
+    uom:            p.uom || 'PCS',
     moq:            p.moq || 1,
     // pass through remaining fields for detail panel
     totalAvailableQuantity: p.totalAvailableQuantity ?? 0,
     inTransitQty:   p.inTransitQty ?? 0,
-    status:         p.status,
+    status:         p.status || 'Active',
+    description:    p.description || null,
+    itemParameter:  p.itemParameter || null,
+    leadTime:       p.leadTime ?? 0,
+    safetyFactor:   p.safetyFactor ?? 0,
+    abcClass:       p.abcClass || null,
+    currentSeason:  p.currentSeason || null,
+    dailyAvgConsumption: p.dailyAvgConsumption || null,
+    openingStockQuantity: p.openingStockQuantity ?? null,
+    openingStockDate: p.openingStockDate || null,
+    maxLevel:       p.maxLevel ?? 0,
+    availableInPercent: p.availableInPercent ?? 0,
   };
 };
 

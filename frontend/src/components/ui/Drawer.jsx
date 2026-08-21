@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-export const Drawer = ({ isOpen, onClose, title, children }) => {
+export const Drawer = ({ isOpen, onClose, title, children, maxWidth = "max-w-md" }) => {
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = "hidden";
@@ -32,7 +32,7 @@ export const Drawer = ({ isOpen, onClose, title, children }) => {
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            className="relative w-full max-w-md h-full bg-white shadow-enterprise-lg border-l border-slate-200 flex flex-col"
+            className={`relative w-full ${maxWidth} h-full bg-white shadow-enterprise-lg border-l border-slate-200 flex flex-col`}
           >
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <h3 className="text-base font-semibold text-slate-900">
