@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "migrate": "node scripts/migrate.js",
-    "verify:box": "node scripts/verify-box-numbers.js"
+    "verify:box": "node scripts/verify-box-numbers.js",
+    "verify:features": "node scripts/verify-feature-pack.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

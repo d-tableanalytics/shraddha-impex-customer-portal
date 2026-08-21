@@ -11,6 +11,7 @@ export const PERMISSIONS = {
   MANAGE_ORDERS: "manage_orders",
   MANAGE_INVENTORY: "manage_inventory",
   MANAGE_USERS: "manage_users",
+  MANAGE_CUSTOMER_USERS: "manage_customer_users",
   MANAGE_ROLES: "manage_roles",
   VIEW_REPORTS: "view_reports",
   VIEW_ALL_BOOKINGS: "view_all_bookings",
@@ -39,6 +40,7 @@ const ROLE_PERMISSIONS = {
   Admin: ["*"],
   Sales: [
     PERMISSIONS.VIEW_ALL_BOOKINGS,
+    PERMISSIONS.MANAGE_CUSTOMER_USERS,
     PERMISSIONS.EDIT_BOOKING_PRE_PO,
     PERMISSIONS.RAISE_PO,
     PERMISSIONS.VIEW_REPORTS,
@@ -112,6 +114,37 @@ export const canRaisePo = (user, booking) =>
 export const canUseInventoryMaster = (user) =>
   isAdmin(user) || INVENTORY_ROLES.includes(user?.role);
 
+/**
+ * Whether to offer user management at all.
+ *
+ * Two permissions lead here: Admin manages every account, Sales manages
+ * CUSTOMER accounts only. The screen is the same; what it shows and offers is
+ * decided per account by canManageAccount() below.
+ */
+export const canOpenUserManagement = (user) =>
+  hasPermission(user, PERMISSIONS.MANAGE_USERS)
+  || hasPermission(user, PERMISSIONS.MANAGE_CUSTOMER_USERS);
+
+/** Admin: every account, any role. */
+export const canManageAllUsers = (user) => hasPermission(user, PERMISSIONS.MANAGE_USERS);
+
+/**
+ * Whether THIS actor may act on THIS account.
+ *
+ * Mirrors denyIfOutOfScope() in backend/modules/users/user.controller.js. The
+ * server is the authority — it re-checks every read and write — and this exists
+ * so a salesperson is not shown an Edit button that will 403.
+ */
+export const canManageAccount = (user, account) =>
+  canManageAllUsers(user) || (account?.role || "Customer") === "Customer";
+
+/** Roles this actor may assign when creating an account. */
+export const assignableRolesFor = (user) =>
+  (canManageAllUsers(user)
+    ? ["Admin", "Sales", "Inventory Manager", "Warehouse User", "Management", "Customer"]
+    : ["Customer"]);
+
+
 export const canEditPlanning = (user) =>
   hasPermission(user, PERMISSIONS.MANAGE_INVENTORY_MASTER);
 
@@ -169,6 +202,10 @@ export default {
   canEditBooking,
   canRaisePo,
   canUseInventoryMaster,
+  canOpenUserManagement,
+  canManageAllUsers,
+  canManageAccount,
+  assignableRolesFor,
   canEditPlanning,
   canEditBoxNo,
   canViewBoxNo,

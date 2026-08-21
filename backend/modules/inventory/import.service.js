@@ -841,10 +841,33 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
   // alerts in M8, through the event the health service emits.
   if (affectedSkus.length) await recomputeHealthForSkus(affectedSkus);
 
+  const landedRows = new Set(successes.map((s) => s.rowNumber));
+
+  // NEW SKUs this chunk created. `isNewSku` was decided during validation,
+  // against the catalogue as it stood BEFORE the file ran — deciding it here
+  // would be wrong, because an earlier chunk of this same file may already have
+  // created the SKU. Only rows that actually landed are offered for MOQ.
+  const created = rows
+    .filter((r) => r.data?.isNewSku && landedRows.has(r.rowNumber))
+    .map((r) => ({
+      skuCode: r.data.skuCode,
+      brand: r.data.brand,
+      description: r.data.description || null,
+      msilCode: r.data.msilCode || null,
+      quantity: Number(r.data.quantity) || 0,
+    }));
+
+  if (created.length) {
+    // $addToSet, not $push: a resumed or re-run chunk must not queue the same
+    // SKU for MOQ twice.
+    await ImportJob.updateOne(
+      { jobId: job.jobId },
+      { $addToSet: { pendingMoqSkus: { $each: created } } },
+    );
+  }
+
   // Box numbers, for the rows whose master write landed.
-  await applyBoxNumbers({
-    rows, landed: new Set(successes.map((s) => s.rowNumber)), job, chunkIndex, actor, req,
-  });
+  await applyBoxNumbers({ rows, landed: landedRows, job, chunkIndex, actor, req });
 
   // Quantity, where the sheet carries one, is a STOCK figure and cannot be
   // written to the product — it goes through the ledger like any other stock
@@ -1207,6 +1230,97 @@ const PROCESSORS = {
  * ledger takes minutes and holding an HTTP request open for it would time out
  * with the work half done and no way to tell how far it got.
  */
+/**
+ * Set the MOQ for SKUs an import created, and clear them from its pending list.
+ *
+ * WHY THIS EXISTS SEPARATELY. A SKU created by an import lands with the schema
+ * default MOQ of 0, which reads as "no minimum" and is indistinguishable from a
+ * deliberate 0. That is fine for a SKU nobody has thought about, and wrong for
+ * one that has just entered the catalogue — so the import records what it
+ * created and the admin is asked, rather than a figure being invented.
+ *
+ * ONLY the SKUs this job created can be set here. The endpoint cannot be used
+ * to rewrite the MOQ of an established SKU: that is what the inventory master
+ * is for, and it has its own audit trail.
+ *
+ * Partial answers are allowed. Ten new SKUs can be answered three at a time;
+ * each accepted entry leaves the pending list and the rest stay queued.
+ */
+export const setImportMoq = async ({ jobId, entries, actor, req }) => {
+  const job = await ImportJob.findOne({ jobId });
+  if (!job) fail(`Import ${jobId} not found.`, 404, 'NOT_FOUND');
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    fail('Send an entries array of { skuCode, moq }.', 400);
+  }
+
+  const pending = new Map((job.pendingMoqSkus || []).map((p) => [p.skuCode, p]));
+  const applied = [];
+  const errors = [];
+
+  for (const raw of entries) {
+    const skuCode = String(raw?.skuCode ?? '').trim();
+    if (!skuCode) { errors.push('A row was sent with no SKU code.'); continue; }
+
+    const queued = pending.get(skuCode);
+    if (!queued) {
+      // Not one of ours. Refused rather than applied, so this endpoint can
+      // never become a back door onto an established SKU's MOQ.
+      errors.push(`${skuCode} was not created by this import, so its MOQ cannot be set here.`);
+      continue;
+    }
+
+    // A minimum order quantity is a whole number of units, at least 1. Zero is
+    // rejected on purpose: the whole point of asking is that 0 is what we are
+    // trying not to leave behind.
+    const moq = Number(raw.moq);
+    if (!Number.isFinite(moq) || !Number.isInteger(moq) || moq < 1) {
+      errors.push(`${skuCode}: MOQ must be a whole number of 1 or more.`);
+      continue;
+    }
+
+    applied.push({ skuCode, brand: queued.brand, moq });
+  }
+
+  if (applied.length) {
+    // Grouped by brand so the discriminator scopes each write, as M1 does.
+    const byBrand = new Map();
+    for (const a of applied) {
+      if (!byBrand.has(a.brand)) byBrand.set(a.brand, []);
+      byBrand.get(a.brand).push({
+        updateOne: { filter: { skuCode: a.skuCode }, update: { $set: { moq: a.moq } } },
+      });
+    }
+    for (const [brand, ops] of byBrand) {
+      await createProductModel(brand).bulkWrite(ops, { ordered: false });
+    }
+
+    await ImportJob.updateOne(
+      { jobId },
+      { $pull: { pendingMoqSkus: { skuCode: { $in: applied.map((a) => a.skuCode) } } } },
+    );
+
+    // MOQ feeds the low-stock threshold, so the health projection must follow.
+    await recomputeHealthForSkus(applied.map((a) => a.skuCode));
+
+    await recordAudit(
+      actor,
+      'Inventory Planning Updated',
+      `MOQ set for ${applied.length} SKU(s) created by import ${jobId}: `
+      + applied.map((a) => `${a.skuCode}=${a.moq}`).join(', ') + '.',
+      req,
+      { meta: { jobId, applied } },
+    );
+  }
+
+  const fresh = await ImportJob.findOne({ jobId }, 'pendingMoqSkus').lean();
+  return {
+    applied,
+    errors,
+    pendingMoqSkus: fresh?.pendingMoqSkus || [],
+  };
+};
+
 export const confirmJob = async ({ jobId, actor, req }) => {
   const job = await ImportJob.findOne({ jobId });
   if (!job) fail(`Import ${jobId} not found.`, 404, 'NOT_FOUND');

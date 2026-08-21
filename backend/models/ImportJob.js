@@ -117,6 +117,30 @@ const importJobSchema = new mongoose.Schema(
       default: [],
     },
 
+    /**
+     * SKUs this import CREATED that still have no MOQ set.
+     *
+     * A SKU created by an import arrives with the schema default of 0, which
+     * means "no minimum" — indistinguishable from a deliberate 0. The admin is
+     * asked for a real figure before the SKU is considered configured, and the
+     * list survives here so a closed browser or a reloaded page does not lose
+     * the fact that it was never answered.
+     *
+     * Emptied as each SKU is answered, so `length === 0` is the whole "is this
+     * import finished" question.
+     */
+    pendingMoqSkus: {
+      type: [{
+        skuCode: { type: String },
+        brand: { type: String },
+        description: { type: String, default: null },
+        msilCode: { type: String, default: null },
+        quantity: { type: Number, default: 0 },
+        _id: false,
+      }],
+      default: [],
+    },
+
     startedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     startedAt: { type: Date, default: Date.now },
     confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

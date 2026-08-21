@@ -29,6 +29,7 @@ import {
   hasPermission,
   PERMISSIONS,
   INVENTORY_ROLES,
+  canOpenUserManagement,
 } from "../../utils/permissions";
 
 export const Sidebar = () => {
@@ -91,7 +92,10 @@ export const Sidebar = () => {
     ...(canUseSalesDesk(user) ? [
       { name: "Sales Desk", path: "/sales", icon: FileCheck2 },
     ] : []),
-    ...(user?.role === 'Admin' ? [
+    // User Management is no longer Admin-only: Sales onboards its own
+    // customers. What each of them can see and do inside is decided per
+    // account, on the screen and again on the server.
+    ...(canOpenUserManagement(user) ? [
       { name: "User Management", path: "/admin/users", icon: Users },
       // Reports hidden from the menu for now.
       // { name: "Reports", path: "/reports", icon: BarChart3 },

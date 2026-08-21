@@ -11,6 +11,29 @@ import { usePagination } from '../../../hooks/usePagination';
 import { UserPlus, Shield, Mail, Search, X, Pencil, KeyRound } from 'lucide-react';
 import { TableSkeleton } from '../../../components/ui/TableSkeleton';
 import toast from 'react-hot-toast';
+import {
+  canOpenUserManagement, canManageAllUsers, canManageAccount, assignableRolesFor,
+} from '../../../utils/permissions';
+
+/**
+ * Customer master details — captured at creation and fixed from then on.
+ *
+ * Mirrors CUSTOMER_MASTER_FIELDS in backend/modules/users/user.controller.js,
+ * which REFUSES an update containing any of them. The form marks them
+ * accordingly rather than offering an edit the server will reject.
+ */
+const CUSTOMER_MASTER_FIELDS = [
+  { key: 'customerName', label: 'Customer Name', placeholder: 'Legal / trading name' },
+  { key: 'phone', label: 'Phone Number', placeholder: '+91 98765 43210' },
+  { key: 'location', label: 'Location', placeholder: 'City / area' },
+  { key: 'shopNumber', label: 'Shop Number', placeholder: 'Shop / unit no.' },
+  { key: 'vendorNumber', label: 'Vendor Number', placeholder: 'Vendor code' },
+  { key: 'gstNumber', label: 'GST Number', placeholder: '22AAAAA0000A1Z5' },
+];
+
+/** A GST number is 15 characters. Checked loosely — format varies in practice. */
+const gstLooksValid = (v) => String(v || '').trim().length === 15;
+const phoneLooksValid = (v) => String(v || '').replace(/[^0-9]/g, '').length >= 7;
 
 const PAGE_SIZE = 10;
 
@@ -30,6 +53,12 @@ const emptyForm = {
   company: '',
   email: '',
   password: '',
+  customerName: '',
+  phone: '',
+  location: '',
+  shopNumber: '',
+  vendorNumber: '',
+  gstNumber: '',
   role: 'Customer',
   customerCategory: 'Non-MSIL',
   status: 'Active',
@@ -72,7 +101,11 @@ export const UserManagement = () => {
   const [newPw, setNewPw] = useState('');
   const [savingPw, setSavingPw] = useState(false);
 
-  const isAdmin = user?.role === 'Admin';
+  // Admin manages every account; Sales manages CUSTOMER accounts only. The
+  // server enforces both — this decides what the screen offers.
+  const mayOpen = canOpenUserManagement(user);
+  const isAdmin = canManageAllUsers(user);
+  const assignableRoles = assignableRolesFor(user);
 
   const q = search.trim().toLowerCase();
   const filteredUsers = q
@@ -85,16 +118,17 @@ export const UserManagement = () => {
   const { page, setPage, pageItems: visibleUsers, total } = usePagination(filteredUsers, PAGE_SIZE);
 
   useEffect(() => {
-    if (isAdmin) fetchUsers();
-  }, [fetchUsers, isAdmin]);
+    if (mayOpen) fetchUsers();
+  }, [fetchUsers, mayOpen]);
 
   // A new search gives a different result set — start it from the first page.
   useEffect(() => {
     setPage(1);
   }, [q, setPage]);
 
-  // User management (incl. customer category) is admin only.
-  if (user && !isAdmin) {
+  // Admin and Sales reach this screen; everyone else is sent away. The route is
+  // guarded again on every API call.
+  if (user && !mayOpen) {
     return <Navigate to="/" replace />;
   }
 
@@ -195,6 +229,26 @@ export const UserManagement = () => {
       toast.error('Email and password are required');
       return;
     }
+
+    // The six master details are mandatory for a customer and CANNOT be added
+    // later — the server refuses to change them once the account exists — so
+    // they are checked here before anything is created, not afterwards.
+    if (form.role === 'Customer') {
+      const missing = CUSTOMER_MASTER_FIELDS.filter((f) => !String(form[f.key] || '').trim());
+      if (missing.length) {
+        toast.error(`Required (and fixed after creation): ${missing.map((f) => f.label).join(', ')}`);
+        return;
+      }
+      if (!phoneLooksValid(form.phone)) {
+        toast.error('Enter a valid phone number.');
+        return;
+      }
+      if (!gstLooksValid(form.gstNumber)) {
+        toast.error('A GST number is 15 characters.');
+        return;
+      }
+    }
+
     setSaving(true);
     const res = await createUser(form);
     setSaving(false);
@@ -344,14 +398,22 @@ export const UserManagement = () => {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            <Button size="sm" variant="outline" onClick={() => openEdit(u)}>
-                              <Pencil size={14} className="mr-1.5" />
-                              Edit
-                            </Button>
-                            <Button size="sm" variant="outline" onClick={() => openResetPw(u)} title="Reset password">
-                              <KeyRound size={14} className="mr-1.5" />
-                              Password
-                            </Button>
+                            {/* Only accounts this actor may manage. A
+                                salesperson sees staff rows (never, in fact —
+                                the API scopes them out) but could not act on
+                                one, so no button is offered for it. */}
+                            {canManageAccount(user, u) && (
+                              <>
+                                <Button size="sm" variant="outline" onClick={() => openEdit(u)}>
+                                  <Pencil size={14} className="mr-1.5" />
+                                  Edit
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => openResetPw(u)} title="Reset password">
+                                  <KeyRound size={14} className="mr-1.5" />
+                                  Password
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -392,18 +454,54 @@ export const UserManagement = () => {
           <Field label="Password *">
             <input type="text" value={form.password} onChange={setField('password')} className={inputCls} placeholder="Initial password" required />
           </Field>
+
+          {/* Customer master details. Captured here and NOWHERE else: the
+              server refuses to change them once the account exists, so the
+              panel says so plainly rather than letting someone find out by
+              having a save rejected later. */}
+          {form.role === 'Customer' && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 flex flex-col gap-3">
+              <div>
+                <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wide">
+                  Customer master details
+                </h4>
+                <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                  Required, and <strong>fixed once the account is created</strong> — they identify
+                  the entity we trade with, so they cannot be edited afterwards. Check them before
+                  you save.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {CUSTOMER_MASTER_FIELDS.map((f) => (
+                  <Field key={f.key} label={`${f.label} *`}>
+                    <input
+                      value={form[f.key]}
+                      onChange={setField(f.key)}
+                      className={inputCls}
+                      placeholder={f.placeholder}
+                      required
+                    />
+                  </Field>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Field label="Role">
-              <select value={form.role} onChange={setField('role')} className={inputCls}>
-                <option value="Customer">Customer</option>
-                <option value="Sales">Sales User</option>
-                {/* Inventory roles work the business's own stock rather than
-                    their own orders, so they see every brand and none of the
-                    ordering screens. */}
-                <option value="Inventory Manager">Inventory Manager</option>
-                <option value="Warehouse User">Warehouse User</option>
-                <option value="Management">Management</option>
-                <option value="Admin">Admin</option>
+              {/* Only the roles this actor may assign. A salesperson gets
+                  Customer and nothing else — the server refuses anything wider,
+                  so offering it would only produce a 403. Inventory roles work
+                  the business's own stock rather than their own orders, so they
+                  see every brand and none of the ordering screens. */}
+              <select
+                value={form.role}
+                onChange={setField('role')}
+                className={inputCls}
+                disabled={assignableRoles.length === 1}
+              >
+                {assignableRoles.map((r) => (
+                  <option key={r} value={r}>{r === 'Sales' ? 'Sales User' : r}</option>
+                ))}
               </select>
             </Field>
             <Field label="Customer Category">
@@ -485,8 +583,18 @@ export const UserManagement = () => {
             </Field>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Role">
-                <select value={editForm.accessLevel} onChange={setEditField('accessLevel')} className={inputCls}>
-                  {ACCESS_LEVELS.map((lvl) => (
+                {/* Changing an access level is Admin's alone: the server
+                    refuses a role change from anyone else, in either
+                    direction, so a salesperson sees the level but cannot
+                    move it. */}
+                <select
+                  value={editForm.accessLevel}
+                  onChange={setEditField('accessLevel')}
+                  className={inputCls}
+                  disabled={!isAdmin}
+                  title={isAdmin ? undefined : 'Only an administrator can change an account role.'}
+                >
+                  {(isAdmin ? ACCESS_LEVELS : [editForm.accessLevel]).map((lvl) => (
                     <option key={lvl} value={lvl}>{lvl}</option>
                   ))}
                 </select>
@@ -499,6 +607,37 @@ export const UserManagement = () => {
                  </select>
                </Field>
              </div>
+
+            {/* Customer master details, shown but NOT editable. The server
+                rejects an update containing any of them, so rendering them as
+                inputs would be offering an edit that cannot succeed. Displayed
+                rather than hidden because this is where someone looks for a
+                customer's GST or shop number. */}
+            {(editUser?.role || 'Customer') === 'Customer' && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Shield size={13} className="text-slate-400" />
+                  <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                    Customer master details — fixed
+                  </h4>
+                </div>
+                <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
+                  Set when the account was created and not editable afterwards.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                  {CUSTOMER_MASTER_FIELDS.map((f) => (
+                    <div key={f.key} className="flex flex-col">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        {f.label}
+                      </span>
+                      <span className="text-sm font-semibold text-slate-700 break-words">
+                        {editUser?.[f.key] || <span className="font-normal text-slate-400">Not recorded</span>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* What each status actually does, stated where the choice is made. */}
             {editForm.status === 'Suspended' && (

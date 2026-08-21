@@ -94,7 +94,6 @@ const bookingEmail = ({ customerName, orderNumber, lines, dueAt }) => {
   const rows = lines.map((l) => `
     <tr>
       <td style="${cell}"><strong>${esc(l.skuCode)}</strong></td>
-      <td style="${cell}">${esc(l.msilCode || '—')}</td>
       <td style="${cell} text-align: right; color: #1a7f37; font-weight: bold;">${l.quantity}</td>
       <td style="${cell}">${esc(l.indentNumber || l.reservationId)}</td>
     </tr>`).join('');
@@ -116,7 +115,6 @@ const bookingEmail = ({ customerName, orderNumber, lines, dueAt }) => {
       <thead>
         <tr>
           <th style="${head}">SKU</th>
-          <th style="${head}">MSIL Code</th>
           <th style="${head} text-align: right;">Reserved</th>
           <th style="${head}">From Indent</th>
         </tr>
@@ -124,7 +122,7 @@ const bookingEmail = ({ customerName, orderNumber, lines, dueAt }) => {
       <tbody>${rows}</tbody>
       <tfoot>
         <tr>
-          <td colspan="2" style="${cell} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
           <td style="${cell} border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">${total}</td>
           <td style="${cell} border-bottom: none;"></td>
         </tr>

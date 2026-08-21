@@ -96,7 +96,6 @@ const linesTable = (lines = []) => {
   const rows = lines.map((l) => `
     <tr>
       <td style="${CELL}"><strong>${esc(l.skuCode)}</strong></td>
-      <td style="${CELL}">${esc(l.msilCode || '—')}</td>
       <td style="${CELL} text-align: right; font-weight: bold;">${l.quantity}</td>
     </tr>`).join('');
   const total = lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
@@ -106,14 +105,13 @@ const linesTable = (lines = []) => {
       <thead>
         <tr>
           <th style="${HEAD}">SKU / Material</th>
-          <th style="${HEAD}">MSIL Code</th>
           <th style="${HEAD} text-align: right;">Qty</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
       <tfoot>
         <tr>
-          <td colspan="2" style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+          <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
           <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; color: #1a5b9e;">${total}</td>
         </tr>
       </tfoot>

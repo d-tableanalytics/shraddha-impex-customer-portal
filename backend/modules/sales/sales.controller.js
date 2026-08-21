@@ -113,13 +113,17 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
   const rows = summary.lines.map((l) => `
     <tr>
       <td style="${cell}"><strong>${esc(l.skuCode)}</strong></td>
-      <td style="${cell}">${esc(l.msilCode || '—')}</td>
       <td style="${cell} text-align: right;">${l.from} pcs</td>
       <td style="${cell} text-align: right;">${l.to} pcs</td>
       <td style="${cell} ${tone[l.type]}">${esc(changeLabel(l))}</td>
     </tr>`).join('');
 
-  // THE CONVERSION EMAIL. From here on the transaction is a Purchase Order, so
+  // THE CONVERSION EMAIL. Deliberately carries NO booking TAT line: this mail
+  // exists only because a PO has been raised, and the 7-day booking turnaround
+  // stops applying at that point. Quoting it against a purchase order tells the
+  // customer a deadline that is not theirs.
+  //
+  // From here on the transaction is a Purchase Order, so
   // this mail leads with the PO number — that is the reference the customer will
   // quote from now on. The booking id stays, demoted to a back-reference, purely
   // so they can reconcile which booking became this PO; it is the one mail that
@@ -146,7 +150,6 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
       <thead>
         <tr>
           <th style="${head}">SKU</th>
-          <th style="${head}">MSIL Code</th>
           <th style="${head} text-align: right;">Booked</th>
           <th style="${head} text-align: right;">On PO</th>
           <th style="${head}">Change</th>
@@ -155,7 +158,7 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
       <tbody>${rows}</tbody>
       <tfoot>
         <tr>
-          <td colspan="2" style="${cell} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
           <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalFrom} pcs</td>
           <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalTo} pcs</td>
           <td style="${cell} border-bottom: none;"></td>
@@ -163,10 +166,6 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
       </tfoot>
     </table>
 
-    <p style="margin: 16px 0; padding: 12px 16px; background: #fff8e6; border-left: 4px solid #f0a500; font-size: 14px;">
-      <strong>Please note:</strong> the turnaround time (TAT) for this booking is
-      <strong>7 days</strong> from the date of confirmation.
-    </p>
 
     <p>Thank you for your business.</p>
   `;

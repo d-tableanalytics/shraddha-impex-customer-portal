@@ -746,6 +746,26 @@ eq('the portal is named consistently',
 check('the booking id is still available for the conversion mail',
   termsFor({ orderId: 'BO-1', poNumber: 'PO-9' }).orderId === 'BO-1');
 
+console.log('   the booking TAT line stops once a PO exists');
+// The 7-day booking turnaround is a promise about a BOOKING. Once a PO has been
+// raised it no longer applies, so quoting it would give the customer a deadline
+// that is not theirs.
+const salesTat = src('backend/modules/sales/sales.controller.js')
+  .split(String.fromCharCode(10)).filter((l) => /turnaround time \(TAT\)/.test(l) && !l.trim().startsWith('//'));
+eq('the PO-raised email carries no TAT line at all', salesTat.length, 0);
+
+const indentSrc = src('backend/utils/indentMail.js');
+check('the booking-confirmation email gates its TAT line on the PO',
+  /isPurchaseOrder\(poNumber\) \? '' :/.test(indentSrc));
+check('and imports the shared stage test rather than re-deriving it',
+  /import \{ isPurchaseOrder \} from '\.\/transactionTerms\.js';/.test(indentSrc));
+eq('TAT shows before a PO and not after',
+  [isPurchaseOrder('-'), isPurchaseOrder(null), isPurchaseOrder('PO-1')].map((po) => !po),
+  [true, true, false]);
+// The reasoning must not ship to the customer as an HTML comment.
+check('no internal note is left inside the delivered HTML',
+  !/<!--[^>]*TAT/i.test(src('backend/modules/sales/sales.controller.js')));
+
 console.log('   no template still calls the portal the "Booking Portal"');
 const mailerSrc = src('backend/utils/mailer.js');
 check('the mail shell is named for the portal, not for bookings',
@@ -761,6 +781,66 @@ check('the conversion subject names the PO, not the booking',
 const resSrc = src('backend/modules/reservations/reservation.controller.js');
 check('the schedule email switches to Purchase Order wording',
   resSrc.includes('terms.scheduleNoun') && resSrc.includes('Purchase Order schedule updated'));
+
+// ── 10. Customer mail carries no internal fields ──────────────────────
+// Phone, Customer Category and the MSIL code are OUR reference data. The
+// customer already knows their phone number, the category drives internal
+// pricing/MOQ rules, and the MSIL code is a cross-reference used to reconcile
+// their numbering against ours. Support keeps all three; the customer gets none.
+console.log('');
+console.log('10. CUSTOMER MAIL (no internal fields)');
+
+const { customerBlock } = await import('../utils/indentMail.js');
+
+const testCustomer = {
+  user: 'Acme Ltd', company: 'Acme Ltd', email: 'buyer@acme.com',
+  phone: '+91 98765 43210', customerCategory: 'MSIL',
+};
+const custHtml = customerBlock(testCustomer, { audience: 'customer' });
+const suppHtml = customerBlock(testCustomer, { audience: 'support' });
+
+check('customer copy drops Phone', !custHtml.includes('Phone') && !custHtml.includes('98765'));
+check('customer copy drops Customer Category', !custHtml.includes('Customer Category'));
+check('customer copy keeps name, company and email',
+  custHtml.includes('Customer Name') && custHtml.includes('Account / Company') && custHtml.includes('Email'));
+check('support copy keeps Phone', suppHtml.includes('Phone') && suppHtml.includes('98765'));
+check('support copy keeps Customer Category', suppHtml.includes('Customer Category'));
+check('customer is the default audience',
+  customerBlock(testCustomer) === custHtml);
+
+console.log('   MSIL column');
+const statusMail = buildStatusMail({
+  customer: testCustomer, orderId: 'BO-1', status: 'Dispatched',
+  changedAt: new Date(0), poNumber: '-',
+  lines: [{ skuCode: 'S1', msilCode: 'MA0ML009000', quantity: 5 }],
+});
+check('the status email has no MSIL column',
+  !statusMail.body.includes('MSIL Code') && !statusMail.body.includes('MA0ML009000'));
+// A removed column with a stale header or colspan renders the table skewed.
+const heads = (statusMail.body.match(/<th /g) || []).length;
+const firstRow = (statusMail.body.split('<tbody>')[1] || '').split('</tr>')[0];
+eq('its table headers and cells still line up',
+  heads, (firstRow.match(/<td /g) || []).length);
+
+// Every remaining MSIL column in a mail template must be audience-guarded.
+const MAIL_FILES = [
+  'backend/utils/indentMail.js',
+  'backend/utils/bookingStatusMail.js',
+  'backend/modules/sales/sales.controller.js',
+  'backend/modules/orders/poExpiryJob.js',
+  'backend/modules/inventory/indentAvailability.service.js',
+  'backend/modules/reservations/reservation.controller.js',
+];
+const unguarded = [];
+for (const f of MAIL_FILES) {
+  for (const line of src(f).split(String.fromCharCode(10))) {
+    if (!/>MSIL Code</.test(line) && !/msilCode/.test(line)) continue;
+    if (!/<t[hd]/.test(line)) continue;              // markup only, not logic
+    if (/showMsil|audience === 'support'/.test(line)) continue;  // guarded
+    unguarded.push(`${f}: ${line.trim().slice(0, 60)}`);
+  }
+}
+eq('no mail template renders MSIL unconditionally', unguarded, []);
 
 // ── Summary ──────────────────────────────────────────────────────────────────
 console.log('\n' + '='.repeat(60));

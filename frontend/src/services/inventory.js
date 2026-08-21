@@ -495,6 +495,22 @@ export const inventoryApi = {
   cancelImport: async (jobId, reason = null) =>
     (await api.post(`/inventory/imports/${encodeURIComponent(jobId)}/cancel`, { reason })).data.data,
 
+  /**
+   * Answer the MOQ prompt for SKUs an import created.
+   *
+   * Partial answers are accepted: whatever is not sent stays on the job's
+   * pending list, so closing the browser mid-way loses nothing. Returns
+   * { applied, errors, pendingMoqSkus } — the remaining list, so the caller
+   * does not have to refetch the job to know what is left.
+   */
+  setImportMoq: async (jobId, entries) => {
+    const r = await api.post(
+      `/inventory/imports/${encodeURIComponent(jobId)}/moq`,
+      { entries },
+    );
+    return { applied: r.data.applied || [], errors: r.data.errors || [], pendingMoqSkus: r.data.pendingMoqSkus || [] };
+  },
+
   listImports: async ({ importType = "", status = "", page = 1, limit = 25 } = {}) => {
     const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
     if (importType) qs.set("importType", importType);

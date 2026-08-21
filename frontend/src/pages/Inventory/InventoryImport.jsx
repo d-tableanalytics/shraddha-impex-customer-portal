@@ -15,6 +15,7 @@ import { useImportStore } from '../../store/importStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import { hasPermission, canUseInventoryMaster, PERMISSIONS } from '../../utils/permissions';
+import { NewSkuMoqModal } from '../../components/inventory/NewSkuMoqModal';
 
 /**
  * Inventory Import — IMS Module M9.
@@ -94,6 +95,7 @@ const Steps = ({ current }) => (
 );
 
 export const InventoryImport = () => {
+
   const { user } = useUserStore();
   const {
     types, fetchTypes,
@@ -105,6 +107,25 @@ export const InventoryImport = () => {
     history, historyTotal, historyPages, historyLoading, historyFilters,
     setHistoryFilters, fetchHistory,
   } = useImportStore();
+
+  /**
+   * SKUs this import CREATED that still need an MOQ.
+   *
+   * Seeded from the job (the server is the source of truth and survives a
+   * reload) and narrowed locally as they are answered, so a partial save
+   * updates the screen without refetching the whole job.
+   */
+  const [pendingMoq, setPendingMoq] = useState(null);
+  const [moqOpen, setMoqOpen] = useState(false);
+
+  const jobPendingMoq = job?.pendingMoqSkus ?? [];
+  const outstandingMoq = pendingMoq ?? jobPendingMoq;
+
+  // Opens itself the moment a finished import reports new SKUs. Reopened by
+  // hand afterwards from the summary card — closing is never destructive.
+  useEffect(() => {
+    if (jobPendingMoq.length > 0) setMoqOpen(true);
+  }, [jobPendingMoq.length]);
 
   const fileInput = useRef(null);
   const [brand, setBrand] = useState('');
@@ -463,6 +484,21 @@ export const InventoryImport = () => {
               <span className={`px-2 py-1 rounded-md text-[11px] font-bold ${STATUS_STYLE[job.status]}`}>{job.status}</span>
             </div>
 
+            {/* New SKUs still without an MOQ. Shown on the card as well as in
+                the modal, so closing the prompt does not hide the fact that
+                the catalogue has SKUs nobody has configured yet. */}
+            {outstandingMoq.length > 0 && (
+              <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg bg-warning-50 border border-warning-200">
+                <AlertTriangle size={16} className="text-warning-600 shrink-0" />
+                <p className="text-xs text-warning-900 flex-1 min-w-48 leading-relaxed">
+                  <strong>{nf(outstandingMoq.length)} new SKU(s)</strong> were created by this
+                  import and still have no minimum order quantity. The stock is imported — only
+                  the MOQ is outstanding.
+                </p>
+                <Button size="sm" onClick={() => setMoqOpen(true)}>Set MOQ</Button>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <Stat label="Rows read" value={nf(job.totalRows)} />
               <Stat label="Imported" value={nf(job.successfulRows)} tone="text-success-700" />
@@ -677,6 +713,18 @@ export const InventoryImport = () => {
           </p>
         </div>
       </Modal>
+
+      {moqOpen && outstandingMoq.length > 0 && (
+        <NewSkuMoqModal
+          jobId={job?.jobId}
+          skus={outstandingMoq}
+          onClose={() => setMoqOpen(false)}
+          onSaved={(remaining) => {
+            setPendingMoq(remaining);
+            if (remaining.length === 0) setMoqOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 };

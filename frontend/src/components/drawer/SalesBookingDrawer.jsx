@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
-  Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle, Download,
+  Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle, Download, FileText,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
@@ -82,19 +82,18 @@ export const SalesBookingDrawer = () => {
   };
 
   /**
-   * Download the items table as Excel.
+   * Rows and columns for BOTH exports, built once.
    *
    * Exports the DRAFT — what is on screen — rather than the last saved state,
-   * so the file always matches the table it was downloaded from. With unsaved
-   * edits pending those two differ, which is why the button says so below.
+   * so a file always matches the table it came from. With unsaved edits pending
+   * those two differ, which is why the buttons say so.
    *
    * Columns mirror the visible ones, Box No included only when the viewer is
    * allowed to see it: a downloaded pick list must not carry a column the same
-   * user cannot see on screen.
+   * user cannot see on screen. Excel and PDF share this, because two formats
+   * differing in content is a bug nobody notices until someone compares files.
    */
-  const handleDownload = () => {
-    if (draft.length === 0) return toast.error("Nothing to download — this booking has no lines.");
-
+  const buildExport = () => {
     const rows = draft.map((l, i) => ({
       sr: i + 1,
       skuCode: l.skuCode || "-",
@@ -109,13 +108,29 @@ export const SalesBookingDrawer = () => {
       ...(showBoxNo ? [{ key: "boxNo", label: "Box No" }] : []),
       { key: "quantity", label: "Quantity" },
     ];
+    const title = `Booking ${selected.orderId}${selected.customer ? ` — ${selected.customer}` : ""}`;
+    return { rows, columns, title };
+  };
 
-    // Loaded on demand: the xlsx bundle is large and most visits to this drawer
-    // never download anything.
+  // Loaded on demand: the xlsx/jspdf bundles are large and most visits to this
+  // drawer never download anything.
+  const handleDownload = () => {
+    if (draft.length === 0) return toast.error("Nothing to download — this booking has no lines.");
+    const { rows, columns } = buildExport();
     import("../../utils/exportUtils").then(({ exportToExcel }) => {
       const ok = exportToExcel(rows, columns, `Booking_${selected.orderId}`);
       if (ok) toast.success(`Downloaded ${rows.length} line(s).`);
       else toast.error("Download failed.");
+    });
+  };
+
+  const handleDownloadPdf = () => {
+    if (draft.length === 0) return toast.error("Nothing to download — this booking has no lines.");
+    const { rows, columns, title } = buildExport();
+    import("../../utils/exportUtils").then(({ exportToPDF }) => {
+      const ok = exportToPDF(rows, columns, title, `Booking_${selected.orderId}`);
+      if (ok) toast.success(`Downloaded ${rows.length} line(s) as PDF.`);
+      else toast.error("PDF download failed.");
     });
   };
 
@@ -249,7 +264,19 @@ export const SalesBookingDrawer = () => {
                     }
                     className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:text-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    <Download size={14} /> Download
+                    <Download size={14} /> Excel
+                  </button>
+                  <button
+                    onClick={handleDownloadPdf}
+                    disabled={draft.length === 0}
+                    title={
+                      dirty
+                        ? "Downloads the lines as shown, including your unsaved edits"
+                        : "Download these lines as PDF"
+                    }
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:text-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <FileText size={14} /> PDF
                   </button>
                   {editable && (
                     <button

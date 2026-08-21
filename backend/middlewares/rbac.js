@@ -12,7 +12,8 @@ export const PERMISSIONS = {
   CREATE_ORDER: 'create_order',
   MANAGE_ORDERS: 'manage_orders',             // admin booking lifecycle (status changes)
   MANAGE_INVENTORY: 'manage_inventory',       // legacy umbrella; superseded by the granular set below
-  MANAGE_USERS: 'manage_users',
+  MANAGE_USERS: 'manage_users',                // every account, any role
+  MANAGE_CUSTOMER_USERS: 'manage_customer_users', // CUSTOMER accounts only
   MANAGE_ROLES: 'manage_roles',
   VIEW_REPORTS: 'view_reports',
   // Sales-desk capabilities
@@ -52,6 +53,12 @@ export const PERMISSIONS = {
  *    Management holds the approval without the ability to create. Nobody can
  *    both make and approve their own stock correction.
  *
+ * MANAGE_CUSTOMER_USERS is the third structural rule. Sales can create and
+ * maintain CUSTOMER accounts and nothing else — not an Admin, not another
+ * salesperson, not itself. Privilege escalation through user management is the
+ * obvious attack on a role that can create logins, so the restriction is on the
+ * TARGET's role and is checked in the controller for every read and write.
+ *
  * CONFIGURE_INVENTORY is Admin-only: a threshold change silently reclassifies
  * thousands of SKUs, so it sits with the role that already owns global settings.
  *
@@ -68,6 +75,11 @@ const ROLE_PERMISSIONS = {
   Admin: ['*'],
   Sales: [
     PERMISSIONS.VIEW_ALL_BOOKINGS,
+    // Sales onboards its own customers. Deliberately NOT MANAGE_USERS: that
+    // would also let a salesperson create an Admin or promote themselves.
+    // The narrower permission is enforced on the target account's role in
+    // user.controller.js — a permission alone cannot express "only Customers".
+    PERMISSIONS.MANAGE_CUSTOMER_USERS,
     PERMISSIONS.EDIT_BOOKING_PRE_PO,
     PERMISSIONS.RAISE_PO,
     PERMISSIONS.VIEW_REPORTS,

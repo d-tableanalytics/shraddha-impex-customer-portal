@@ -25,6 +25,7 @@
 
 import { sendEmail } from './mailer.js';
 import { COMPANY_CC, supportRecipients } from './mailRecipients.js';
+import { isPurchaseOrder } from './transactionTerms.js';
 
 // ── Presentation helpers ───────────────────────────────────────────────────
 
@@ -55,13 +56,25 @@ const value = 'padding: 4px 0; font-weight: bold; font-size: 13px;';
  * ship-to accounts needs to see which of them the indent was raised against,
  * and a body that is identical for both audiences is one body to keep correct.
  */
-export const customerBlock = (customer = {}) => {
+export const customerBlock = (customer = {}, { audience = 'customer' } = {}) => {
+  // Phone and Customer Category are for the people who have to ACT on the mail,
+  // not for the customer it is addressed to. Reading their own phone number
+  // back is noise, and "Customer Category" is an internal classification
+  // (MSIL / Non-MSIL) that drives our pricing and MOQ rules — it is not
+  // something the customer asked to be told about themselves.
+  //
+  // Support keeps both: its copy is the operational record, and a support
+  // mailbox with no phone number on it cannot pick the phone up.
+  const forSupport = audience === 'support';
+
   const rows = [
     ['Customer Name', customer.user || customer.name || customer.company || '—'],
     ['Account / Company', customer.company || '—'],
     ['Email', customer.email || '—'],
-    ['Phone', customer.phone || '—'],
-    ['Customer Category', customer.customerCategory || '—'],
+    ...(forSupport ? [
+      ['Phone', customer.phone || '—'],
+      ['Customer Category', customer.customerCategory || '—'],
+    ] : []),
   ];
   return `
     <table style="border-collapse: collapse; margin: 0 0 16px;">
@@ -85,24 +98,33 @@ const referenceBox = ({ heading, reference, sub }) => `
  * The indent lines: SKU/material, MSIL code, category and the quantity on
  * indent, plus the per-line reference so a single line can be quoted back.
  */
-const indentTable = (lines = []) => {
+const indentTable = (lines = [], { audience = 'customer' } = {}) => {
+  // The MSIL code is our cross-reference to the customer's own part numbering,
+  // used internally to reconcile their codes against ours. The customer orders
+  // by SKU and does not need a second code beside it, so their copy drops the
+  // column; support keeps it because reconciling is exactly its job.
+  const showMsil = audience === 'support';
+
   const rows = lines.map((l) => `
     <tr>
       <td style="${CELL}"><strong>${esc(l.skuCode)}</strong></td>
-      <td style="${CELL}">${esc(l.msilCode || '—')}</td>
+      ${showMsil ? `<td style="${CELL}">${esc(l.msilCode || '—')}</td>` : ''}
       <td style="${CELL}">${esc(l.category || '—')}</td>
       <td style="${CELL} text-align: right; color: #b54708; font-weight: bold;">${l.quantity}</td>
       <td style="${CELL} font-family: monospace; font-size: 12px;">${esc(l.reference || '—')}</td>
     </tr>`).join('');
 
   const total = lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+  // The Total label spans every column left of the quantity. Dropping MSIL
+  // shortens that span — a stale colspan is how a footer ends up one cell out.
+  const labelSpan = showMsil ? 3 : 2;
 
   return `
     <table style="border-collapse: collapse; margin: 0 0 8px; width: 100%;">
       <thead>
         <tr>
           <th style="${HEAD}">SKU / Material</th>
-          <th style="${HEAD}">MSIL Code</th>
+          ${showMsil ? `<th style="${HEAD}">MSIL Code</th>` : ''}
           <th style="${HEAD}">Category</th>
           <th style="${HEAD} text-align: right;">Qty on Indent</th>
           <th style="${HEAD}">Line Ref</th>
@@ -111,7 +133,7 @@ const indentTable = (lines = []) => {
       <tbody>${rows}</tbody>
       <tfoot>
         <tr>
-          <td colspan="3" style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+          <td colspan="${labelSpan}" style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
           <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">${total}</td>
           <td style="${CELL} border-bottom: none;"></td>
         </tr>
@@ -120,11 +142,13 @@ const indentTable = (lines = []) => {
 };
 
 /** The booking lines: what was booked, fulfilled now, and left on indent. */
-const bookingTable = (summary = []) => {
+const bookingTable = (summary = [], { audience = 'customer' } = {}) => {
+  const showMsil = audience === 'support';
+
   const rows = summary.map((s) => `
     <tr>
       <td style="${CELL}"><strong>${esc(s.skuCode)}</strong></td>
-      <td style="${CELL}">${esc(s.msilCode || '—')}</td>
+      ${showMsil ? `<td style="${CELL}">${esc(s.msilCode || '—')}</td>` : ''}
       <td style="${CELL} text-align: right;">${s.requestedQty}</td>
       <td style="${CELL} text-align: right; color: #1a7f37; font-weight: bold;">${s.confirmedQty}</td>
       <td style="${CELL} text-align: right; ${s.pendingQty > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #bbb;'}">${s.pendingQty}</td>
@@ -139,7 +163,7 @@ const bookingTable = (summary = []) => {
       <thead>
         <tr>
           <th style="${HEAD}">SKU</th>
-          <th style="${HEAD}">MSIL Code</th>
+          ${showMsil ? `<th style="${HEAD}">MSIL Code</th>` : ''}
           <th style="${HEAD} text-align: right;">Booked</th>
           <th style="${HEAD} text-align: right;">Confirmed</th>
           <th style="${HEAD} text-align: right;">On Indent</th>
@@ -148,7 +172,7 @@ const bookingTable = (summary = []) => {
       <tbody>${rows}</tbody>
       <tfoot>
         <tr>
-          <td colspan="2" style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+          <td colspan="${showMsil ? 2 : 1}" style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
           <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">${totalRequested}</td>
           <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">${totalConfirmed}</td>
           <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; ${totalPending > 0 ? 'color: #b54708;' : 'color: #bbb;'}">${totalPending}</td>
@@ -230,22 +254,22 @@ export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, po
   const count = lines.length;
   const units = lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
 
-  const facts = `
+  const facts = (audience) => `
     ${referenceBox({
       heading: 'Indent Number',
       reference: indentId,
       sub: `Indent date: <strong>${esc(fmtDate(indentDate))}</strong>`
         + (poNumber && poNumber !== '-' ? ` &nbsp;·&nbsp; PO: <strong>${esc(poNumber)}</strong>` : ''),
     })}
-    ${customerBlock(customer)}
-    ${indentTable(lines)}`;
+    ${customerBlock(customer, { audience })}
+    ${indentTable(lines, { audience })}`;
 
   const customerBody = `
     <p>Hi ${esc(name)},</p>
     <p>Your indent has been <strong>raised successfully</strong>. The ${units} unit(s) below are
        not in stock today, so they have been recorded as an indent and will be fulfilled as soon
        as fresh stock is received.</p>
-    ${facts}
+    ${facts('customer')}
     <p>We will email you the moment material is inwarded against this indent, and the booking
        will be raised for you automatically — no action is needed from your side.</p>
     <p>Thank you for your business.</p>`;
@@ -254,7 +278,7 @@ export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, po
     <p><strong>A new indent has been raised and needs to be actioned.</strong></p>
     <p>${esc(name)} requested ${units} unit(s) across ${count} line(s) that could not be
        fulfilled from available stock. No booking exists for this request.</p>
-    ${facts}
+    ${facts('support')}
     <p>Please arrange procurement or set an expected availability date from
        <strong>Indent History</strong>.</p>`;
 
@@ -293,7 +317,7 @@ export const sendBookingMails = async ({
       reference: s.reservationId,
     }));
 
-  const facts = `
+  const facts = (audience) => `
     <div style="margin: 18px 0; padding: 14px 18px; background: #f0f6ff; border: 1px solid #cfe0f7; border-radius: 4px;">
       <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">Booking ID</div>
       <div style="font-size: 22px; font-weight: bold; color: #1a5b9e; font-family: monospace; margin-top: 2px;">${esc(orderNumber)}</div>
@@ -303,28 +327,29 @@ export const sendBookingMails = async ({
         ${hasIndent ? ` &nbsp;·&nbsp; Indent reference: <strong style="font-family: monospace; color: #b54708;">${esc(indentId)}</strong>` : ''}
       </div>
     </div>
-    ${customerBlock(customer)}
-    ${bookingTable(summary)}
+    ${customerBlock(customer, { audience })}
+    ${bookingTable(summary, { audience })}
     ${hasIndent ? `
       <h4 style="margin: 22px 0 6px; font-size: 13px; color: #b54708; text-transform: uppercase; letter-spacing: 0.5px;">
         Indent ${esc(indentId)} — awaiting stock
       </h4>
-      ${indentTable(indentLines)}` : ''}`;
+      ${indentTable(indentLines, { audience })}` : ''}`;
 
   const customerBody = `
     <p>Hi ${esc(name)},</p>
     <p>Your booking is <strong>confirmed</strong>.</p>
-    ${facts}
+    ${facts('customer')}
     ${hasIndent
       ? `<p>Of the ${totalRequested} unit(s) booked, <strong>${totalConfirmed}</strong> were confirmed
          from available stock and <strong>${totalPending}</strong> could not be fulfilled. The shortfall
          has been recorded as indent <strong>${esc(indentId)}</strong> — we will notify you as soon as
          material is inwarded against it.</p>`
       : ''}
+    ${isPurchaseOrder(poNumber) ? '' : `
     <p style="margin: 16px 0; padding: 12px 16px; background: #fff8e6; border-left: 4px solid #f0a500; font-size: 14px;">
       <strong>Please note:</strong> the turnaround time (TAT) for this booking is
       <strong>7 days</strong> from the date of confirmation.
-    </p>
+    </p>`}
     <p>Thank you for your business.</p>`;
 
   const supportBody = `
@@ -333,7 +358,7 @@ export const sendBookingMails = async ({
       : 'A booking has been confirmed.'}</strong></p>
     <p>${esc(name)} confirmed ${totalRequested} unit(s): ${totalConfirmed} fulfilled from stock${
       hasIndent ? `, ${totalPending} recorded against indent ${esc(indentId)}` : ''}.</p>
-    ${facts}
+    ${facts('support')}
     ${hasIndent
       ? '<p>Please arrange procurement for the indented lines, or set an expected availability date '
         + 'from <strong>Indent History</strong>.</p>'
@@ -366,30 +391,32 @@ export const sendMaterialInwardMails = async ({ customer, lines, reference }) =>
   const name = customer?.user || customer?.name || customer?.company || 'Customer';
   const count = lines.length;
 
-  const rows = lines.map((l) => `
+  // Built per audience, because the MSIL column is support-only — see
+  // indentTable(). One `rows` string shared by both copies could not drop it.
+  const rowsFor = (audience) => lines.map((l) => `
     <tr>
       <td style="${CELL}"><strong>${esc(l.skuCode)}</strong></td>
-      <td style="${CELL}">${esc(l.msilCode || '—')}</td>
+      ${audience === 'support' ? `<td style="${CELL}">${esc(l.msilCode || '—')}</td>` : ''}
       <td style="${CELL} text-align: right; color: #1a7f37; font-weight: bold;">${l.receivedQty}</td>
       <td style="${CELL} text-align: right;">${l.quantity}</td>
       <td style="${CELL} text-align: right; font-weight: bold;">${l.availableQty}</td>
       <td style="${CELL} font-family: monospace; font-size: 12px;">${esc(l.indentNumber || l.reference || '—')}</td>
     </tr>`).join('');
 
-  const facts = `
-    ${customerBlock(customer)}
+  const facts = (audience) => `
+    ${customerBlock(customer, { audience })}
     <table style="border-collapse: collapse; margin: 0 0 8px; width: 100%;">
       <thead>
         <tr>
           <th style="${HEAD}">SKU / Material</th>
-          <th style="${HEAD}">MSIL Code</th>
+          ${audience === 'support' ? `<th style="${HEAD}">MSIL Code</th>` : ''}
           <th style="${HEAD} text-align: right;">Inwarded</th>
           <th style="${HEAD} text-align: right;">On Indent</th>
           <th style="${HEAD} text-align: right;">Available</th>
           <th style="${HEAD}">Indent Ref</th>
         </tr>
       </thead>
-      <tbody>${rows}</tbody>
+      <tbody>${rowsFor(audience)}</tbody>
     </table>
     ${reference ? `<p style="font-size: 12px; color: #777;">Inward reference: <strong>${esc(reference)}</strong></p>` : ''}`;
 
@@ -398,7 +425,7 @@ export const sendMaterialInwardMails = async ({ customer, lines, reference }) =>
     <p><strong>Material has been inwarded</strong> against ${count === 1 ? 'an item' : 'items'} you
        have on indent. The received quantity does not yet cover the full indented quantity, so the
        indent stays open and the balance is still on order.</p>
-    ${facts}
+    ${facts('customer')}
     <p>As soon as the available quantity covers an indented line in full, the booking is raised for
        you automatically and we will email you the booking reference.</p>
     <p>Thank you for your patience.</p>`;
@@ -408,7 +435,7 @@ export const sendMaterialInwardMails = async ({ customer, lines, reference }) =>
     <p>${esc(name)} has ${count} indent line(s) on ${count === 1 ? 'a SKU' : 'SKUs'} that were just
        inwarded. The receipt does not cover the indented quantity in full, so ${count === 1 ? 'the line remains' : 'the lines remain'}
        open and no booking has been raised.</p>
-    ${facts}
+    ${facts('support')}
     <p>Please confirm whether the balance is on order, and update the expected availability date
        from <strong>Indent History</strong>.</p>`;
 
@@ -443,14 +470,14 @@ export const sendAutoBookSupportMail = async ({ customer, orderNumber, lines, du
     <p>Stock was inwarded for ${lines.length} indented line(s) belonging to ${esc(name)},
        so booking <strong>${esc(orderNumber)}</strong> was created and the stock reserved
        against it.</p>
-    ${customerBlock(customer)}
+    ${customerBlock(customer, { audience: 'support' })}
     ${indentTable(lines.map((l) => ({
       skuCode: l.skuCode,
       msilCode: l.msilCode,
       category: l.category,
       quantity: l.quantity,
       reference: l.indentNumber || l.reservationId,
-    })))}
+    })), { audience: 'support' })}
     <p>Total reserved: <strong>${total}</strong> unit(s). The customer has been asked to raise
        their PO by <strong>${esc(dueAt)}</strong>; the booking is cancelled automatically if
        none arrives.</p>`;

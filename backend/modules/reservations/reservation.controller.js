@@ -495,7 +495,6 @@ export const restoreBackorder = async (req, res, next) => {
         <p>Good news! An item that was previously <strong>out of stock</strong> in your booking is now available again:</p>
         <table style="border-collapse: collapse; margin: 12px 0;">
           <tr><td style="padding: 4px 12px; color: #777;">SKU Code</td><td style="padding: 4px 12px; font-weight: bold;">${reservation.skuCode}</td></tr>
-          <tr><td style="padding: 4px 12px; color: #777;">MSIL Code</td><td style="padding: 4px 12px; font-weight: bold;">${reservation.msilCode || '—'}</td></tr>
           <tr><td style="padding: 4px 12px; color: #777;">Quantity</td><td style="padding: 4px 12px; font-weight: bold;">${reservation.quantity}</td></tr>
           <tr><td style="padding: 4px 12px; color: #777;">Reference</td><td style="padding: 4px 12px; font-weight: bold;">${reservation.reservationId}</td></tr>
         </table>

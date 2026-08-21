@@ -1,5 +1,6 @@
 import User from '../../models/User.js';
 import ArchivedUser from '../../models/ArchivedUser.js';
+import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 
 /**
  * Roles an admin may assign. Derived from the User schema enum so the two can
@@ -7,6 +8,49 @@ import ArchivedUser from '../../models/ArchivedUser.js';
  * else has to change.
  */
 const ASSIGNABLE_ROLES = User.schema.path('role').enumValues;
+
+/**
+ * Customer master details — captured at creation, never editable afterwards.
+ *
+ * These identify the legal entity we trade with. A GST or shop number changing
+ * on a live account means it is a different customer, and rewriting it in place
+ * would leave every past booking attributed to a record that no longer matches
+ * what was agreed.
+ *
+ * Kept out of ALLOWED_UPDATES *and* rejected explicitly below. Silently
+ * dropping them would be worse than refusing: the caller would be told the save
+ * succeeded while the value they sent was thrown away.
+ */
+export const CUSTOMER_MASTER_FIELDS = [
+  'customerName', 'phone', 'location', 'shopNumber', 'vendorNumber', 'gstNumber',
+];
+
+/**
+ * Who this actor is allowed to act on.
+ *
+ * MANAGE_USERS (Admin) is unrestricted. MANAGE_CUSTOMER_USERS (Sales) may only
+ * touch accounts whose role is Customer — reading, creating and editing alike.
+ * The check is on the TARGET, because a permission cannot express "only
+ * Customers" on its own, and because the obvious attack on a role that can
+ * create logins is to create a privileged one.
+ */
+const canManageAllUsers = (actor) => hasPermission(actor, PERMISSIONS.MANAGE_USERS);
+
+const isCustomerAccount = (account) => (account?.role || 'Customer') === 'Customer';
+
+/**
+ * Refuse when the actor may not act on this account. Returns true when it has
+ * already answered the request, so callers `if (denied(...)) return;`.
+ */
+const denyIfOutOfScope = (req, res, target, verb) => {
+  if (canManageAllUsers(req.user)) return false;
+  if (isCustomerAccount(target)) return false;
+  res.status(403).json({
+    success: false,
+    message: `You can only ${verb} customer accounts.`,
+  });
+  return true;
+};
 
 // Suspended accounts live in `archivedusers`, not `users`. The admin list has to
 // show them anyway — otherwise there is no way to bring one back — so both
@@ -19,9 +63,13 @@ const asArchivedRow = (doc) => ({
 
 export const getUsers = async (req, res, next) => {
   try {
+    // Scoped in the QUERY, not filtered after the fact: an actor who may only
+    // manage customers must not receive staff accounts in the payload either.
+    const scope = canManageAllUsers(req.user) ? {} : { role: 'Customer' };
+
     const [users, archived] = await Promise.all([
-      User.find().lean(),
-      ArchivedUser.find().lean(),
+      User.find(scope).lean(),
+      ArchivedUser.find(scope).lean(),
     ]);
 
     res.status(200).json({
@@ -40,6 +88,34 @@ export const createUser = async (req, res, next) => {
 
     if (!email || !password) {
       return res.status(400).json({ success: false, message: 'Email and password are required.' });
+    }
+
+    // Only recognised roles are accepted; anything else falls back to Customer
+    // so an unexpected value can never grant privileges.
+    const requestedRole = ASSIGNABLE_ROLES.includes(role) ? role : 'Customer';
+
+    // A Sales actor may only create CUSTOMERS. Checked against the role being
+    // requested, before anything is written — otherwise the obvious escalation
+    // is to POST /users with role: 'Admin'.
+    if (denyIfOutOfScope(req, res, { role: requestedRole }, 'create')) return;
+
+    // Master details are mandatory for a NEW customer, and only meaningful for
+    // one — staff accounts carry no GST or shop number.
+    const master = {};
+    if (requestedRole === 'Customer') {
+      const missing = [];
+      for (const field of CUSTOMER_MASTER_FIELDS) {
+        const value = typeof req.body[field] === 'string' ? req.body[field].trim() : req.body[field];
+        if (value === undefined || value === null || value === '') { missing.push(field); continue; }
+        master[field] = String(value);
+      }
+      if (missing.length) {
+        return res.status(400).json({
+          success: false,
+          message: `These customer details are required and cannot be added later: ${missing.join(', ')}.`,
+          missing,
+        });
+      }
     }
 
     const normalisedEmail = email.toLowerCase();
@@ -63,15 +139,12 @@ export const createUser = async (req, res, next) => {
       password,
       user: user || null,
       company: company || null,
-      // Only recognised roles are accepted; anything else falls back to Customer
-      // so an unexpected value can never grant privileges.
-      // Only recognised roles are accepted; anything else falls back to Customer
-      // so an unexpected value can never grant privileges. Kept in step with the
-      // enum on the User model.
-      role: ASSIGNABLE_ROLES.includes(role) ? role : 'Customer',
+      role: requestedRole,
       customerCategory: customerCategory === 'MSIL' ? 'MSIL' : 'Non-MSIL',
       status: status || 'Active',
       ...(brandAccess ? { brandAccess } : {}),
+      // Written once, here. updateUser() refuses them from now on.
+      ...master,
     });
 
     res.status(201).json({ success: true, data: newUser });
@@ -80,6 +153,8 @@ export const createUser = async (req, res, next) => {
   }
 };
 
+// Fields an admin may change after creation. CUSTOMER_MASTER_FIELDS are
+// deliberately absent — see the explicit rejection in updateUser().
 const ALLOWED_UPDATES = ['user', 'company', 'email', 'role', 'customerCategory', 'status', 'brandAccess', 'showMsilCode'];
 
 // Admin updates a user, including changing the customer category at any time.
@@ -89,6 +164,33 @@ const ALLOWED_UPDATES = ['user', 'company', 'email', 'role', 'customerCategory',
 //                  original _id, so all its history reattaches.
 export const updateUser = async (req, res, next) => {
   try {
+    // REFUSE the master details rather than dropping them. They are absent from
+    // ALLOWED_UPDATES, so they would be ignored silently — and a caller told
+    // "saved" while their change was discarded is worse than one told "no".
+    const attempted = CUSTOMER_MASTER_FIELDS.filter((f) => f in req.body);
+    if (attempted.length) {
+      return res.status(400).json({
+        success: false,
+        message: `These customer details are fixed once the account exists and cannot be changed: ${attempted.join(', ')}.`,
+        immutable: attempted,
+      });
+    }
+
+    // Scope: a Sales actor may only edit CUSTOMER accounts, and may not turn one
+    // into anything else. Both halves matter — without the second, editing a
+    // customer's role to 'Admin' would be an escalation through an allowed edit.
+    const target = await User.findById(req.params.id).lean()
+      || await ArchivedUser.findById(req.params.id).lean();
+    if (!target) return res.status(404).json({ success: false, message: 'User not found' });
+    if (denyIfOutOfScope(req, res, target, 'edit')) return;
+
+    if ('role' in req.body && !canManageAllUsers(req.user) && req.body.role !== 'Customer') {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only manage customer accounts, so this account must stay a Customer.',
+      });
+    }
+
     const updates = {};
     for (const key of ALLOWED_UPDATES) {
       if (key in req.body) updates[key] = req.body[key];
@@ -191,6 +293,13 @@ export const resetUserPassword = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'New password must be at least 5 characters.' });
     }
 
+    // Resetting a password is taking over an account, so it is scoped exactly
+    // like editing one: Sales may reset a customer's, nobody else's.
+    const target = await User.findById(req.params.id).lean()
+      || await ArchivedUser.findById(req.params.id).lean();
+    if (!target) return res.status(404).json({ success: false, message: 'User not found' });
+    if (denyIfOutOfScope(req, res, target, 'reset the password for')) return;
+
     const user = await User.findById(req.params.id).select('+password');
     if (user) {
       user.password = newPassword;
@@ -215,6 +324,17 @@ export const resetUserPassword = async (req, res, next) => {
 export const updateUserRole = async (req, res, next) => {
   try {
     const { role } = req.body;
+
+    // Same rule as updateUser: a Sales actor may not change anyone's role, in
+    // either direction. This endpoint exists precisely to change roles, so for
+    // them it is refused outright rather than scoped.
+    if (!canManageAllUsers(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only an administrator can change an account role.',
+      });
+    }
+
     const user = await User.findByIdAndUpdate(
       req.params.id,
       { role },

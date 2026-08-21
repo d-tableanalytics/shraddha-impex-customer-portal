@@ -6,6 +6,7 @@ import ImportJob from '../../models/ImportJob.js';
 import { IMPORT_TEMPLATES, IMPORT_TYPE_NAMES, headersFor } from './import.templates.js';
 import {
   createImportJob, previewJob, errorReport, confirmJob, resumeJob, cancelJob, getJob,
+  setImportMoq,
 } from './import.service.js';
 import { hasPermission } from '../../middlewares/rbac.js';
 import { allowedBrands } from '../../utils/brandAccess.js';
@@ -327,4 +328,26 @@ export const history = async (req, res, next) => {
 export default {
   listImportTypes, downloadTemplate, upload, preview, errors,
   confirm, status, resume, cancel, history,
+};
+
+/**
+ * POST /api/v1/inventory/imports/:jobId/moq
+ * Body: { entries: [{ skuCode, moq }] }
+ *
+ * Answers the MOQ prompt for SKUs this import created. Partial answers are
+ * fine — whatever is left stays on the job's pending list, so a closed browser
+ * loses nothing.
+ */
+export const setImportMoqHandler = async (req, res, next) => {
+  try {
+    const result = await setImportMoq({
+      jobId: asString(req.params.jobId),
+      entries: Array.isArray(req.body?.entries) ? req.body.entries : null,
+      actor: req.user,
+      req,
+    });
+    res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    handle(error, res, next);
+  }
 };

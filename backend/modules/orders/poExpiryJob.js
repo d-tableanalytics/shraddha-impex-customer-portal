@@ -59,7 +59,6 @@ const cancellationEmail = ({ customerName, orderId, lines, bookingDate }) => {
   const rows = lines.map((l) => `
     <tr>
       <td style="${cell}"><strong>${esc(l.skuCode)}</strong></td>
-      <td style="${cell}">${esc(l.msilCode || '—')}</td>
       <td style="${cell} text-align: right;">${l.confirmedQty} pcs</td>
     </tr>`).join('');
 
@@ -74,7 +73,6 @@ const cancellationEmail = ({ customerName, orderId, lines, bookingDate }) => {
       <thead>
         <tr>
           <th style="${head}">SKU</th>
-          <th style="${head}">MSIL Code</th>
           <th style="${head} text-align: right;">Quantity Released</th>
         </tr>
       </thead>

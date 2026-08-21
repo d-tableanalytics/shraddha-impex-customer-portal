@@ -35,6 +35,7 @@ import {
   listImportTypes, downloadTemplate, upload as uploadImport, preview as previewImport,
   errors as importErrors, confirm as confirmImport, status as importStatus,
   resume as resumeImport, cancel as cancelImport, history as importHistory,
+  setImportMoqHandler,
 } from './import.controller.js';
 import {
   listExportTypes, listRuns as listExportRuns, download as downloadExport,
@@ -254,6 +255,9 @@ router.get('/imports/:jobId', authorize(PERMISSIONS.VIEW_INVENTORY), importStatu
 router.get('/imports/:jobId/preview', authorize(PERMISSIONS.VIEW_INVENTORY), previewImport);
 router.get('/imports/:jobId/errors', authorize(PERMISSIONS.VIEW_INVENTORY), importErrors);
 router.post('/imports/:jobId/confirm', authorize(...MAY_IMPORT), confirmImport);
+// Answer the MOQ prompt for SKUs this import created. Same permission as the
+// import itself — whoever may create a SKU may set the minimum it needs.
+router.post('/imports/:jobId/moq', authorize(...MAY_IMPORT), setImportMoqHandler);
 router.post('/imports/:jobId/resume', authorize(...MAY_IMPORT), resumeImport);
 router.post('/imports/:jobId/cancel', authorize(...MAY_IMPORT), cancelImport);
 

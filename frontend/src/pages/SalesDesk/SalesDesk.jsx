@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Search, X, Eye, Clock, Lock, FileCheck2 } from "lucide-react";
+import { Search, X, Eye, Clock, Lock, FileCheck2, Download, FileText } from "lucide-react";
 import { PageHeader } from "../../components/common/PageHeader";
 import { Card, CardContent } from "../../components/ui/Card";
 import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
@@ -10,6 +10,7 @@ import { SalesBookingDrawer } from "../../components/drawer/SalesBookingDrawer";
 import { useSalesStore } from "../../store/salesStore";
 import { useUserStore } from "../../store/userStore";
 import { canUseSalesDesk } from "../../utils/permissions";
+import toast from "react-hot-toast";
 
 // `count` reads the matching figure out of meta, so each tab shows its own
 // live total. meta always covers the whole (search-filtered) set, so these
@@ -51,9 +52,87 @@ export const SalesDesk = () => {
     { scope: "all", label: "Total Bookings", value: meta.total ?? 0, icon: <FileCheck2 size={20} className="text-primary-600" />, bg: "bg-primary-50" },
   ];
 
+  /**
+   * The bookings currently on screen, as export rows.
+   *
+   * `bookings` is ALREADY the filtered set — the store applies the search term
+   * and the scope tab before it reaches this component — so an export follows
+   * whatever the user is looking at without re-implementing either filter. Both
+   * formats share this, so Excel and PDF can never disagree about content.
+   */
+  const buildExport = () => {
+    const rows = bookings.map((b, i) => ({
+      sr: i + 1,
+      orderId: b.orderId,
+      customer: b.customer || "-",
+      date: b.date ? new Date(b.date).toLocaleDateString() : "-",
+      poStatus: b.locked ? "PO Generated" : "PO Pending",
+      poNumber: b.poNumber || "-",
+      lineCount: b.lineCount ?? 0,
+      totalQuantity: b.totalQuantity ?? 0,
+    }));
+    const columns = [
+      { key: "sr", label: "S.No" },
+      { key: "orderId", label: "Booking ID" },
+      { key: "customer", label: "Customer" },
+      { key: "date", label: "Date" },
+      { key: "poStatus", label: "PO Status" },
+      { key: "poNumber", label: "PO Number" },
+      { key: "lineCount", label: "Items" },
+      { key: "totalQuantity", label: "Qty" },
+    ];
+    // The title records WHICH slice this is, so a file opened next week still
+    // says what it was filtered to.
+    const scopeLabel = SCOPES.find((x) => x.key === scope)?.label ?? "All Bookings";
+    const title = `Sales Desk — ${scopeLabel}${search.trim() ? ` — search "${search.trim()}"` : ""}`;
+    return { rows, columns, title };
+  };
+
+  const fileStem = () => `SalesDesk_${scope}`;
+
+  const handleExcel = () => {
+    if (bookings.length === 0) return toast.error("Nothing to export for the current filter.");
+    const { rows, columns } = buildExport();
+    import("../../utils/exportUtils").then(({ exportToExcel }) => {
+      const ok = exportToExcel(rows, columns, fileStem());
+      if (ok) toast.success(`Exported ${rows.length} booking(s).`);
+      else toast.error("Export failed.");
+    });
+  };
+
+  const handlePdf = () => {
+    if (bookings.length === 0) return toast.error("Nothing to export for the current filter.");
+    const { rows, columns, title } = buildExport();
+    // exportToPDF uses jspdf-autotable, which paginates a long table across
+    // pages and repeats the header row on each — nothing extra to do for a
+    // large result set.
+    import("../../utils/exportUtils").then(({ exportToPDF }) => {
+      const ok = exportToPDF(rows, columns, title, fileStem());
+      if (ok) toast.success(`Exported ${rows.length} booking(s) as PDF.`);
+      else toast.error("PDF export failed.");
+    });
+  };
+
+  const exportBtn =
+    "inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:text-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed";
+
   return (
     <div className="flex flex-col gap-6 relative">
-      <PageHeader title="Sales Desk" />
+      <PageHeader
+        title="Sales Desk"
+        actions={(
+          <div className="flex items-center gap-2">
+            <button onClick={handleExcel} disabled={loading || bookings.length === 0}
+              title="Download the bookings shown, as Excel" className={exportBtn}>
+              <Download size={14} /> Excel
+            </button>
+            <button onClick={handlePdf} disabled={loading || bookings.length === 0}
+              title="Download the bookings shown, as PDF" className={exportBtn}>
+              <FileText size={14} /> PDF
+            </button>
+          </div>
+        )}
+      />
       <p className="text-slate-600 -mt-2 text-sm">
         Review confirmed bookings, amend them while the PO is pending, then raise the PO to lock them.
       </p>
