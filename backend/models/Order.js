@@ -18,7 +18,7 @@ const orderSchema = new mongoose.Schema({
     enum: ['PO Received', 'Ready for Dispatch', 'Dispatched', 'Delivered', 'Booked', 'Cancelled'],
     default: 'PO Received'
   },
-  
+
   // Sheet columns
   orderTimestamp: { type: Date, default: null }, // Maps to 'Timestamp'
   company: { type: String, default: null }, // Maps to 'Company'
@@ -61,7 +61,13 @@ const orderSchema = new mongoose.Schema({
   location: { type: String, default: null }, // Maps to 'Location'
   vendorCode: { type: String, default: null }, // Maps to 'Vendor code'
   emailId: { type: String, default: null }, // Maps to 'Email id'
-  phoneNumber: { type: String, default: null } // Maps to 'Phone Number'
+  phoneNumber: { type: String, default: null }, // Maps to 'Phone Number'
+  shippingAddress: { type: String, default: null },
+  billingAddress: { type: String, default: null },
+  shopNumber: { type: String, default: null },
+  gstCode: { type: String, default: null },
+  paymentTerm: { type: String, default: null },
+  promiseDate: { type: Date, default: null }
 }, { timestamps: true });
 
 // Compound indexes

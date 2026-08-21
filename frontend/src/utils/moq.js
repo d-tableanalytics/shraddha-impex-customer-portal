@@ -1,11 +1,11 @@
 /**
  * Customer category and MOQ — the client half of one rule.
  *
- * MOQ (Minimum Order Quantity) applies to Non-MSIL customers ONLY. MSIL
+ * MOQ (Minimum Order Quantity) applies to Regular customers ONLY. MSIL
  * customers are exempt: no MOQ column, no MOQ hint, no MOQ validation.
  *
  * MUST MATCH backend/utils/moq.js. The server is the authority — it rejects a
- * quantity below the MOQ for a Non-MSIL customer — and this file exists so the
+ * quantity below the MOQ for a Regular customer — and this file exists so the
  * customer is told before they submit, not after. When the two disagree the
  * client either blocks a quantity the server would have accepted (which is how
  * MSIL customers ended up being stopped by MOQ) or offers one it will reject.
@@ -13,7 +13,7 @@
  * THE RULE IS A MINIMUM, NOT A PACK SIZE. The quantity must be AT LEAST the
  * MOQ; any amount at or above it is allowed. This screen previously also
  * demanded a whole multiple of the MOQ, which the server has never enforced —
- * so a Non-MSIL customer could bulk-upload 150 against an MOQ of 100 and have
+ * so a Regular customer could bulk-upload 150 against an MOQ of 100 and have
  * it accepted, then be refused the identical quantity when typing it by hand.
  */
 

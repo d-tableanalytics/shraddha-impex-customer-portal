@@ -69,7 +69,7 @@ export const SkuLookupModal = ({
         }
         res = await lookup(skuCodes, msilCodes);
       } else {
-        // Non-MSIL users: SKU codes only (original path).
+        // Regular users: SKU codes only (original path).
         const codes = await readSkuCodesFromFile(file);
         if (codes.length === 0) {
           toast.error('No SKU codes were found in that file.');

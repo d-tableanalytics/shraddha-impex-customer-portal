@@ -441,12 +441,12 @@ export const updateBookingItems = async (req, res, next) => {
         req.user,
         'Booking Edited (Sales)',
         `Booking ${req.params.orderId}: ` +
-          changes.map((c) =>
-            c.type === 'sku' ? `${c.fromSku} → ${c.toSku} (qty ${c.fromQty} → ${c.toQty})`
-              : c.type === 'quantity' ? `${c.skuCode} qty ${c.fromQty} → ${c.toQty}`
+        changes.map((c) =>
+          c.type === 'sku' ? `${c.fromSku} → ${c.toSku} (qty ${c.fromQty} → ${c.toQty})`
+            : c.type === 'quantity' ? `${c.skuCode} qty ${c.fromQty} → ${c.toQty}`
               : c.type === 'added' ? `added ${c.skuCode} x${c.toQty}`
-              : `removed ${c.skuCode} x${c.fromQty}`,
-          ).join('; '),
+                : `removed ${c.skuCode} x${c.fromQty}`,
+        ).join('; '),
         req,
         { meta: { orderId: req.params.orderId, changes } },
       );
@@ -517,9 +517,39 @@ export const raisePo = async (req, res, next) => {
       await Order.updateOne({ _id: row._id }, { $set: { boxNo: current } });
     }
 
+    const {
+      customerName,
+      shippingAddress,
+      billingAddress,
+      shopNumber,
+      gstCode,
+      vendorCode,
+      poDate,
+      paymentTerm,
+      promiseDate,
+    } = req.body || {};
+
+    const setFields = {
+      poNumber,
+      poGeneratedAt: now,
+      poGeneratedBy: req.user._id,
+    };
+    if (customerName) setFields.company = customerName;
+    if (shippingAddress) setFields.shippingAddress = shippingAddress;
+    if (billingAddress) setFields.billingAddress = billingAddress;
+    if (shopNumber) setFields.shopNumber = shopNumber;
+    if (gstCode) setFields.gstCode = gstCode;
+    if (vendorCode) setFields.vendorCode = vendorCode;
+    if (poDate) setFields.poDate = new Date(poDate);
+    if (paymentTerm) setFields.paymentTerm = paymentTerm;
+    if (promiseDate) {
+      setFields.promiseDate = new Date(promiseDate);
+      setFields.supplyByDate = new Date(promiseDate);
+    }
+
     await Order.updateMany(
       { orderId },
-      { $set: { poNumber, poGeneratedAt: now, poGeneratedBy: req.user._id } },
+      { $set: setFields },
     );
 
     // Raising the PO commits the goods: the reserved units leave inventory for

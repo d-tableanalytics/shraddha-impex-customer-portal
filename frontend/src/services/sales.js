@@ -20,9 +20,10 @@ export const salesApi = {
     return res.data;
   },
 
-  /** Omit poNumber to have the server generate PO-YYYY-######. */
-  raisePo: async (orderId, poNumber) => {
-    const res = await api.post(`/sales/bookings/${encodeURIComponent(orderId)}/po`, poNumber ? { poNumber } : {});
+  /** Omit poNumber to have the server generate PO-YYYY-######. Accepts string or poDetails object. */
+  raisePo: async (orderId, poData) => {
+    const payload = typeof poData === "string" ? (poData ? { poNumber: poData } : {}) : (poData || {});
+    const res = await api.post(`/sales/bookings/${encodeURIComponent(orderId)}/po`, payload);
     return res.data.data;
   },
 };

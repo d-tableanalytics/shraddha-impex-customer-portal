@@ -30,7 +30,7 @@ export const BulkUpload = () => {
   // writes to the list, but a booking consumes stock, and any line the customer
   // is already holding is worth re-reading once the numbers have moved.
   const { fetchReservations } = useCartStore();
-  // Non-MSIL customers upload by SKU Code alone.
+  // Regular customers upload by SKU Code alone.
   const showMsilCode = useShowMsilCode();
   const [isParsing, setIsParsing] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);

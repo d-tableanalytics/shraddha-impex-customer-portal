@@ -29,7 +29,7 @@ const userSchema = new mongoose.Schema({
     default: 'Customer',
   },
   // Customer categorisation — drives which bulk-import template applies.
-  customerCategory: { type: String, enum: ['MSIL', 'Non-MSIL'], default: 'Non-MSIL' },
+  customerCategory: { type: String, enum: ['MSIL', 'Regular Customer', 'Non-MSIL'], default: 'Regular Customer' },
 
   // ── Customer master details ─────────────────────────────────────────────
   // Captured once, when the account is created, and NEVER editable afterwards.

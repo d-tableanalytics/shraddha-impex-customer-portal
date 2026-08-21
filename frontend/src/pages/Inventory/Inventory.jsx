@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '../../components/ui/Card';
-import { Boxes, AlertTriangle, Search, Download, Loader2, FileUp } from 'lucide-react';
+import { Boxes, AlertTriangle, Search, Download, Loader2, FileUp, Eye } from 'lucide-react';
 import { useProductStore } from '../../store/productStore';
 import { onStockUpdated } from '../../services/socketService';
 import { useUserStore } from '../../store/userStore';
@@ -10,6 +10,7 @@ import { canViewBoxNo } from '../../utils/permissions';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { SkuLookupModal } from '../../components/inventory/SkuLookupModal';
+import DetailsDrawer from '../../components/inventory/DetailsDrawer';
 import { productsApi } from '../../services/products';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -39,6 +40,14 @@ export const Inventory = () => {
   const [downloading, setDownloading] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
 
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  const handleViewDetails = (product) => {
+    setSelectedProduct(product);
+    setDetailsOpen(true);
+  };
+
   // Debounce typing so a search costs one request rather than one per keystroke,
   // keeping load off the API and avoiding a burst of results racing each other.
   useEffect(() => {
@@ -55,7 +64,7 @@ export const Inventory = () => {
   // catalogue instead of whatever subset was downloaded.
   // Held in a ref so the socket listener below can re-run the CURRENT query
   // without being torn down and re-subscribed every time a filter changes.
-  const load = useRef(() => {});
+  const load = useRef(() => { });
   load.current = () => fetchInventory({
     search: debouncedSearch,
     sort: sortBy,
@@ -162,8 +171,8 @@ export const Inventory = () => {
           <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4 rounded-t-xl">
             <div className="relative w-full md:w-96">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input 
-                type="text" 
+              <input
+                type="text"
                 placeholder={showMsilCode ? "Search by SKU, MSIL Code, or Name..." : "Search by SKU or Name..."}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -225,6 +234,7 @@ export const Inventory = () => {
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">Product Name</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">Brand / Category</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs text-center">In Stock</th>
+                  <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs text-center">Review </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -233,7 +243,7 @@ export const Inventory = () => {
                 )}
                 <AnimatePresence>
                   {!filtering && items.map(product => (
-                    <motion.tr 
+                    <motion.tr
                       key={product.code}
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
@@ -255,13 +265,22 @@ export const Inventory = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center">
-                        <span className={`inline-flex px-2 py-1 rounded-md text-xs font-bold ${
-                          product.availableStock < (product.moq * 2 || 10) 
-                          ? 'bg-red-50 text-red-600' 
-                          : 'bg-success-50 text-success-700'
-                        }`}>
+                        <span className={`inline-flex px-2 py-1 rounded-md text-xs font-bold ${product.availableStock < (product.moq * 2 || 10)
+                            ? 'bg-red-50 text-red-600'
+                            : 'bg-success-50 text-success-700'
+                          }`}>
                           {product.availableStock}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleViewDetails(product)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-primary-600 transition-colors cursor-pointer inline-flex items-center justify-center"
+                          title="View product details"
+                        >
+                          <Eye className="w-5 h-5" />
+                        </button>
                       </td>
                     </motion.tr>
                   ))}
@@ -297,11 +316,11 @@ export const Inventory = () => {
         intro={
           showMsilCode
             ? 'Upload a file containing a SKU Code and/or MSIL Code column. Nothing is ordered '
-              + 'or changed — this only shows what is available for each code so you can review '
-              + 'before booking.'
+            + 'or changed — this only shows what is available for each code so you can review '
+            + 'before booking.'
             : 'Upload a file containing a SKU Code column (or just a plain list of codes in the '
-              + 'first column). Nothing is ordered or changed — this only shows what is available '
-              + 'for each code so you can review before booking.'
+            + 'first column). Nothing is ordered or changed — this only shows what is available '
+            + 'for each code so you can review before booking.'
         }
         showMsilCode={showMsilCode}
         lookup={showMsilCode ? productsApi.lookupCodes : productsApi.lookupSkus}
@@ -321,6 +340,14 @@ export const Inventory = () => {
             render: (r) => (r.moq > 1 ? r.moq.toLocaleString() : '—'),
           },
         ]}
+      />
+
+      <DetailsDrawer
+        isOpen={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
+        product={selectedProduct}
+        showMsilCode={showMsilCode}
+        showBoxNo={showBoxNo}
       />
     </div>
   );

@@ -12,6 +12,7 @@ import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { PoCountdown } from "../ui/PoCountdown";
 import { ProductSearchDropdown } from "../ui/ProductSearchDropdown";
 import { canEditBooking, canRaisePo, canViewLineItemBoxNo, hasPermission, PERMISSIONS } from "../../utils/permissions";
+import { PoConfirmModal } from "../modal/PoConfirmModal";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
 //
@@ -35,6 +36,7 @@ export const SalesBookingDrawer = () => {
   const [draft, setDraft] = useState([]);
   const [poInput, setPoInput] = useState("");
   const [showPoBox, setShowPoBox] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
   // `selected` is only replaced on an explicit select / save / raise-PO, so this
   // resyncs the draft with server truth after a write without clobbering
@@ -43,6 +45,7 @@ export const SalesBookingDrawer = () => {
     setDraft(toDraft(selected));
     setShowPoBox(false);
     setPoInput("");
+    setShowModal(false);
   }, [selected]);
 
   if (!selected) return null;
@@ -134,10 +137,15 @@ export const SalesBookingDrawer = () => {
     });
   };
 
-  const handleRaisePo = async () => {
-    const res = await raisePo(selected.orderId, poInput.trim() || undefined);
+  const handleOpenModal = () => {
+    setShowModal(true);
+  };
+
+  const handleModalConfirm = async (formData) => {
+    const res = await raisePo(selected.orderId, formData);
     if (res.success) {
       toast.success(`PO ${res.poNumber} raised. Booking is now locked.`);
+      setShowModal(false);
       setShowPoBox(false);
     } else {
       toast.error(res.error);
@@ -412,7 +420,7 @@ export const SalesBookingDrawer = () => {
                     placeholder="PO number (blank = auto)"
                     className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg outline-none focus:border-primary-500 w-56"
                   />
-                  <ERPButton variant="primary" size="sm" onClick={handleRaisePo} disabled={saving}>
+                  <ERPButton variant="primary" size="sm" onClick={handleOpenModal} disabled={saving}>
                     {saving ? <Loader2 size={16} className="mr-2 animate-spin" /> : null}
                     Confirm &amp; lock
                   </ERPButton>
@@ -424,6 +432,15 @@ export const SalesBookingDrawer = () => {
             </div>
           </div>
         </motion.div>
+
+        <PoConfirmModal
+          isOpen={showModal}
+          onClose={() => setShowModal(false)}
+          onConfirm={handleModalConfirm}
+          booking={selected}
+          initialPoNumber={poInput.trim()}
+          saving={saving}
+        />
       </div>
     </AnimatePresence>
   );

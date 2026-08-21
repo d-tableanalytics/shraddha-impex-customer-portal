@@ -2,7 +2,7 @@ import * as XLSX from "xlsx";
 import { revalidateRow } from "../store/bulkImportStore";
 
 // `showMsilCode` mirrors the caller's MSIL visibility rule. When false the MSIL
-// column is ignored even if the sheet contains one, so a Non-MSIL customer who
+// column is ignored even if the sheet contains one, so a Regular customer who
 // uploads an MSIL-style template is never failed on a code that doesn't apply
 // to them — their rows are resolved by SKU Code alone.
 export const parseExcelFile = async (file, showMsilCode = true) => {
@@ -98,7 +98,7 @@ export const TEMPLATE_CONFIG = {
   sample: [],
 };
 
-// Non-MSIL customers never order by MSIL Code, so they get a template without
+// Regular customers never order by MSIL Code, so they get a template without
 // that column and no sample rows.
 export const TEMPLATE_CONFIG_NO_MSIL = {
   ...TEMPLATE_CONFIG,

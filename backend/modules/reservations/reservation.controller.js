@@ -117,7 +117,7 @@ const sendNotification = (userId, title, message, type = 'reservation') => {
   notifyUser(userId, { title, message, type });
 };
 
-// MOQ (Minimum Order Quantity) is enforced only for Non-MSIL customers; MSIL
+// MOQ (Minimum Order Quantity) is enforced only for Regular customers; MSIL
 // customers are exempt. Both the rule and the classification behind it live in
 // utils/moq.js — see enforceMoq()/moqError() there — so this file, the bulk
 // validator below and the front end cannot drift apart on who MOQ applies to.
@@ -546,7 +546,7 @@ export const createReservation = async (req, res, next) => {
     });
     const mergedQuantity = (existing?.quantity || 0) + quantity;
 
-    // MOQ applies to Non-MSIL customers only; MSIL customers are exempt. It is
+    // MOQ applies to Regular customers only; MSIL customers are exempt. It is
     // checked against the merged total, since that is the quantity that will
     // actually be booked — topping up a line must not fail on the increment alone.
     enforceMoq(req.user, product, mergedQuantity);
@@ -641,7 +641,7 @@ export const updateReservationQuantity = async (req, res, next) => {
       throw new Error('Product not found.');
     }
 
-    // MOQ applies to Non-MSIL customers only; MSIL customers are exempt.
+    // MOQ applies to Regular customers only; MSIL customers are exempt.
     enforceMoq(req.user, product, quantity);
 
     // No stock validation/adjustment — stock is only allocated at confirmation time.
@@ -1196,7 +1196,7 @@ export const validateBulk = async (req, res, next) => {
         }
       }
 
-      // MOQ applies to Non-MSIL customers only; MSIL customers are exempt.
+      // MOQ applies to Regular customers only; MSIL customers are exempt.
       // Asked of utils/moq.js rather than re-derived here — a bulk upload that
       // disagreed with the individual booking screen about who MOQ applies to
       // is how an MSIL customer's file came back full of MOQ errors.

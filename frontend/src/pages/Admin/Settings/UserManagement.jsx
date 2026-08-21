@@ -39,6 +39,7 @@ const PAGE_SIZE = 10;
 
 const CATEGORY_STYLES = {
   MSIL: 'bg-primary-50 text-primary-700 border-primary-200',
+  'Regular Customer': 'bg-amber-50 text-amber-700 border-amber-200',
   'Non-MSIL': 'bg-amber-50 text-amber-700 border-amber-200',
 };
 
@@ -60,7 +61,7 @@ const emptyForm = {
   vendorNumber: '',
   gstNumber: '',
   role: 'Customer',
-  customerCategory: 'Non-MSIL',
+  customerCategory: 'Regular Customer',
   status: 'Active',
   brandAccess: {
     koken: true,
@@ -72,12 +73,12 @@ const emptyForm = {
 // A single "access level" maps onto the underlying role + customerCategory fields.
 // 'Sales User' is a role in its own right, not a customer category — it must be
 // listed here, or editing a Sales user would silently demote them to Customer.
-const ACCESS_LEVELS = ['Non-MSIL', 'MSIL', 'Sales User', 'Admin'];
+const ACCESS_LEVELS = ['Regular Customer', 'MSIL', 'Sales User', 'Admin'];
 
 const accessLevelOf = (u) => {
   if (u.role === 'Admin') return 'Admin';
   if (u.role === 'Sales') return 'Sales User';
-  return u.customerCategory === 'MSIL' ? 'MSIL' : 'Non-MSIL';
+  return u.customerCategory === 'MSIL' ? 'MSIL' : 'Regular Customer';
 };
 
 const accessLevelToFields = (level) => {
@@ -322,7 +323,7 @@ export const UserManagement = () => {
                     // A customer category belongs to CUSTOMERS. Testing against
                     // Admin alone meant every staff role — Sales, Inventory
                     // Manager, Warehouse, Management — was offered an
-                    // MSIL/Non-MSIL dropdown that means nothing for them, and
+                    // MSIL/Regular Customer dropdown that means nothing for them, and
                     // could be set to a value that never applies. Staff work
                     // across both categories by definition.
                     const isCustomer = (u.role || 'Customer') === 'Customer';
@@ -347,21 +348,21 @@ export const UserManagement = () => {
                         <td className="px-6 py-4">
                           {isCustomer ? (
                             <select
-                              value={u.customerCategory || 'Non-MSIL'}
+                              value={u.customerCategory === 'MSIL' ? 'MSIL' : 'Regular Customer'}
                               onChange={(e) => handleCategoryChange(u._id, e.target.value)}
                               disabled={u.archived}
                               title={u.archived ? 'Restore the account to Active to edit it' : undefined}
-                              className={`text-xs font-bold rounded-md border px-2.5 py-1.5 outline-none cursor-pointer focus:ring-2 focus:ring-primary-500/20 disabled:opacity-50 disabled:cursor-not-allowed ${CATEGORY_STYLES[u.customerCategory || 'Non-MSIL']}`}
+                              className={`text-xs font-bold rounded-md border px-2.5 py-1.5 outline-none cursor-pointer focus:ring-2 focus:ring-primary-500/20 disabled:opacity-50 disabled:cursor-not-allowed ${CATEGORY_STYLES[u.customerCategory] || CATEGORY_STYLES['Regular Customer']}`}
                             >
+                              <option value="Regular Customer">Regular Customer</option>
                               <option value="MSIL">MSIL</option>
-                              <option value="Non-MSIL">Non-MSIL</option>
                             </select>
                           ) : (
                             /* Was hardcoded "N/A (Admin)", which labelled a Sales
                                user as an Admin. Staff work across both MSIL and
-                               Non-MSIL, so the honest value is the role held. */
+                               Regular Customer, so the honest value is the role held. */
                             <span
-                              title={`Customer category does not apply to a ${u.role} account — they work across both MSIL and Non-MSIL.`}
+                              title={`Customer category does not apply to a ${u.role} account — they work across both MSIL and Regular Customer.`}
                               className="px-2 py-1 bg-slate-100 text-slate-600 text-xs font-bold rounded-md border border-slate-200 w-fit inline-block"
                             >
                               {u.role}
@@ -511,7 +512,7 @@ export const UserManagement = () => {
                 className={inputCls}
                 disabled={form.role === 'Admin' || form.role === 'Sales'}
               >
-                <option value="Non-MSIL">Non-MSIL</option>
+                <option value="Regular Customer">Regular Customer</option>
                 <option value="MSIL">MSIL</option>
               </select>
             </Field>
