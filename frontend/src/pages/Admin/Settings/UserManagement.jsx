@@ -16,11 +16,9 @@ import {
 } from '../../../utils/permissions';
 
 /**
- * Customer master details — captured at creation and fixed from then on.
+ * Customer master details.
  *
- * Mirrors CUSTOMER_MASTER_FIELDS in backend/modules/users/user.controller.js,
- * which REFUSES an update containing any of them. The form marks them
- * accordingly rather than offering an edit the server will reject.
+ * Mirrors CUSTOMER_MASTER_FIELDS in backend/modules/users/user.controller.js.
  */
 const CUSTOMER_MASTER_FIELDS = [
   { key: 'customerName', label: 'Customer Name', placeholder: 'Legal / trading name' },
@@ -145,6 +143,12 @@ export const UserManagement = () => {
       status: u.status || 'Active',
       accessLevel: accessLevelOf(u),
       brandAccess: u.brandAccess || { koken: true, bix: true, imada: true },
+      customerName: u.customerName || '',
+      phone: u.phone || '',
+      location: u.location || '',
+      shopNumber: u.shopNumber || '',
+      vendorNumber: u.vendorNumber || '',
+      gstNumber: u.gstNumber || '',
     });
   };
 
@@ -237,7 +241,7 @@ export const UserManagement = () => {
     if (form.role === 'Customer') {
       const missing = CUSTOMER_MASTER_FIELDS.filter((f) => !String(form[f.key] || '').trim());
       if (missing.length) {
-        toast.error(`Required (and fixed after creation): ${missing.map((f) => f.label).join(', ')}`);
+        toast.error(`Required: ${missing.map((f) => f.label).join(', ')}`);
         return;
       }
       if (!phoneLooksValid(form.phone)) {
@@ -456,10 +460,7 @@ export const UserManagement = () => {
             <input type="text" value={form.password} onChange={setField('password')} className={inputCls} placeholder="Initial password" required />
           </Field>
 
-          {/* Customer master details. Captured here and NOWHERE else: the
-              server refuses to change them once the account exists, so the
-              panel says so plainly rather than letting someone find out by
-              having a save rejected later. */}
+          {/* Customer master details. */}
           {form.role === 'Customer' && (
             <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 flex flex-col gap-3">
               <div>
@@ -467,9 +468,7 @@ export const UserManagement = () => {
                   Customer master details
                 </h4>
                 <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
-                  Required, and <strong>fixed once the account is created</strong> — they identify
-                  the entity we trade with, so they cannot be edited afterwards. Check them before
-                  you save.
+                  Required fields that identify the entity we trade with.
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -609,32 +608,25 @@ export const UserManagement = () => {
                </Field>
              </div>
 
-            {/* Customer master details, shown but NOT editable. The server
-                rejects an update containing any of them, so rendering them as
-                inputs would be offering an edit that cannot succeed. Displayed
-                rather than hidden because this is where someone looks for a
-                customer's GST or shop number. */}
+            {/* Customer master details */}
             {(editUser?.role || 'Customer') === 'Customer' && (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center gap-2 mb-2">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 flex flex-col gap-3">
+                <div className="flex items-center gap-2">
                   <Shield size={13} className="text-slate-400" />
                   <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                    Customer master details — fixed
+                    Customer master details
                   </h4>
                 </div>
-                <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
-                  Set when the account was created and not editable afterwards.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
                   {CUSTOMER_MASTER_FIELDS.map((f) => (
-                    <div key={f.key} className="flex flex-col">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        {f.label}
-                      </span>
-                      <span className="text-sm font-semibold text-slate-700 break-words">
-                        {editUser?.[f.key] || <span className="font-normal text-slate-400">Not recorded</span>}
-                      </span>
-                    </div>
+                    <Field key={f.key} label={f.label}>
+                      <input
+                        value={editForm[f.key]}
+                        onChange={setEditField(f.key)}
+                        className={inputCls}
+                        placeholder={f.placeholder}
+                      />
+                    </Field>
                   ))}
                 </div>
               </div>

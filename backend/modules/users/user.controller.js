@@ -153,9 +153,8 @@ export const createUser = async (req, res, next) => {
   }
 };
 
-// Fields an admin may change after creation. CUSTOMER_MASTER_FIELDS are
-// deliberately absent — see the explicit rejection in updateUser().
-const ALLOWED_UPDATES = ['user', 'company', 'email', 'role', 'customerCategory', 'status', 'brandAccess', 'showMsilCode'];
+// Fields an admin may change after creation.
+const ALLOWED_UPDATES = ['user', 'company', 'email', 'role', 'customerCategory', 'status', 'brandAccess', 'showMsilCode', ...CUSTOMER_MASTER_FIELDS];
 
 // Admin updates a user, including changing the customer category at any time.
 // Status transitions have side effects:
@@ -164,17 +163,6 @@ const ALLOWED_UPDATES = ['user', 'company', 'email', 'role', 'customerCategory',
 //                  original _id, so all its history reattaches.
 export const updateUser = async (req, res, next) => {
   try {
-    // REFUSE the master details rather than dropping them. They are absent from
-    // ALLOWED_UPDATES, so they would be ignored silently — and a caller told
-    // "saved" while their change was discarded is worse than one told "no".
-    const attempted = CUSTOMER_MASTER_FIELDS.filter((f) => f in req.body);
-    if (attempted.length) {
-      return res.status(400).json({
-        success: false,
-        message: `These customer details are fixed once the account exists and cannot be changed: ${attempted.join(', ')}.`,
-        immutable: attempted,
-      });
-    }
 
     // Scope: a Sales actor may only edit CUSTOMER accounts, and may not turn one
     // into anything else. Both halves matter — without the second, editing a

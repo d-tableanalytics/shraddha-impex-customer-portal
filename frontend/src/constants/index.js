@@ -7,5 +7,5 @@ export const ROUTES = {
 };
 
 // Product data is no longer hardcoded — it is fetched live from MongoDB
-// via productsApi.search(query, brand) → GET /api/v1/products/:brand?search=...
+// via productsApi.search(query) → GET /api/v1/products/search?search=... (all brands the user may see)
 // See: frontend/src/services/products.js

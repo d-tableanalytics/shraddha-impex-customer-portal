@@ -1,5 +1,5 @@
-import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
-import { canAccessBrand, allowedBrandModels } from '../../utils/brandAccess.js';
+import { Product, ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
+import { canAccessBrand, allowedBrands, allowedBrandModels } from '../../utils/brandAccess.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
 import { withCatalogueBoxNoVisibility } from '../../utils/boxNoVisibility.js';
 import { prefixMatch, containsMatch, escapedTerm } from '../../utils/searchQuery.js';
@@ -144,6 +144,96 @@ export const getInventory = async (req, res, next) => {
   }
 };
 
+/**
+ * Ranked SKU search, shared by the single-brand and all-brands pickers.
+ *
+ * Ordered so that what the user most likely means comes first: codes STARTING
+ * with the term, then codes merely containing it, alphabetical within each
+ * group. Without this, typing "1" returns fifty codes with a 1 buried somewhere
+ * and the obvious "1..." matches are nowhere in sight — technically "all
+ * matches", practically unusable.
+ *
+ * `match` is the already-built $match stage (brand scope + search clause).
+ */
+const rankedSearchPipeline = (match, term, skip, limit) =>
+  term
+    ? [
+      { $match: match },
+      {
+        $addFields: {
+          _rank: {
+            $cond: [
+              // ^term against the SKU. `options: 'i'` mirrors the matcher.
+              { $regexMatch: { input: { $ifNull: ['$skuCode', ''] }, regex: `^${escapedTerm(term)}`, options: 'i' } },
+              0,
+              1,
+            ],
+          },
+        },
+      },
+      { $sort: { _rank: 1, skuCode: 1, brand: 1 } },
+      { $skip: skip },
+      { $limit: limit },
+      { $unset: '_rank' },
+    ]
+    : [{ $match: match }, { $sort: { skuCode: 1, brand: 1 } }, { $skip: skip }, { $limit: limit }];
+
+// GET /api/v1/products/search?search=&page=&limit=
+//
+// The SKU picker on Create Booking and the sales desk. ONE query across EVERY
+// brand the user may see, rather than the per-brand route below: the picker
+// used to ask only the user's first permitted brand, so a customer with Koken
+// and BIX access could never find a BIX SKU by typing it, and an admin saw
+// Koken alone. Brand scope comes from allowedBrands(), the same rule the
+// catalogue, lookup and reservation paths apply, so the list can only ever
+// offer a SKU the user is then allowed to book.
+//
+// Every row carries its `brand` (the discriminator key), which the client keeps
+// so the picker can label each hit and the reservation resolves against the
+// right brand.
+export const searchProducts = async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const skip = (page - 1) * limit;
+
+    const brands = allowedBrands(req.user);
+    if (brands.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+        pagination: { total: 0, page, pages: 1 },
+      });
+    }
+
+    const term = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const matcher = containsMatch(term);
+
+    // MSIL Codes are only searchable by users they are shown to — the same rule
+    // the inventory list applies. A non-MSIL customer's placeholder reads
+    // "Search by SKU Code..." and the results agree with it.
+    const match = { brand: { $in: brands } };
+    if (matcher) {
+      match.$or = [{ skuCode: matcher }];
+      if (msilAppliesTo(req.user)) match.$or.push({ msilCode: matcher });
+    }
+    if (req.query.category) match.category = req.query.category;
+
+    const [products, total] = await Promise.all([
+      Product.aggregate(rankedSearchPipeline(match, term, skip, limit)),
+      Product.countDocuments(match),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: withCatalogueBoxNoVisibility(products, req.user),
+      pagination: { total, page, pages: Math.ceil(total / limit) || 1 },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // GET /api/v1/products/:brand?search=&category=&page=&limit=
 export const getProducts = async (req, res, next) => {
   try {
@@ -179,35 +269,9 @@ export const getProducts = async (req, res, next) => {
 
     const skip = (page - 1) * limit;
 
-    // Ranked so that what the user is most likely to mean comes first: codes
-    // STARTING with the term, then codes merely containing it, alphabetical
-    // within each group. Without this, typing "1" returns fifty codes with a 1
-    // buried somewhere and the obvious "1..." matches are nowhere in sight —
-    // technically "all matches", practically unusable.
-    const pipeline = matcher
-      ? [
-        { $match: query },
-        {
-          $addFields: {
-            _rank: {
-              $cond: [
-                // ^term against the SKU. `options: 'i'` mirrors the matcher.
-                { $regexMatch: { input: { $ifNull: ['$skuCode', ''] }, regex: `^${escapedTerm(term)}`, options: 'i' } },
-                0,
-                1,
-              ],
-            },
-          },
-        },
-        { $sort: { _rank: 1, skuCode: 1 } },
-        { $skip: skip },
-        { $limit: limit },
-        { $unset: '_rank' },
-      ]
-      : [{ $match: query }, { $sort: { skuCode: 1 } }, { $skip: skip }, { $limit: limit }];
-
+    // Ranking shared with the all-brands search — see rankedSearchPipeline.
     const [products, total] = await Promise.all([
-      Model.aggregate(pipeline),
+      Model.aggregate(rankedSearchPipeline(query, matcher ? term : '', skip, limit)),
       Model.countDocuments(query),
     ]);
 

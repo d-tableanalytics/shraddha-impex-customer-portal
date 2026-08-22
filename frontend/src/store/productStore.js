@@ -24,7 +24,6 @@ export const useProductStore = create((set, get) => ({
   // picker holds a page at a time and pulls the next as the list is scrolled.
   // `searchTotal` is how many matched in all — what tells the user to narrow.
   searchTerm: '',
-  searchBrand: null,
   searchPage: 1,
   searchTotal: 0,
   searchHasMore: false,
@@ -76,11 +75,16 @@ export const useProductStore = create((set, get) => ({
   // Returns the full filtered catalogue for download (not stored in state).
   exportInventory: async (params) => productsApi.getInventoryExport(params),
 
+  // Searches every brand the user may see — the server scopes the query from
+  // the user's access flags, so there is no brand to pick here. (The picker
+  // used to query only the first permitted brand, which hid every BIX and
+  // IMADA SKU from a customer who also had Koken.)
+  //
   // Typing is faster than the network, so responses can land out of order: a
   // slow answer for "1" arriving after the quick one for "13012" would leave
   // 6,000 unrelated rows on screen under the narrower term. Each call takes a
   // ticket and only the latest is allowed to write results.
-  searchProducts: async (query, brand) => {
+  searchProducts: async (query) => {
     if (!query) {
       searchSeq += 1; // cancel anything in flight
       set({
@@ -92,18 +96,11 @@ export const useProductStore = create((set, get) => ({
     const ticket = (searchSeq += 1);
     set({ searching: true, searchTerm: query });
     try {
-      const b = brand || getActiveBrand();
-      if (!b) {
-        if (ticket === searchSeq) {
-          set({ searchResults: [], searching: false, searchTotal: 0, searchHasMore: false });
-        }
-        return;
-      }
-      const { items, total, hasMore } = await productsApi.search(query, b, { page: 1 });
+      const { items, total, hasMore } = await productsApi.search(query, { page: 1 });
       if (ticket !== searchSeq) return; // superseded — drop this answer
       set({
         searchResults: items, searching: false,
-        searchTotal: total, searchHasMore: hasMore, searchPage: 1, searchBrand: b,
+        searchTotal: total, searchHasMore: hasMore, searchPage: 1,
       });
     } catch {
       if (ticket === searchSeq) set({ searching: false });
@@ -118,16 +115,14 @@ export const useProductStore = create((set, get) => ({
    * discarded rather than appended to an unrelated result set.
    */
   loadMoreSearchResults: async () => {
-    const { searchTerm, searchPage, searchHasMore, searchLoadingMore, searchBrand } = get();
+    const { searchTerm, searchPage, searchHasMore, searchLoadingMore } = get();
     if (!searchTerm || !searchHasMore || searchLoadingMore) return;
 
     const ticket = searchSeq;
     set({ searchLoadingMore: true });
     try {
       const nextPage = searchPage + 1;
-      const { items, total, hasMore } = await productsApi.search(
-        searchTerm, searchBrand || getActiveBrand(), { page: nextPage },
-      );
+      const { items, total, hasMore } = await productsApi.search(searchTerm, { page: nextPage });
       if (ticket !== searchSeq) return; // the term moved on
       set((s) => ({
         searchResults: [...s.searchResults, ...items],

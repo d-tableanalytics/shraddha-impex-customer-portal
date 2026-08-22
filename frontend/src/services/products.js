@@ -56,19 +56,26 @@ export const productsApi = {
     return { data: response.data.data || [], summary: response.data.summary };
   },
 
-  // Search across the active user's accessible brand(s).
+  // SKU picker search across EVERY brand the user may see, in one request.
+  //
+  // The server decides the brand scope from the user's access flags, so a
+  // customer with Koken and BIX sees both catalogues merged and ranked, and a
+  // customer with one brand sees exactly that one. Each row comes back tagged
+  // with its brand, which the picker shows and the cart keeps.
   //
   // Paged rather than "the first 50 and nothing else": a one-character term
   // matches thousands of SKUs, and the picker pulls further pages as the list
   // is scrolled. `total` comes back so the UI can say how many matched, which
   // is what tells someone their term is too broad.
-  search: async (query, brand = 'koken', { limit = 100, page = 1 } = {}) => {
+  search: async (query, { limit = 100, page = 1 } = {}) => {
     if (!query) return { items: [], total: 0, page: 1, hasMore: false };
     const params = new URLSearchParams({
       search: query, limit: String(limit), page: String(page),
     });
-    const response = await api.get(`/products/${brand}?${params.toString()}`);
-    const items = (response.data.data || []).map(mapProduct);
+    const response = await api.get(`/products/search?${params.toString()}`);
+    // The server tags each row with its source brand; keep that over the
+    // vendorName mapProduct would otherwise use.
+    const items = (response.data.data || []).map((p) => ({ ...mapProduct(p), brand: p.brand }));
     const total = response.data.pagination?.total ?? items.length;
     return { items, total, page, hasMore: page * limit < total };
   },
