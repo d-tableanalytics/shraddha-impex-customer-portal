@@ -39,48 +39,98 @@ const esc = (v) =>
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 /**
- * What changed between what the customer originally booked and what is being
- * put on the PO.
+ * What the SALES DESK changed between the booking and the purchase order.
  *
- *   bookedQty     — the quantity the customer placed (0 for a sales-added line)
- *   confirmedQty  — the quantity going onto the PO, after any sales-desk edits
+ * THE BASELINE IS THE BOOKING-STAGE QUANTITY — what the booking actually held
+ * once confirmed — NOT `bookedQty`, which is what the customer asked for before
+ * stock was checked.
  *
- * Removed lines no longer exist as rows, so they are recovered from the audit
- * trail. A SKU that was added and later removed is ignored, since the customer
- * never saw it.
+ * Those two differ whenever stock was short. Booking 50 against 2 in stock
+ * writes bookedQty 50, confirmedQty 2, pendingQty 48, and moves the 48 onto an
+ * indent with its own number and its own notifications. Diffing bookedQty
+ * against confirmedQty therefore reported "changed from 50 pcs to 2 pcs" on a
+ * booking nobody had touched, told the customer their order had been adjusted,
+ * and left the 48 pcs unaccounted for on a table that totalled 50 → 2. The
+ * automatic split is not an adjustment and the indent is a separate document,
+ * so neither is described here.
+ *
+ * The only thing this summary reports is a DELIBERATE sales-desk edit, and the
+ * audit trail is what proves one happened. Every edit is written as
+ * 'Booking Edited (Sales)' with fromQty/toQty recorded against confirmedQty
+ * (see runUpdateItems), so replaying those entries recovers each line's
+ * booking-stage quantity exactly. A line with no entry was never edited and
+ * reports as unchanged.
+ *
+ * Removed lines no longer exist as rows, so they too come from the audit trail.
+ * A SKU the desk both added and later removed is ignored — the customer never
+ * saw it.
  */
 const buildChangeSummary = async (rows, orderId) => {
-  const lines = rows.map((r) => {
-    const from = r.bookedQty || 0;
-    const to = r.confirmedQty || 0;
-    let type = 'unchanged';
-    if (from === 0 && to > 0) type = 'added';
-    else if (to > from) type = 'increased';
-    else if (to < from) type = 'reduced';
-    // NO boxNo here. This summary exists only to build the email that goes to
-    // the CUSTOMER, and the box number is an internal picking location shown to
-    // Sales and Admin alone — see canViewLineItemBoxNo() on the frontend.
-    return { skuCode: r.skuCode, msilCode: r.msilCode || null, from, to, type };
-  });
-
-  // Removals, recovered from this booking's edit history.
-  const currentSkus = new Set(rows.map((r) => r.skuCode));
   const editLogs = await AuditLog.find({
     action: 'Booking Edited (Sales)',
     'meta.orderId': orderId,
   }).sort({ createdAt: 1 }).lean();
 
-  const removed = new Map();
+  // Replay the edits forward, keyed by the SKU each line carries at that point
+  // in time, so a line that was re-coded still resolves to the quantity it was
+  // booked with.
+  const origin = new Map();  // current skuCode → { qty, addedByDesk, fromSku }
+  const removed = new Map(); // skuCode → booking-stage qty
+
   for (const log of editLogs) {
     for (const c of log?.meta?.changes || []) {
-      if (c.type === 'removed') removed.set(c.skuCode, c.fromQty || 0);
-      // Re-added later → no longer a removal.
-      if (c.type === 'added') removed.delete(c.skuCode);
+      if (c.type === 'added') {
+        origin.set(c.skuCode, { qty: 0, addedByDesk: true, fromSku: null });
+        removed.delete(c.skuCode); // re-added → no longer a removal
+      } else if (c.type === 'removed') {
+        const prior = origin.get(c.skuCode);
+        // Only report a line the CUSTOMER booked. One the desk both added and
+        // removed never reached them.
+        if (!prior?.addedByDesk) removed.set(c.skuCode, prior?.qty ?? c.fromQty ?? 0);
+        origin.delete(c.skuCode);
+      } else if (c.type === 'sku') {
+        // The line survives under a new code — carry its origin across, keeping
+        // the code it was booked under so the customer can recognise it.
+        const prior = origin.get(c.fromSku)
+          ?? { qty: c.fromQty ?? 0, addedByDesk: false, fromSku: c.fromSku };
+        origin.delete(c.fromSku);
+        origin.set(c.toSku, { ...prior, fromSku: prior.fromSku ?? c.fromSku });
+      } else if (!origin.has(c.skuCode)) {
+        // First sighting of a line wins: that is its pre-edit, booking-stage state.
+        origin.set(c.skuCode, { qty: c.fromQty ?? 0, addedByDesk: false, fromSku: null });
+      }
     }
   }
+
+  const lines = rows.map((r) => {
+    const to = r.confirmedQty || 0;
+    const base = { skuCode: r.skuCode, msilCode: r.msilCode || null, fromSku: null };
+    const o = origin.get(r.skuCode);
+
+    if (!o) {
+      // Never edited: booking stage and PO hold the same quantity. The
+      // bookedQty check is the marker runUpdateItems stamps on a line it added
+      // itself, and covers the case where that line's audit entry did not
+      // survive — no customer line is ever written with bookedQty 0.
+      const deskAdded = (r.bookedQty || 0) === 0 && to > 0;
+      return { ...base, from: deskAdded ? 0 : to, to, type: deskAdded ? 'added' : 'unchanged' };
+    }
+
+    if (o.addedByDesk) return { ...base, from: 0, to, type: 'added' };
+
+    const from = o.qty;
+    // A re-code is a change even when the quantity is untouched, so it is typed
+    // in its own right rather than falling through to "no change".
+    if (o.fromSku && o.fromSku !== r.skuCode) {
+      return { ...base, fromSku: o.fromSku, from, to, type: 'recoded' };
+    }
+    return { ...base, from, to, type: to > from ? 'increased' : to < from ? 'reduced' : 'unchanged' };
+  });
+
+  const currentSkus = new Set(rows.map((r) => r.skuCode));
   for (const [skuCode, from] of removed) {
     if (currentSkus.has(skuCode)) continue;
-    lines.push({ skuCode, msilCode: null, from, to: 0, type: 'removed' });
+    lines.push({ skuCode, msilCode: null, fromSku: null, from, to: 0, type: 'removed' });
   }
 
   return {
@@ -96,6 +146,11 @@ const changeLabel = (l) => {
   if (l.type === 'added') return `newly added — ${l.to} pcs`;
   if (l.type === 'removed') return `removed — was ${l.from} pcs`;
   if (l.type === 'unchanged') return `no change — ${l.to} pcs`;
+  if (l.type === 'recoded') {
+    return l.from === l.to
+      ? `re-coded from ${l.fromSku} — ${l.to} pcs`
+      : `re-coded from ${l.fromSku}, ${l.from} pcs to ${l.to} pcs`;
+  }
   return `changed from ${l.from} pcs to ${l.to} pcs`;
 };
 
@@ -107,6 +162,7 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
     reduced: 'color: #b54708; font-weight: bold;',
     added: 'color: #1a5b9e; font-weight: bold;',
     removed: 'color: #b42318; font-weight: bold;',
+    recoded: 'color: #1a5b9e; font-weight: bold;',
     unchanged: 'color: #888;',
   };
 
