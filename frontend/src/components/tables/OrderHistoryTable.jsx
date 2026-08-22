@@ -160,7 +160,7 @@ export const OrderHistoryTable = () => {
                           className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded-full uppercase tracking-wide"
                           title="This booking has items to raise an indent for"
                         >
-                          <PackageX size={10} /> Raise Indent
+                          <PackageX size={10} /> Indent
                         </span>
                       )}
                     </div>

@@ -103,6 +103,28 @@ export const canEditBooking = (user, booking) => {
   return hasPermission(user, PERMISSIONS.EDIT_BOOKING_PRE_PO);
 };
 
+/**
+ * Who may amend the QUANTITIES on this booking right now.
+ *
+ * Wider than canEditBooking, which answers "may this user work the sales desk
+ * on it". Two audiences, two rules:
+ *
+ *   • Staff — the desk rules, unchanged: Sales until the PO is raised, Admin
+ *     after it too.
+ *   • The customer who placed it — until the PO is raised. Their booking list
+ *     only ever contains their own bookings, so ownership is implied here; the
+ *     server checks it properly on every write and confines them to quantity
+ *     changes on lines that already exist.
+ *
+ * Once the PO is raised the quantities are committed and only an Admin may
+ * move them, which is what canEditBooking already encodes.
+ */
+export const canEditBookingQuantity = (user, booking) => {
+  if (!booking) return false;
+  if (hasPermission(user, PERMISSIONS.VIEW_ALL_BOOKINGS)) return canEditBooking(user, booking);
+  return hasPermission(user, PERMISSIONS.CREATE_ORDER) && !booking.locked;
+};
+
 export const canRaisePo = (user, booking) =>
   Boolean(booking) && !booking.locked && hasPermission(user, PERMISSIONS.RAISE_PO);
 
@@ -200,6 +222,7 @@ export default {
   isSales,
   canUseSalesDesk,
   canEditBooking,
+  canEditBookingQuantity,
   canRaisePo,
   canUseInventoryMaster,
   canOpenUserManagement,

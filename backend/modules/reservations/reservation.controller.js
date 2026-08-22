@@ -15,6 +15,7 @@ import { recordAudit } from '../../utils/auditLog.js';
 import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
+import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { enforceMoq, moqError } from '../../utils/moq.js';
 import { sendIndentRaisedMails, sendBookingMails } from '../../utils/indentMail.js';
 
@@ -142,11 +143,16 @@ export const getReservations = async (req, res, next) => {
 };
 
 // Backorders: quantities that could not be fulfilled at confirmation time.
-// Admins see backorders across all customers; customers see only their own.
+//
+// Anyone holding VIEW_ALL_BOOKINGS — Admin AND Sales — sees every customer's
+// indents; customers see only their own. Keyed off the permission rather than
+// `role === 'Admin'`, which is what had Sales working the whole booking queue
+// on the sales desk while Indent History showed them only their own rows.
 export const getPendingReservations = async (req, res, next) => {
   try {
+    const seesEverything = hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS);
     const filter = { status: { $in: ['Pending', 'Partially Confirmed'] } };
-    if (req.user.role !== 'Admin') {
+    if (!seesEverything) {
       filter.customerId = req.user._id;
     }
 
@@ -180,7 +186,11 @@ export const getPendingReservations = async (req, res, next) => {
 
     const populated = await Promise.all(reservations.map(async r => {
       const obj = r.toObject();
-      const { product } = await findProductWithBrand(r.productId, req.user);
+      // Unscoped for the desk roles. Sales is not in `seesAllBrands`, so passing
+      // req.user here would filter indents by the SALESPERSON's own brandAccess
+      // flags — hiding rows they can already see on the sales desk, which spans
+      // every brand by design. Customers stay brand-scoped.
+      const { product } = await findProductWithBrand(r.productId, seesEverything ? null : req.user);
       const derived = r.indentNumber ? r.indentNumber.replace(/^PI-/, 'BO-') : null;
       return {
         ...obj,
@@ -203,7 +213,7 @@ export const getPendingReservations = async (req, res, next) => {
 export const getCancelledCount = async (req, res, next) => {
   try {
     const filter = { status: { $in: ['Expired', 'Cancelled'] } };
-    if (req.user.role !== 'Admin') {
+    if (!hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS)) {
       filter.customerId = req.user._id;
     }
     const count = await Reservation.countDocuments(filter);

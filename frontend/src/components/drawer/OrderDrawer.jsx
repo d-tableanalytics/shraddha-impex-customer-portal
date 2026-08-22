@@ -9,6 +9,10 @@ import {
   Package,
   FileText,
   Sparkles,
+  Save,
+  RotateCcw,
+  Loader2,
+  Info,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -23,7 +27,7 @@ import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
-import { canViewLineItemBoxNo } from "../../utils/permissions";
+import { canViewLineItemBoxNo, canEditBookingQuantity, hasPermission, PERMISSIONS } from "../../utils/permissions";
 import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
 import { PackageX } from "lucide-react";
@@ -48,6 +52,12 @@ export const OrderDrawer = () => {
     fetchTimeline,
     resendStatusEmail,
     resendingEventId,
+    saveLineQuantities,
+    savingLines,
+    quantityHistory,
+    quantityHistoryFor,
+    quantityHistoryLoading,
+    fetchQuantityHistory,
   } = useOrderHistoryStore();
   const { user } = useUserStore();
   const { pendingItems, fetchPendingReservations } = useCartStore();
@@ -62,12 +72,27 @@ export const OrderDrawer = () => {
   const [newPO, setNewPO] = useState("");
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  // Pending quantity edits, keyed by Order row id. An OVERRIDE map rather than
+  // a full copy of the lines: an untouched line has no entry, so a refetch that
+  // brings new server values cannot be silently clobbered by a stale draft.
+  const [draftQty, setDraftQty] = useState({});
+  const [showQtyHistory, setShowQtyHistory] = useState(false);
 
   // Close the confirmation when the drawer switches booking, so a prompt opened
   // against one booking cannot be confirmed against another.
   useEffect(() => {
     setConfirmingCancel(false);
     setCancelReason("");
+    setDraftQty({});
+    setShowQtyHistory(false);
+  }, [selectedOrder?.orderNumber]);
+
+  // The history drives a badge that has to be right the moment the drawer
+  // opens, so it is fetched with the booking rather than on opening the panel.
+  useEffect(() => {
+    if (selectedOrder?.orderNumber) fetchQuantityHistory(selectedOrder.orderNumber);
+    // fetchQuantityHistory is a stable zustand action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOrder?.orderNumber]);
 
   const handleSavePO = async () => {
@@ -122,6 +147,32 @@ export const OrderDrawer = () => {
     (selectedOrder.hasReservedStock ?? true),
   );
 
+  // Who may amend quantities here, and when. Staff follow the desk rules;
+  // the customer may revise their own booking until the PO is raised. The
+  // server re-checks both on every write, answering 423 once the booking is
+  // locked and 404 for a booking that is not the caller's.
+  const canEditQty = canEditBookingQuantity(user, { locked: poRaised });
+  const isStaff = hasPermission(user, PERMISSIONS.VIEW_ALL_BOOKINGS);
+
+  // Only this booking's history — the store holds one booking's at a time and
+  // a stale one would put the wrong badge on the wrong order.
+  const qtyHistory =
+    quantityHistoryFor === selectedOrder?.orderNumber ? quantityHistory : null;
+  const qtyEntries = qtyHistory?.entries || [];
+
+  // The quantity a line is currently showing: the pending edit if it has one,
+  // otherwise what the booking holds.
+  const savedQtyOf = (item) => item.confirmedQty ?? item.orderQuantity ?? 0;
+  const qtyOf = (item) =>
+    draftQty[item.lineId] !== undefined ? draftQty[item.lineId] : savedQtyOf(item);
+
+  const lineChange = (item) => qtyOf(item) - savedQtyOf(item);
+  const dirty = lineItems.some((item) => lineChange(item) !== 0);
+  const hasIndent = lineItems.some((item) => (item.pendingQty ?? 0) > 0);
+  // What the CUSTOMER asked for across the booking, indent included.
+  const totalBooked = lineItems.reduce((n, i) => n + (i.bookedQty ?? 0), 0);
+  const totalIndent = lineItems.reduce((n, i) => n + (i.pendingQty ?? 0), 0);
+
   const linePaging = usePagination(lineItems, PAGE_SIZE);
   const indentPaging = usePagination(bookingIndents, PAGE_SIZE);
 
@@ -130,6 +181,31 @@ export const OrderDrawer = () => {
   const timeline = timelines[selectedOrder?.orderNumber] || [];
 
   if (!selectedOrder) return null;
+
+  const handleSaveQuantities = async () => {
+    const invalid = lineItems.find((item) => !Number.isInteger(qtyOf(item)) || qtyOf(item) < 1);
+    if (invalid) {
+      toast.error("Every line needs a whole-number quantity of at least 1.");
+      return;
+    }
+    // EVERY line is sent, not just the visible page: the endpoint treats an
+    // unlisted row as removed, so posting one page of a paginated booking
+    // would delete the rest.
+    const res = await saveLineQuantities(
+      selectedOrder.orderNumber,
+      lineItems.map((item) => ({
+        id: item.lineId,
+        skuCode: item.product.code,
+        quantity: qtyOf(item),
+      })),
+    );
+    if (res.success) {
+      setDraftQty({});
+      toast.success("Quantities updated. Stock has been adjusted to match.");
+    } else {
+      toast.error(res.error);
+    }
+  };
 
   const handleCancelBooking = async () => {
     setBusy(true);
@@ -400,11 +476,57 @@ export const OrderDrawer = () => {
               <div className="lg:col-span-2 flex flex-col gap-6">
                 {/* Product Table */}
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
-                  <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
-                    <Package size={18} className="text-primary-600" />
-                    <h3 className="text-sm font-bold text-slate-800">
-                      Line Items
-                    </h3>
+                  <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <Package size={18} className="text-primary-600" />
+                      <h3 className="text-sm font-bold text-slate-800">
+                        Line Items
+                      </h3>
+                    </div>
+                    {/* Booked-vs-holding, spelled out. These two differ whenever
+                        stock was short at booking or the desk has amended a
+                        line, and without both numbers the Qty column alone
+                        looks like the customer asked for less than they did. */}
+                    <div className="flex items-center gap-4 text-[11px]">
+                      <span className="text-slate-500">
+                        Booked by customer{" "}
+                        <strong className="text-slate-800 text-xs">{totalBooked}</strong>
+                      </span>
+                      <span className="text-slate-500 inline-flex items-center gap-1">
+                        On this booking{" "}
+                        <strong className="text-slate-800 text-xs">
+                          {lineItems.reduce((n, i) => n + qtyOf(i), 0)}
+                        </strong>
+                        {/* The quantity on a booking can have been moved by the
+                            customer or by us, and the number alone says
+                            neither. This opens the trail that does. */}
+                        <button
+                          type="button"
+                          onClick={() => setShowQtyHistory(true)}
+                          title="Who changed this quantity, and when"
+                          className="ml-0.5 p-0.5 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-full transition-colors focus:outline-none"
+                        >
+                          <Info size={13} />
+                        </button>
+                      </span>
+                      {/* Staff need to notice a customer revision without
+                          opening anything — it changes what they are about to
+                          put on the PO. */}
+                      {isStaff && qtyHistory?.changedByCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => setShowQtyHistory(true)}
+                          className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-full uppercase tracking-wide hover:bg-blue-100"
+                        >
+                          Customer changed qty
+                        </button>
+                      )}
+                      {totalIndent > 0 && (
+                        <span className="text-amber-600">
+                          On indent <strong className="text-xs">{totalIndent}</strong>
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left whitespace-nowrap">
@@ -420,7 +542,10 @@ export const OrderDrawer = () => {
                               reads the way it is picked: which part, which box,
                               how many. */}
                           {showBoxNo && <th className="px-5 py-3">Box No</th>}
+                          <th className="px-5 py-3 text-center">Booked</th>
                           <th className="px-5 py-3 text-center">Qty</th>
+                          {canEditQty && <th className="px-5 py-3 text-center">Change</th>}
+                          {hasIndent && <th className="px-5 py-3 text-center">Indent</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
@@ -441,14 +566,96 @@ export const OrderDrawer = () => {
                                 )}
                               </td>
                             )}
-                            <td className="px-5 py-4 text-center font-bold text-slate-700">
-                              {item.orderQuantity} {item.product.unit}
+                            {/* What the customer originally asked for. Read-only
+                                everywhere: a stock shortfall or a desk edit moves
+                                the Qty beside it, never this. */}
+                            <td className="px-5 py-4 text-center font-medium text-slate-500">
+                              {item.bookedQty ?? item.orderQuantity}
                             </td>
+                            <td className="px-5 py-4 text-center font-bold text-slate-700">
+                              {canEditQty ? (
+                                <input
+                                  type="number"
+                                  min={1}
+                                  step={1}
+                                  value={qtyOf(item)}
+                                  onChange={(e) =>
+                                    setDraftQty((d) => ({
+                                      ...d,
+                                      [item.lineId]:
+                                        e.target.value === "" ? "" : Number(e.target.value),
+                                    }))
+                                  }
+                                  className="w-20 text-center border border-slate-300 rounded-lg px-2 py-1 text-sm font-bold text-slate-800 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+                                />
+                              ) : (
+                                <>
+                                  {item.orderQuantity} {item.product.unit}
+                                </>
+                              )}
+                            </td>
+                            {canEditQty && (
+                              <td className="px-5 py-4 text-center text-xs font-bold">
+                                {lineChange(item) === 0 ? (
+                                  <span className="text-slate-300">&mdash;</span>
+                                ) : (
+                                  <span
+                                    className={
+                                      lineChange(item) > 0 ? "text-emerald-600" : "text-amber-600"
+                                    }
+                                  >
+                                    {lineChange(item) > 0 ? "+" : ""}
+                                    {lineChange(item)}
+                                  </span>
+                                )}
+                              </td>
+                            )}
+                            {hasIndent && (
+                              <td className="px-5 py-4 text-center font-bold">
+                                {(item.pendingQty ?? 0) > 0 ? (
+                                  <span className="text-amber-600">{item.pendingQty}</span>
+                                ) : (
+                                  <span className="text-slate-300">&mdash;</span>
+                                )}
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+                  {canEditQty && (
+                    <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-[11px] text-slate-500 leading-relaxed max-w-md">
+                        Saving adjusts inventory immediately: raising a quantity reserves more
+                        stock, lowering it returns the difference. The change is recorded and
+                        shown to the customer when the PO is raised.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        {dirty && (
+                          <button
+                            onClick={() => setDraftQty({})}
+                            disabled={savingLines}
+                            className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-300 px-3 py-1.5 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            <RotateCcw size={14} /> Reset
+                          </button>
+                        )}
+                        <button
+                          onClick={handleSaveQuantities}
+                          disabled={savingLines || !dirty}
+                          className="inline-flex items-center gap-1.5 text-xs font-bold text-white bg-primary-600 px-3 py-1.5 rounded-lg hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {savingLines ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Save size={14} />
+                          )}
+                          Save quantities
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {linePaging.total > 0 && (
                     <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/50">
                       <Pagination
@@ -477,7 +684,6 @@ export const OrderDrawer = () => {
                             <th className="px-5 py-3">SKU Code</th>
                             {showMsilCode && <th className="px-5 py-3">MSIL Code</th>}
                             <th className="px-5 py-3 text-center">Qty</th>
-                            <th className="px-5 py-3 text-center">Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-sm">
@@ -488,11 +694,6 @@ export const OrderDrawer = () => {
                                 <td className="px-5 py-3 text-slate-500">{p.product.msilCode || "-"}</td>
                               )}
                               <td className="px-5 py-3 text-center font-black text-amber-600">{p.pendingQuantity}</td>
-                              <td className="px-5 py-3 text-center">
-                                <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                                  {p.status}
-                                </span>
-                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -607,6 +808,105 @@ export const OrderDrawer = () => {
               here — the booking would have to be placed again, and by then the
               units may be gone — so the quantity being released is spelled out
               before the customer commits. */}
+          {/* Quantity-change history — the detail behind the "i" button.
+              Newest first: what someone wants to know is what the quantity is
+              now and who moved it there, not how it started. */}
+          {showQtyHistory && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-900/40 px-6">
+              <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[80%]">
+                <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 shrink-0">
+                  <div className="w-9 h-9 rounded-full bg-primary-50 flex items-center justify-center shrink-0">
+                    <Info size={18} className="text-primary-600" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-sm font-bold text-slate-800">Quantity change history</h4>
+                    <p className="text-[11px] text-slate-500">Booking {selectedOrder.orderNumber}</p>
+                  </div>
+                  <button
+                    onClick={() => setShowQtyHistory(false)}
+                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg focus:outline-none"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto flex-1">
+                  {quantityHistoryLoading && qtyEntries.length === 0 ? (
+                    <div className="px-5 py-8 text-sm text-slate-500 flex items-center justify-center gap-2">
+                      <Loader2 size={14} className="animate-spin text-primary-500" /> Loading…
+                    </div>
+                  ) : qtyEntries.length === 0 ? (
+                    <div className="px-5 py-8 text-center">
+                      <p className="text-sm text-slate-500">No quantity changes yet.</p>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        This booking still holds the quantities it was placed with.
+                      </p>
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-slate-100">
+                      {[...qtyEntries].reverse().map((entry) => (
+                        <li key={entry.id} className="px-5 py-3.5">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-sm font-bold text-slate-800 truncate">
+                                {entry.by}
+                              </span>
+                              <span
+                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0 ${
+                                  entry.source === "customer"
+                                    ? "text-blue-700 bg-blue-50 border border-blue-200"
+                                    : "text-violet-700 bg-violet-50 border border-violet-200"
+                                }`}
+                              >
+                                {entry.source === "customer" ? "Customer" : entry.role}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-400 whitespace-nowrap shrink-0">
+                              {new Date(entry.at).toLocaleString()}
+                            </span>
+                          </div>
+                          <ul className="flex flex-col gap-1">
+                            {entry.changes.map((c, i) => (
+                              <li
+                                key={`${entry.id}-${i}`}
+                                className="flex items-center justify-between gap-3 text-xs"
+                              >
+                                <span className="font-mono font-bold text-slate-600 truncate">
+                                  {c.fromSku && c.fromSku !== c.skuCode
+                                    ? `${c.fromSku} → ${c.skuCode}`
+                                    : c.skuCode}
+                                </span>
+                                <span className="whitespace-nowrap shrink-0">
+                                  <span className="text-slate-400">{c.fromQty}</span>
+                                  <span className="text-slate-300 mx-1">→</span>
+                                  <span className="font-bold text-slate-800">{c.toQty}</span>
+                                  <span
+                                    className={`ml-2 font-bold ${
+                                      c.delta > 0 ? "text-emerald-600" : "text-amber-600"
+                                    }`}
+                                  >
+                                    {c.delta > 0 ? "+" : ""}
+                                    {c.delta}
+                                  </span>
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 shrink-0 flex justify-end">
+                  <ERPButton variant="outline" size="sm" onClick={() => setShowQtyHistory(false)}>
+                    Close
+                  </ERPButton>
+                </div>
+              </div>
+            </div>
+          )}
+
           {confirmingCancel && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-900/40 px-6">
               <div className="w-full max-w-md bg-white rounded-xl shadow-2xl overflow-hidden">

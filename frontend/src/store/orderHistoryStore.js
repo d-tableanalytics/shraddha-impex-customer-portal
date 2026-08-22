@@ -158,6 +158,68 @@ export const useOrderHistoryStore = create((set, get) => ({
   setPage: (page) => set({ page }),
   setSelectedOrder: (order) => set({ selectedOrder: order }),
 
+  savingLines: false,
+  // Quantity-change history for the open booking, behind the "i" button.
+  // Keyed by booking so reopening a drawer does not show the previous one's.
+  quantityHistory: null,
+  quantityHistoryFor: null,
+  quantityHistoryLoading: false,
+
+  fetchQuantityHistory: async (orderNumber) => {
+    if (!orderNumber) return;
+    set({ quantityHistoryLoading: true });
+    try {
+      const data = await ordersApi.getQuantityHistory(orderNumber);
+      set({
+        quantityHistory: data,
+        quantityHistoryFor: orderNumber,
+        quantityHistoryLoading: false,
+      });
+    } catch {
+      set({ quantityHistory: null, quantityHistoryFor: orderNumber, quantityHistoryLoading: false });
+    }
+  },
+
+  /**
+   * Amend the line quantities of a booking from Booking History.
+   *
+   * Goes through the SAME handler the sales desk uses rather than a second
+   * one of its own: it already re-checks the PO lock, moves the stock (raising
+   * a quantity reserves more, lowering it returns the difference) and writes
+   * the audit entry that both the quantity history and the PO email's Change
+   * column are built from. A parallel write path would have to reproduce all
+   * four, and would drift.
+   *
+   * Works for customers too — the server confines them to the quantities on
+   * their own booking.
+   *
+   * `lines` is [{ id, skuCode, quantity }] — every line of the booking, since
+   * the endpoint treats an unlisted row as removed.
+   */
+  saveLineQuantities: async (orderNumber, lines) => {
+    set({ savingLines: true });
+    try {
+      await ordersApi.updateBookingItems(orderNumber, lines);
+      await get().fetchOrders();
+      // The edit just wrote an audit entry, so any history already on screen
+      // is now one entry short.
+      await get().fetchQuantityHistory(orderNumber);
+      // Keep the open drawer on the refreshed booking rather than the stale copy.
+      const updated = get().allOrders.find((o) => o.orderNumber === orderNumber);
+      if (updated) set({ selectedOrder: updated });
+      set({ savingLines: false });
+      return { success: true };
+    } catch (err) {
+      set({ savingLines: false });
+      return {
+        success: false,
+        // 423 carries the lock message; surface the server's wording verbatim.
+        error: err.response?.data?.message || err.message || "Could not save the quantities.",
+        locked: err.response?.status === 423,
+      };
+    }
+  },
+
   // Multi-select for export (keyed by booking orderNumber).
   toggleSelectId: (id) =>
     set((state) => ({

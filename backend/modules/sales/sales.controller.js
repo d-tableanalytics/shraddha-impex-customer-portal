@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Order from '../../models/Order.js';
 import User from '../../models/User.js';
+import Reservation from '../../models/Reservation.js';
 import AuditLog from '../../models/AuditLog.js';
 import { nextSequence } from '../../models/Counter.js';
 import { io } from '../../server.js';
@@ -8,6 +9,7 @@ import { notifyUser } from '../../utils/notify.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { assertBookingEditable, isPlaceholderPo } from '../../utils/bookingLock.js';
+import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { boxKey, currentBoxNumbers, shapeBooking } from './booking.shape.js';
 import {
   findProductBySku, reserveStock, releaseStock, consumeStock,
@@ -39,35 +41,51 @@ const esc = (v) =>
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 /**
- * What the SALES DESK changed between the booking and the purchase order.
+ * The quantity breakdown the customer is shown when a PO is raised.
  *
- * THE BASELINE IS THE BOOKING-STAGE QUANTITY — what the booking actually held
- * once confirmed — NOT `bookedQty`, which is what the customer asked for before
- * stock was checked.
+ * Five figures per SKU, because three different things move a quantity and
+ * blurring them is what made this mail wrong before:
  *
- * Those two differ whenever stock was short. Booking 50 against 2 in stock
- * writes bookedQty 50, confirmedQty 2, pendingQty 48, and moves the 48 onto an
- * indent with its own number and its own notifications. Diffing bookedQty
- * against confirmedQty therefore reported "changed from 50 pcs to 2 pcs" on a
- * booking nobody had touched, told the customer their order had been adjusted,
- * and left the 48 pcs unaccounted for on a table that totalled 50 → 2. The
- * automatic split is not an adjustment and the indent is a separate document,
- * so neither is described here.
+ *   onPo   — what the CUSTOMER asked for, indent included (`bookedQty`)
+ *   booked — what the booking holds now, after any desk edit (`confirmedQty`)
+ *   change — what SALES/ADMIN did, and nothing else
+ *   indent — what is STILL open on the indent, read live
  *
- * The only thing this summary reports is a DELIBERATE sales-desk edit, and the
- * audit trail is what proves one happened. Every edit is written as
+ * `change` is measured against the BOOKING-STAGE quantity — what the booking
+ * held once stock was checked — not against `bookedQty`. Booking 50 against 2
+ * in stock writes bookedQty 50, confirmedQty 2, pendingQty 48 and moves the 48
+ * to an indent. Diffing bookedQty against confirmedQty therefore reported
+ * "changed from 50 pcs to 2 pcs" on a booking nobody had touched. The automatic
+ * split is not an adjustment; it now shows up in the Indent column, where it
+ * belongs, and leaves `change` at zero.
+ *
+ * The audit trail is what proves a desk edit happened. Every edit is written as
  * 'Booking Edited (Sales)' with fromQty/toQty recorded against confirmedQty
  * (see runUpdateItems), so replaying those entries recovers each line's
- * booking-stage quantity exactly. A line with no entry was never edited and
- * reports as unchanged.
+ * booking-stage quantity exactly. A line with no entry was never edited.
  *
- * Removed lines no longer exist as rows, so they too come from the audit trail.
- * A SKU the desk both added and later removed is ignored — the customer never
- * saw it.
+ * Removed lines no longer exist as rows and come from the same trail. A SKU the
+ * desk both added and later removed is ignored — the customer never saw it.
  */
+/**
+ * The two audit actions a quantity change is written under.
+ *
+ * They are kept apart because they mean opposite things to the customer. A
+ * DESK edit is an adjustment made to the customer's order by us, and belongs
+ * in the Change column of the PO mail. A CUSTOMER edit is the customer
+ * revising their own request — it is not something we did to them, and
+ * reporting it back as "our team adjusted your quantity" would be nonsense.
+ * A customer edit therefore RESETS the baseline the desk's changes are
+ * measured from, rather than counting as one.
+ */
+export const QTY_EDIT_ACTIONS = {
+  desk: 'Booking Edited (Sales)',
+  customer: 'Booking Edited (Customer)',
+};
+
 const buildChangeSummary = async (rows, orderId) => {
   const editLogs = await AuditLog.find({
-    action: 'Booking Edited (Sales)',
+    action: { $in: [QTY_EDIT_ACTIONS.desk, QTY_EDIT_ACTIONS.customer] },
     'meta.orderId': orderId,
   }).sort({ createdAt: 1 }).lean();
 
@@ -78,7 +96,22 @@ const buildChangeSummary = async (rows, orderId) => {
   const removed = new Map(); // skuCode → booking-stage qty
 
   for (const log of editLogs) {
+    // A customer revising their own order moves the baseline: from here on,
+    // "what the booking held" is what THEY last asked for, and only the desk's
+    // later edits read as adjustments.
+    const byCustomer = log.action === QTY_EDIT_ACTIONS.customer;
     for (const c of log?.meta?.changes || []) {
+      if (byCustomer) {
+        if (c.type === 'removed') { origin.delete(c.skuCode); continue; }
+        const sku = c.type === 'sku' ? c.toSku : c.skuCode;
+        const prior = origin.get(sku);
+        origin.set(sku, {
+          qty: c.toQty ?? 0,
+          addedByDesk: prior?.addedByDesk ?? false,
+          fromSku: prior?.fromSku ?? null,
+        });
+        continue;
+      }
       if (c.type === 'added') {
         origin.set(c.skuCode, { qty: 0, addedByDesk: true, fromSku: null });
         removed.delete(c.skuCode); // re-added → no longer a removal
@@ -102,56 +135,85 @@ const buildChangeSummary = async (rows, orderId) => {
     }
   }
 
+  // LIVE indent balance, not the pendingQty frozen on the order row. An indent
+  // shrinks as stock arrives against it ('Indent Auto-Booked'), so the snapshot
+  // would tell the customer 20 pcs are still outstanding when only 15 are.
+  // Scoped to THIS booking's indent — a booking and its indent share a sequence
+  // number and differ only in the prefix.
+  const openIndents = await Reservation.find({
+    indentNumber: String(orderId).replace(/^BO-/, 'PI-'),
+    status: { $in: ['Pending', 'Partially Confirmed'] },
+  }).lean();
+  const indentBySku = new Map();
+  for (const r of openIndents) {
+    indentBySku.set(r.skuCode, (indentBySku.get(r.skuCode) || 0) + (r.quantity || 0));
+  }
+
   const lines = rows.map((r) => {
-    const to = r.confirmedQty || 0;
-    const base = { skuCode: r.skuCode, msilCode: r.msilCode || null, fromSku: null };
+    const booked = r.confirmedQty || 0;
+    const indent = indentBySku.get(r.skuCode) || 0;
+    const base = {
+      skuCode: r.skuCode,
+      msilCode: r.msilCode || null,
+      fromSku: null,
+      onPo: r.bookedQty || 0,
+      booked,
+      indent,
+    };
     const o = origin.get(r.skuCode);
 
     if (!o) {
-      // Never edited: booking stage and PO hold the same quantity. The
-      // bookedQty check is the marker runUpdateItems stamps on a line it added
-      // itself, and covers the case where that line's audit entry did not
-      // survive — no customer line is ever written with bookedQty 0.
-      const deskAdded = (r.bookedQty || 0) === 0 && to > 0;
-      return { ...base, from: deskAdded ? 0 : to, to, type: deskAdded ? 'added' : 'unchanged' };
+      // Never edited by the desk. The bookedQty check is the marker
+      // runUpdateItems stamps on a line it added itself, and covers the case
+      // where that line's audit entry did not survive — no customer line is
+      // ever written with bookedQty 0.
+      const deskAdded = (r.bookedQty || 0) === 0 && booked > 0;
+      return { ...base, change: deskAdded ? booked : 0, type: deskAdded ? 'added' : 'unchanged' };
     }
 
-    if (o.addedByDesk) return { ...base, from: 0, to, type: 'added' };
+    if (o.addedByDesk) return { ...base, onPo: 0, change: booked, type: 'added' };
 
-    const from = o.qty;
+    const change = booked - o.qty;
     // A re-code is a change even when the quantity is untouched, so it is typed
     // in its own right rather than falling through to "no change".
     if (o.fromSku && o.fromSku !== r.skuCode) {
-      return { ...base, fromSku: o.fromSku, from, to, type: 'recoded' };
+      return { ...base, fromSku: o.fromSku, change, type: 'recoded' };
     }
-    return { ...base, from, to, type: to > from ? 'increased' : to < from ? 'reduced' : 'unchanged' };
+    return { ...base, change, type: change > 0 ? 'increased' : change < 0 ? 'reduced' : 'unchanged' };
   });
 
   const currentSkus = new Set(rows.map((r) => r.skuCode));
-  for (const [skuCode, from] of removed) {
+  for (const [skuCode, qty] of removed) {
     if (currentSkus.has(skuCode)) continue;
-    lines.push({ skuCode, msilCode: null, fromSku: null, from, to: 0, type: 'removed' });
+    lines.push({
+      skuCode, msilCode: null, fromSku: null,
+      onPo: qty, booked: 0, change: -qty, indent: indentBySku.get(skuCode) || 0,
+      type: 'removed',
+    });
   }
 
+  const sum = (key) => lines.reduce((n, l) => n + l[key], 0);
   return {
     lines,
     changed: lines.some((l) => l.type !== 'unchanged'),
-    totalFrom: lines.reduce((n, l) => n + l.from, 0),
-    totalTo: lines.reduce((n, l) => n + l.to, 0),
+    totalOnPo: sum('onPo'),
+    totalBooked: sum('booked'),
+    totalChange: sum('change'),
+    totalIndent: sum('indent'),
   };
 };
 
-/** Plain-language description of one line's change, e.g. "10 pcs → 8 pcs". */
+/** Signed description of what the desk did to one line, for the Change column. */
 const changeLabel = (l) => {
-  if (l.type === 'added') return `newly added — ${l.to} pcs`;
-  if (l.type === 'removed') return `removed — was ${l.from} pcs`;
-  if (l.type === 'unchanged') return `no change — ${l.to} pcs`;
+  const signed = `${l.change > 0 ? '+' : '-'}${Math.abs(l.change)} pcs`;
+  if (l.type === 'added') return `${signed} — line added`;
+  if (l.type === 'removed') return `${signed} — line removed`;
   if (l.type === 'recoded') {
-    return l.from === l.to
-      ? `re-coded from ${l.fromSku} — ${l.to} pcs`
-      : `re-coded from ${l.fromSku}, ${l.from} pcs to ${l.to} pcs`;
+    return l.change === 0
+      ? `re-coded from ${l.fromSku}`
+      : `re-coded from ${l.fromSku}, ${signed}`;
   }
-  return `changed from ${l.from} pcs to ${l.to} pcs`;
+  return l.change === 0 ? 'No change' : signed;
 };
 
 const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
@@ -169,9 +231,10 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
   const rows = summary.lines.map((l) => `
     <tr>
       <td style="${cell}"><strong>${esc(l.skuCode)}</strong></td>
-      <td style="${cell} text-align: right;">${l.from} pcs</td>
-      <td style="${cell} text-align: right;">${l.to} pcs</td>
+      <td style="${cell} text-align: right;">${l.onPo} pcs</td>
+      <td style="${cell} text-align: right;">${l.booked} pcs</td>
       <td style="${cell} ${tone[l.type]}">${esc(changeLabel(l))}</td>
+      <td style="${cell} text-align: right; ${l.indent > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #888;'}">${l.indent} pcs</td>
     </tr>`).join('');
 
   // THE CONVERSION EMAIL. Deliberately carries NO booking TAT line: this mail
@@ -199,29 +262,32 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
     </div>
 
     ${summary.changed
-      ? `<p><strong>Please note:</strong> some items were adjusted before this purchase order was raised. The changes are shown below.</p>`
-      : `<p>All items were carried onto the purchase order exactly as you booked them — no quantities were changed.</p>`}
+      ? `<p><strong>Please note:</strong> our team adjusted some quantities before this purchase order was raised. The adjustments are shown in the Change column below.</p>`
+      : `<p>No quantities were adjusted by our team${summary.totalIndent > 0 ? ' — the Indent column shows what is still awaiting stock' : ''}.</p>`}
 
-    <table style="border-collapse: collapse; margin: 0 0 8px; width: 100%;">
+    <table style="border-collapse: collapse; margin: 0 0 20px; width: 100%;">
       <thead>
         <tr>
           <th style="${head}">SKU</th>
-          <th style="${head} text-align: right;">Booked</th>
           <th style="${head} text-align: right;">On PO</th>
+          <th style="${head} text-align: right;">Booked</th>
           <th style="${head}">Change</th>
+          <th style="${head} text-align: right;">Indent</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
       <tfoot>
         <tr>
           <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
-          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalFrom} pcs</td>
-          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalTo} pcs</td>
-          <td style="${cell} border-bottom: none;"></td>
+          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalOnPo} pcs</td>
+          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalBooked} pcs</td>
+          <td style="${cell} border-bottom: none; font-weight: bold;">${
+            summary.totalChange === 0 ? '' : `${summary.totalChange > 0 ? '+' : '-'}${Math.abs(summary.totalChange)} pcs`
+          }</td>
+          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalIndent} pcs</td>
         </tr>
       </tfoot>
     </table>
-
 
     <p>Thank you for your business.</p>
   `;
@@ -312,6 +378,9 @@ export const getBookingDetail = async (req, res, next) => {
  */
 const runUpdateItems = async (req, session) => {
   const { orderId } = req.params;
+  // Staff work the whole queue; everyone else may only touch their own booking,
+  // and only its quantities. See assertMayAmend() below.
+  const isStaff = hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS);
   const incoming = Array.isArray(req.body?.lines) ? req.body.lines : null;
   if (!incoming) throw Object.assign(new Error('lines must be an array.'), { status: 400 });
   if (incoming.length === 0) {
@@ -335,7 +404,49 @@ const runUpdateItems = async (req, session) => {
   }
 
   const existing = await loadBooking(orderId, session);
+
+  // OWNERSHIP FIRST, before the lock. 404 rather than 403, matching
+  // getOrderById and the timeline. Order matters: checking the lock first would
+  // answer 423 for a real booking and 404 for one that does not exist, and the
+  // difference between those two replies is enough to enumerate booking ids
+  // from an account that owns none of them.
+  if (!isStaff && (existing.length === 0
+    || !existing.every((r) => String(r.user) === String(req.user._id)))) {
+    throw Object.assign(new Error('Booking not found.'), { status: 404 });
+  }
+
   assertBookingEditable(existing, req.user);
+
+  if (!isStaff) {
+    // A customer may revise QUANTITIES on their own booking and nothing else.
+    // The desk composes a booking — adds lines, drops them, swaps a SKU for
+    // another; letting the same request body do all that on the customer's
+    // side would turn "edit my quantity" into "rewrite my order", so each
+    // incoming line has to name a row that already exists and carry the SKU it
+    // already has, and no row may be left out.
+    const byId = new Map(existing.map((r) => [String(r._id), r]));
+    if (incoming.length !== existing.length) {
+      throw Object.assign(
+        new Error('Send every line of the booking. Lines cannot be added or removed here.'),
+        { status: 400 },
+      );
+    }
+    for (const l of incoming) {
+      const row = l.id ? byId.get(String(l.id)) : null;
+      if (!row) {
+        throw Object.assign(
+          new Error('Lines cannot be added here — only the quantity of an existing line may be changed.'),
+          { status: 400 },
+        );
+      }
+      if (String(l.skuCode).trim() !== row.skuCode) {
+        throw Object.assign(
+          new Error('The SKU of a line cannot be changed here — only its quantity.'),
+          { status: 400 },
+        );
+      }
+    }
+  }
 
   // A line whose PO was raised has already left inventory ('consumed'); one
   // still awaiting a PO is merely held ('reserved'). The two need different
@@ -493,9 +604,13 @@ export const updateBookingItems = async (req, res, next) => {
     const { updated, changes } = result;
 
     if (changes.length) {
+      // Desk edits and customer edits are recorded under different actions —
+      // see QTY_EDIT_ACTIONS. Both feed the quantity history; only the desk's
+      // reach the Change column of the PO mail.
+      const byCustomer = !hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS);
       await recordAudit(
         req.user,
-        'Booking Edited (Sales)',
+        byCustomer ? QTY_EDIT_ACTIONS.customer : QTY_EDIT_ACTIONS.desk,
         `Booking ${req.params.orderId}: ` +
         changes.map((c) =>
           c.type === 'sku' ? `${c.fromSku} → ${c.toSku} (qty ${c.fromQty} → ${c.toQty})`

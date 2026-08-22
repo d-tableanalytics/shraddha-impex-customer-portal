@@ -21,7 +21,17 @@ export const mapOrder = (order) => {
       availableStock: order.requestedQty || 0,
       unit: 'PCS'
     },
-    orderQuantity: order.requestedQty || 0
+    orderQuantity: order.requestedQty || 0,
+    // The Order row this line came from. Carried so Booking History can edit
+    // the quantity through the same sales endpoint the desk uses, which
+    // addresses lines by row id.
+    lineId: order._id,
+    // Raw quantities, kept apart because three different things move them:
+    // bookedQty is what the customer asked for, confirmedQty is what stock
+    // covered and what a desk edit changes, pendingQty is the indent remainder.
+    bookedQty: order.bookedQty ?? order.requestedQty ?? 0,
+    confirmedQty: order.confirmedQty ?? order.requestedQty ?? 0,
+    pendingQty: order.pendingQty ?? 0,
   }];
 
   const totalQuantity = order.requestedQty || items.reduce((sum, item) => sum + (item.orderQuantity || item.quantity || 0), 0);
@@ -83,6 +93,7 @@ const groupIntoBookings = (rawOrders) => {
     );
     // Per-SKU line detail (raw quantity fields) for the detailed export.
     const lineItems = rows.map((r) => ({
+      id: r._id,
       skuCode: r.skuCode,
       msilCode: r.msilCode || null,
       boxNo: r.boxNo || null,
@@ -97,6 +108,19 @@ const groupIntoBookings = (rawOrders) => {
       items,
       lineItems,
       totalQuantity,
+      // What the CUSTOMER originally asked for across the booking, indent
+      // included. Distinct from totalQuantity, which is what the booking holds
+      // now — the two differ when stock was short or the desk amended a line.
+      totalBookedQuantity: rows.reduce((n, r) => n + (r.bookedQty ?? r.requestedQty ?? 0), 0),
+      // Still awaiting stock on the indent raised alongside this booking.
+      totalIndentQuantity: rows.reduce((n, r) => n + (r.pendingQty ?? 0), 0),
+      // Mirrors isBookingLocked() on the server: a booking is frozen once any
+      // row carries a real PO number. '-' and blank are the "not raised yet"
+      // placeholders. The server re-checks this on every write.
+      locked: rows.some((r) => {
+        const po = String(r.poNumber ?? '').trim();
+        return Boolean(r.poGeneratedAt) || (po !== '' && po !== '-');
+      }),
       // Whether any row still holds reserved stock, which is what makes the
       // booking cancellable. Taken across ALL rows rather than the primary one:
       // a booking is only fully settled when every line is, and reading one row
@@ -116,6 +140,33 @@ const groupIntoBookings = (rawOrders) => {
 };
 
 export const ordersApi = {
+  /**
+   * Amend the line quantities of a booking.
+   *
+   * ONE route for both audiences. The server decides what the caller may do:
+   * staff get the full desk edit, a customer is confined to the quantity of
+   * lines that already exist on their own booking. Pointing the customer at a
+   * '/sales/' URL, or adding a second handler for them, would have meant two
+   * code paths for one operation.
+   *
+   * lines: [{ id, skuCode, quantity }] — every line of the booking.
+   */
+  updateBookingItems: async (orderId, lines) => {
+    const res = await api.put(
+      `/orders/booking/${encodeURIComponent(orderId)}/items`,
+      { lines },
+    );
+    return res.data;
+  },
+
+  /** Who changed the quantities on this booking, when, and to what. */
+  getQuantityHistory: async (orderId) => {
+    const res = await api.get(
+      `/orders/booking/${encodeURIComponent(orderId)}/quantity-history`,
+    );
+    return res.data.data || { entries: [], changedByCustomer: false, changedByStaff: false };
+  },
+
   getAll: async () => {
     const response = await api.get('/orders');
     return groupIntoBookings(response.data.data || []);

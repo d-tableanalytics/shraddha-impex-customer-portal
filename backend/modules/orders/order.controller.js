@@ -21,6 +21,8 @@ import {
   resendStatusMail,
 } from './bookingStatus.service.js';
 import { bookingStatusOf, stageLabel } from '../../utils/bookingLifecycle.js';
+import User from '../../models/User.js';
+import { QTY_EDIT_ACTIONS } from '../sales/sales.controller.js';
 
 // Product is stored one-collection-per-brand; brand is implied by the collection.
 const BRAND_MODELS = [
@@ -378,6 +380,88 @@ export const getBookingStatusTimeline = async (req, res, next) => {
         orderId,
         currentStatus: bookingStatusOf(rows),
         timeline,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/v1/orders/booking/:orderId/quantity-history
+ *
+ * Who changed the quantities on this booking, when, and to what — the detail
+ * behind the "i" button on the booking's Total Quantity.
+ *
+ * Read from the audit trail rather than a field on the order, because the trail
+ * is already the thing every quantity write lands in and is the only place the
+ * ACTOR is recorded. Both edit actions are returned, each tagged with whether
+ * the customer or the desk made it, so the same list answers "did the customer
+ * revise this?" for staff and "what did the supplier change?" for the customer.
+ *
+ * Ownership follows getBookingStatusTimeline: the customer who owns the booking
+ * or anyone holding VIEW_ALL_BOOKINGS, and a 404 for anything else so this
+ * cannot be used to probe which booking ids exist.
+ */
+export const getBookingQuantityHistory = async (req, res, next) => {
+  try {
+    const orderId = req.params.orderId;
+    const rows = await Order.find({ orderId });
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    const seesEverything = hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS);
+    if (!seesEverything) {
+      const isOwner = String(rows[0].user) === String(req.user._id);
+      if (!isOwner || !canAccessBrand(req.user, rows[0].brand)) {
+        return res.status(404).json({ success: false, message: 'Booking not found.' });
+      }
+    }
+
+    const logs = await AuditLog.find({
+      action: { $in: [QTY_EDIT_ACTIONS.desk, QTY_EDIT_ACTIONS.customer] },
+      'meta.orderId': orderId,
+    }).sort({ createdAt: 1 }).lean();
+
+    // One query for the actors rather than one per entry.
+    const actorIds = [...new Set(logs.map((l) => l.user).filter(Boolean).map(String))];
+    const actors = new Map(
+      (actorIds.length
+        ? await User.find({ _id: { $in: actorIds } }).select('user company email role').lean()
+        : []
+      ).map((u) => [String(u._id), u]),
+    );
+
+    const entries = logs.map((log) => {
+      const actor = actors.get(String(log.user));
+      const byCustomer = log.action === QTY_EDIT_ACTIONS.customer;
+      return {
+        id: String(log._id),
+        at: log.createdAt,
+        by: actor?.user || actor?.company || actor?.email || 'Unknown',
+        role: actor?.role || (byCustomer ? 'Customer' : 'Sales'),
+        // What the reader needs to know first: was this us or them.
+        source: byCustomer ? 'customer' : 'staff',
+        changes: (log.meta?.changes || []).map((c) => ({
+          type: c.type,
+          skuCode: c.type === 'sku' ? c.toSku : c.skuCode,
+          fromSku: c.type === 'sku' ? c.fromSku : null,
+          fromQty: c.fromQty ?? 0,
+          toQty: c.toQty ?? 0,
+          delta: (c.toQty ?? 0) - (c.fromQty ?? 0),
+        })),
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        orderId,
+        entries,
+        // Cheap flags so a caller can render the badge without walking the list.
+        changedByCustomer: entries.some((e) => e.source === 'customer'),
+        changedByStaff: entries.some((e) => e.source === 'staff'),
       },
     });
   } catch (error) {

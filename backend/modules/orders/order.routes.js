@@ -9,7 +9,9 @@ import {
   resendBookingStatusEmail,
   updateOrderPO,
   cancelBooking,
+  getBookingQuantityHistory,
 } from './order.controller.js';
+import { updateBookingItems } from '../sales/sales.controller.js';
 import { protect } from '../../middlewares/auth.js';
 import { authorize } from '../../middlewares/rbac.js';
 import { auditLogger } from '../../middlewares/auditLogger.js';
@@ -36,6 +38,23 @@ router.put(
 // The customer's own lifecycle timeline. Not behind manage_orders — the
 // handler applies the ownership rule and gives staff the notification log.
 router.get('/booking/:orderId/timeline', protect, getBookingStatusTimeline);
+
+// Who changed the quantities, when, and to what. Same ownership rule as the
+// timeline above — the handler applies it.
+router.get('/booking/:orderId/quantity-history', protect, getBookingQuantityHistory);
+
+// AMEND QUANTITIES ON YOUR OWN BOOKING.
+//
+// Deliberately the SAME handler the sales desk calls, not a second write path.
+// That handler already moves the stock, honours the PO lock and writes the
+// audit entry the history above and the PO mail are both built from;
+// reimplementing any of it here would leave two versions to keep in step.
+//
+// Not behind a permission, for the same reason /cancel is not: a customer
+// revising their own booking is the main case. runUpdateItems() checks
+// ownership itself and confines a non-staff caller to quantity changes on
+// lines that already exist.
+router.put('/booking/:orderId/items', protect, updateBookingItems);
 
 // Retry a status email that never reached the customer.
 router.post(
