@@ -78,7 +78,20 @@ export const SalesBookingDrawer = () => {
       id: l.id || undefined, skuCode: l.skuCode, quantity: Number(l.quantity),
     })));
     if (res.success) {
-      toast.success(res.changes.length ? `Booking updated — inventory adjusted.` : "No changes to save.");
+      // An increase that outran stock was split: the covered part stayed on
+      // the booking, the rest became an indent. Say so — a plain "updated"
+      // would read as the full quantity having been confirmed.
+      const splits = (res.changes || []).filter((c) => c.type === "quantity-split");
+      if (splits.length) {
+        toast.success(
+          splits
+            .map((s) => `${s.skuCode}: ${s.toQty} confirmed, ${s.indentQty} moved to indent (stock short).`)
+            .join(" "),
+          { duration: 8000, icon: "⚠️" },
+        );
+      } else {
+        toast.success(res.changes.length ? `Booking updated — inventory adjusted.` : "No changes to save.");
+      }
     } else {
       toast.error(res.error);
     }
@@ -112,7 +125,13 @@ export const SalesBookingDrawer = () => {
       { key: "quantity", label: "Quantity" },
     ];
     const title = `Booking ${selected.orderId}${selected.customer ? ` — ${selected.customer}` : ""}`;
-    return { rows, columns, title };
+    // Reference lines under the title. The pick list travels to the warehouse
+    // floor, so the delivery location and its phone number ride on it.
+    const meta = [
+      selected.location ? `Location: ${selected.location}` : null,
+      selected.phoneNumber ? `Phone: ${selected.phoneNumber}` : null,
+    ].filter(Boolean);
+    return { rows, columns, title, meta };
   };
 
   // Loaded on demand: the xlsx/jspdf bundles are large and most visits to this
@@ -129,9 +148,9 @@ export const SalesBookingDrawer = () => {
 
   const handleDownloadPdf = () => {
     if (draft.length === 0) return toast.error("Nothing to download — this booking has no lines.");
-    const { rows, columns, title } = buildExport();
+    const { rows, columns, title, meta } = buildExport();
     import("../../utils/exportUtils").then(({ exportToPDF }) => {
-      const ok = exportToPDF(rows, columns, title, `Booking_${selected.orderId}`);
+      const ok = exportToPDF(rows, columns, title, `Booking_${selected.orderId}`, meta);
       if (ok) toast.success(`Downloaded ${rows.length} line(s) as PDF.`);
       else toast.error("PDF download failed.");
     });

@@ -35,7 +35,10 @@ export const exportToExcel = (data, columns, filename = 'export') => {
   }
 };
 
-export const exportToPDF = (data, columns, title = 'Report', filename = 'export') => {
+// `meta` is an optional list of reference lines ("Location: Manesar",
+// "Phone: …") printed under the title — the pick list carries them so the
+// person holding the sheet does not have to look anything up.
+export const exportToPDF = (data, columns, title = 'Report', filename = 'export', meta = []) => {
   try {
     const doc = new jsPDF();
 
@@ -45,6 +48,7 @@ export const exportToPDF = (data, columns, title = 'Report', filename = 'export'
     doc.setFontSize(11);
     doc.setTextColor(100);
     doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 30);
+    meta.forEach((line, i) => doc.text(String(line), 14, 37 + i * 6));
 
     // Table data
     const tableColumn = columns.map(col => col.label);
@@ -54,7 +58,7 @@ export const exportToPDF = (data, columns, title = 'Report', filename = 'export'
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: 40,
+      startY: 40 + meta.length * 6,
       theme: 'grid',
       styles: { fontSize: 8 },
       headStyles: { fillColor: [30, 58, 138] }, // primary-900 color
@@ -68,7 +72,7 @@ export const exportToPDF = (data, columns, title = 'Report', filename = 'export'
   }
 };
 
-export const printData = (data, columns, title = 'Report') => {
+export const printData = (data, columns, title = 'Report', meta = []) => {
   try {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
@@ -80,6 +84,9 @@ export const printData = (data, columns, title = 'Report') => {
     // <, > and &, and unescaped they are parsed as markup — the printed cell
     // then shows something other than the value it came from.
     const safeTitle = escapeHtml(title);
+    const metaLines = meta
+      .map((line) => `<p class="meta">${escapeHtml(line)}</p>`)
+      .join('');
     const tableHeaders = columns.map(col => `<th>${escapeHtml(col.label)}</th>`).join('');
     const tableRows = data.map(item => {
       const rowData = columns.map(col => `<td>${escapeHtml(cellValue(item, col))}</td>`).join('');
@@ -94,6 +101,7 @@ export const printData = (data, columns, title = 'Report') => {
             body { font-family: Arial, sans-serif; padding: 20px; }
             h1 { color: #1e3a8a; font-size: 24px; margin-bottom: 5px; }
             p { color: #64748b; font-size: 12px; margin-bottom: 20px; }
+            p.meta { color: #0f172a; font-weight: bold; margin-bottom: 4px; }
             table { width: 100%; border-collapse: collapse; font-size: 12px; }
             th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; }
             th { background-color: #f8fafc; font-weight: bold; color: #0f172a; }
@@ -105,6 +113,7 @@ export const printData = (data, columns, title = 'Report') => {
         </head>
         <body>
           <h1>${safeTitle}</h1>
+          ${metaLines}
           <p>Generated on: ${new Date().toLocaleString()}</p>
           <table>
             <thead><tr>${tableHeaders}</tr></thead>

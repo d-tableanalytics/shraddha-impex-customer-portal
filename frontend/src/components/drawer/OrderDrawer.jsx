@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Loader2,
   Info,
+  MapPin,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -201,7 +202,20 @@ export const OrderDrawer = () => {
     );
     if (res.success) {
       setDraftQty({});
-      toast.success("Quantities updated. Stock has been adjusted to match.");
+      // An increase that outran stock was split: the covered part stayed on
+      // the booking, the rest became an indent. Say so — a plain "updated"
+      // would read as the full quantity having been confirmed.
+      const splits = (res.changes || []).filter((c) => c.type === "quantity-split");
+      if (splits.length) {
+        toast.success(
+          splits
+            .map((s) => `${s.skuCode}: ${s.toQty} confirmed, ${s.indentQty} moved to indent (stock short).`)
+            .join(" "),
+          { duration: 8000, icon: "⚠️" },
+        );
+      } else {
+        toast.success("Quantities updated. Stock has been adjusted to match.");
+      }
     } else {
       toast.error(res.error);
     }
@@ -285,21 +299,27 @@ export const OrderDrawer = () => {
       { key: "qty", label: "Qty" },
     ];
     const title = `Booking ${selectedOrder.orderNumber}${selectedOrder.customer ? ` - ${selectedOrder.customer}` : ""}`;
-    return { rows, columns, title };
+    // Reference lines under the title. The pick list travels to the warehouse
+    // floor, so the delivery location and its phone number ride on it.
+    const meta = [
+      selectedOrder.location ? `Location: ${selectedOrder.location}` : null,
+      selectedOrder.phoneNumber ? `Phone: ${selectedOrder.phoneNumber}` : null,
+    ].filter(Boolean);
+    return { rows, columns, title, meta };
   };
 
   const handlePrint = () => {
-    const { rows, columns, title } = buildExport();
+    const { rows, columns, title, meta } = buildExport();
     import("../../utils/exportUtils").then(({ printData }) => {
-      const ok = printData(rows, columns, title);
+      const ok = printData(rows, columns, title, meta);
       if (!ok) toast.error("Unable to open print window (check pop-up blocker).");
     });
   };
 
   const handlePDF = () => {
-    const { rows, columns, title } = buildExport();
+    const { rows, columns, title, meta } = buildExport();
     import("../../utils/exportUtils").then(({ exportToPDF }) => {
-      const ok = exportToPDF(rows, columns, title, selectedOrder.orderNumber || "Booking");
+      const ok = exportToPDF(rows, columns, title, selectedOrder.orderNumber || "Booking", meta);
       if (!ok) toast.error("PDF download failed");
     });
   };
@@ -407,6 +427,29 @@ export const OrderDrawer = () => {
                     <p className="text-sm font-bold text-slate-800 line-clamp-2">
                       {selectedOrder.customer}
                     </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Delivery location and its phone number — the pair the pick
+                  list prints, shown here so it can be checked before printing. */}
+              {(selectedOrder.location || selectedOrder.phoneNumber) && (
+                <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+                  <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
+                    <MapPin size={16} className="text-emerald-600" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">
+                      Location &amp; Phone
+                    </p>
+                    <p className="text-sm font-bold text-slate-800 line-clamp-2">
+                      {selectedOrder.location || "—"}
+                    </p>
+                    {selectedOrder.phoneNumber && (
+                      <p className="text-xs font-semibold text-slate-500">
+                        {selectedOrder.phoneNumber}
+                      </p>
+                    )}
                   </div>
                 </div>
               )}

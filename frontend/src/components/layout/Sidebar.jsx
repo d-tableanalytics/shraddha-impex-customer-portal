@@ -4,7 +4,6 @@ import {
   PlusCircle,
   UploadCloud,
   History,
-  PackageX,
   Boxes,
   Users,
   Settings,
@@ -66,8 +65,9 @@ export const Sidebar = () => {
         badge: cartItems.length > 0 ? cartItems.length : undefined,
       },
       { name: "Bulk Upload", path: "/orders/bulk-upload", icon: UploadCloud },
-      { name: "Booking History", path: "/orders/history", icon: History },
-      { name: "Indent History", path: "/orders/indent-history", icon: PackageX },
+      // One entry for both histories — the page itself switches between
+      // bookings and indents with a ?tab= toggle.
+      { name: "Booking & Indents", path: "/orders/history", icon: History },
       { name: "Inventory", path: "/inventory", icon: Boxes },
     ] : []),
     // IMS master — internal stock roles and Admin.
@@ -120,9 +120,8 @@ export const Sidebar = () => {
     const [basePath, searchStr] = item.path.split('?');
     if (item.path === '/') return location.pathname === '/';
     if (searchStr) return location.pathname === basePath && location.search.includes(searchStr);
-    // Booking History and Indent History share a path and differ by query
-    // string, so the bare path must not claim a filtered view.
-    if (item.path === '/orders/history') return location.pathname === basePath && !location.search;
+    // Booking & Indents is ONE entry whose page switches views by query
+    // string, so it claims the path whatever the query says.
     return location.pathname === basePath || location.pathname.startsWith(`${basePath}/`);
   };
 

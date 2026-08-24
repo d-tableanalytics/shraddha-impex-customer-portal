@@ -8,8 +8,10 @@ import {
   PackageX,
   FileText,
 } from "lucide-react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import toast from "react-hot-toast";
+import { reservationsApi } from "../../services/reservations";
 import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
 import { ERPButton } from "../ui/ERPButton";
@@ -22,16 +24,46 @@ import { IndentScheduleSection } from "./IndentScheduleSection";
 const PAGE_SIZE = 10;
 
 export const IndentDrawer = () => {
-  const { selectedIndent, setSelectedIndent } = useIndentHistoryStore();
+  const { selectedIndent, setSelectedIndent, fetchIndents } = useIndentHistoryStore();
   const { user } = useUserStore();
   const showMsilCode = useShowMsilCode();
   const isAdmin = user?.role === "Admin";
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   // Derived before the early return so the paging hook always runs.
   const lines = Array.isArray(selectedIndent?.lines) ? selectedIndent.lines : [];
   const linePaging = usePagination(lines, PAGE_SIZE);
 
+  // Lines still waiting on stock. Cancelling the indent cancels exactly these —
+  // a line already confirmed or cancelled has nothing left to cancel.
+  const openLines = lines.filter(
+    (l) => l.status === "Pending" || l.status === "Partially Confirmed",
+  );
+
   if (!selectedIndent) return null;
+
+  const handleCancelIndent = async () => {
+    setBusy(true);
+    try {
+      // Per-line, because the server addresses reservations by id. allSettled
+      // so one refusal (e.g. a line confirmed meanwhile) does not hide the rest.
+      const results = await Promise.allSettled(
+        openLines.map((l) => reservationsApi.cancel(l._id)),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed) {
+        toast.error(`${failed} of ${openLines.length} line(s) could not be cancelled.`);
+      } else {
+        toast.success(`Indent ${selectedIndent.indentNumber || ""} cancelled.`.trim());
+      }
+      setSelectedIndent(null);
+      fetchIndents();
+    } finally {
+      setBusy(false);
+      setConfirmingCancel(false);
+    }
+  };
 
   const buildExport = () => {
     const rows = lines.map((l, i) => ({
@@ -102,6 +134,16 @@ export const IndentDrawer = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              {openLines.length > 0 && (
+                <ERPButton
+                  variant="outline"
+                  size="sm"
+                  className="text-red-600 border-red-200 hover:bg-red-50"
+                  onClick={() => setConfirmingCancel(true)}
+                >
+                  <PackageX size={16} className="mr-2" /> Cancel Indent
+                </ERPButton>
+              )}
               <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePrint}>
                 <Printer size={16} className="mr-2" /> Print
               </ERPButton>
@@ -303,6 +345,49 @@ export const IndentDrawer = () => {
               </span>
             )}
           </div>
+
+          {confirmingCancel && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-900/40 px-6">
+              <div className="w-full max-w-md bg-white rounded-xl shadow-2xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+                    <PackageX size={18} className="text-red-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800">
+                      Cancel indent {selectedIndent.indentNumber || ""}?
+                    </h3>
+                    <p className="text-[11px] text-slate-500">This cannot be undone.</p>
+                  </div>
+                </div>
+
+                <div className="px-5 py-4">
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    {openLines.length} open line{openLines.length === 1 ? "" : "s"} (
+                    {openLines.reduce((n, l) => n + (l.pendingQuantity || 0), 0)} unit
+                    {openLines.reduce((n, l) => n + (l.pendingQuantity || 0), 0) === 1 ? "" : "s"}
+                    ) will stop waiting for stock. No inventory is affected — an indent
+                    holds no reserved stock. To order these items again, place a fresh
+                    booking.
+                  </p>
+                </div>
+
+                <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+                  <ERPButton
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => setConfirmingCancel(false)}
+                  >
+                    Keep indent
+                  </ERPButton>
+                  <ERPButton variant="danger" size="sm" loading={busy} onClick={handleCancelIndent}>
+                    {busy ? "Cancelling..." : "Cancel indent"}
+                  </ERPButton>
+                </div>
+              </div>
+            </div>
+          )}
         </motion.div>
       </div>
     </AnimatePresence>

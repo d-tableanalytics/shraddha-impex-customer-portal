@@ -666,6 +666,10 @@ export const updateReservationQuantity = async (req, res, next) => {
   }
 };
 
+// Cancels a selection-list line ('Reserved') or an open indent line
+// ('Pending' / 'Partially Confirmed'). Neither holds allocated stock — stock
+// is deducted only at confirmation, and an indent is by definition the part
+// stock could NOT cover — so cancelling is a status change, never a release.
 export const cancelReservation = async (req, res, next) => {
   try {
     const reservation = await Reservation.findById(req.params.id);
@@ -673,17 +677,55 @@ export const cancelReservation = async (req, res, next) => {
       throw new Error('Reservation not found.');
     }
 
-    if (reservation.status !== 'Reserved') {
-      throw new Error('Only active reservations can be cancelled.');
+    // Owner, or staff acting on the customer's behalf — the same rule
+    // cancelBooking applies. Answer 404 rather than 403 so this endpoint
+    // cannot be used to probe which reservation ids exist.
+    const isOwner = String(reservation.customerId) === String(req.user._id);
+    const canActForOthers = req.user.role === 'Admin'
+      || hasPermission(req.user, PERMISSIONS.MANAGE_ORDERS);
+    if (!isOwner && !canActForOthers) {
+      return res.status(404).json({ success: false, message: 'Reservation not found.' });
     }
 
-    // No stock was allocated at booking time, so there is nothing to release.
+    const CANCELLABLE = ['Reserved', 'Pending', 'Partially Confirmed'];
+    if (!CANCELLABLE.includes(reservation.status)) {
+      throw new Error('Only active reservations and open indents can be cancelled.');
+    }
+
+    const isIndent = reservation.status !== 'Reserved';
+    const label = isIndent
+      ? `indent ${reservation.indentNumber || reservation.reservationId}`
+      : `reservation ${reservation.reservationId}`;
+
     reservation.status = 'Cancelled';
     reservation.expiredAt = new Date();
     await reservation.save();
 
-    await recordAudit(req.user, 'Reservation Cancelled', `Cancelled reservation ${reservation.reservationId}`, req);
-    sendNotification(req.user._id, 'Reservation Cancelled', `Reservation ${reservation.reservationId} has been cancelled and removed from your selection list.`, 'reservation');
+    const byName = isOwner ? 'the customer' : (req.user.user || req.user.email || 'staff');
+    await recordAudit(
+      req.user,
+      isIndent ? 'Indent Cancelled' : 'Reservation Cancelled',
+      `Cancelled ${label} (${reservation.skuCode} x${reservation.quantity}) — by ${byName}.`,
+      req,
+    );
+
+    // Tell the OWNER, not the caller — a desk cancel must land in the
+    // customer's notifications, not the salesperson's.
+    sendNotification(
+      reservation.customerId,
+      isIndent ? 'Indent Cancelled' : 'Reservation Cancelled',
+      isIndent
+        ? `Indent line ${reservation.skuCode} x${reservation.quantity} (${reservation.indentNumber || reservation.reservationId}) has been cancelled.`
+        : `Reservation ${reservation.reservationId} has been cancelled and removed from your selection list.`,
+      'reservation',
+    );
+    if (isOwner && isIndent) {
+      notifyAdmins({
+        title: 'Indent Cancelled',
+        message: `${req.user.company || req.user.user || req.user.email} cancelled indent line ${reservation.skuCode} x${reservation.quantity} (${reservation.indentNumber || reservation.reservationId}).`,
+        type: 'reservation',
+      });
+    }
 
     res.status(200).json({ success: true, data: reservation });
   } catch (error) {
@@ -866,7 +908,11 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
         boxNo: product.boxNo || null,
         vendorCode: product.vendorCode || null,
         emailId: req.user.email || null,
-        phoneNumber: req.user.phone || null
+        phoneNumber: req.user.phone || null,
+        // The delivery location chosen at checkout, falling back to the
+        // customer's profile location. Stamped so the pick list can carry the
+        // location and its phone number without a second lookup.
+        location: req.body.deliveryLocation || req.user.location || null
       });
     }
 

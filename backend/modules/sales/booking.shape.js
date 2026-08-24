@@ -64,6 +64,9 @@ export const shapeBooking = (rows, boxNumbers = new Map()) => {
     remarks: first.remarks || null,
     emailId: first.emailId || null,
     phoneNumber: first.phoneNumber || null,
+    // The raw location, distinct from shippingAddress below — the pick list
+    // prints "location + phone" as a pair for the person carrying it.
+    location: first.location || null,
     shippingAddress: first.shippingAddress || first.location || null,
     billingAddress: first.billingAddress || null,
     shopNumber: first.shopNumber || null,

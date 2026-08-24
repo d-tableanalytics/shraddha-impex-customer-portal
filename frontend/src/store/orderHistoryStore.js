@@ -199,7 +199,7 @@ export const useOrderHistoryStore = create((set, get) => ({
   saveLineQuantities: async (orderNumber, lines) => {
     set({ savingLines: true });
     try {
-      await ordersApi.updateBookingItems(orderNumber, lines);
+      const saved = await ordersApi.updateBookingItems(orderNumber, lines);
       await get().fetchOrders();
       // The edit just wrote an audit entry, so any history already on screen
       // is now one entry short.
@@ -208,7 +208,9 @@ export const useOrderHistoryStore = create((set, get) => ({
       const updated = get().allOrders.find((o) => o.orderNumber === orderNumber);
       if (updated) set({ selectedOrder: updated });
       set({ savingLines: false });
-      return { success: true };
+      // `changes` carries any stock-short splits, so the caller can tell the
+      // user part of an increase went to an indent instead of the booking.
+      return { success: true, changes: saved?.changes || [] };
     } catch (err) {
       set({ savingLines: false });
       return {
