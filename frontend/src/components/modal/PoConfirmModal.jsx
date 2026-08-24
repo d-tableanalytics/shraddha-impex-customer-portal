@@ -2,13 +2,15 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, MapPin, Building2, Store, FileText, Hash, Calendar,
-  CreditCard, Clock, FileCheck2, Loader2, ShieldCheck
+  CreditCard, Clock, FileCheck2, Loader2, ShieldCheck, Phone, Navigation
 } from "lucide-react";
 import { ERPButton } from "../ui/ERPButton";
 
 export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoNumber, saving }) => {
   const [formData, setFormData] = useState({
     customerName: "",
+    phoneNumber: "",
+    location: "",
     shippingAddress: "",
     billingAddress: "",
     shopNumber: "",
@@ -27,6 +29,11 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
 
       setFormData({
         customerName: booking.customer || booking.customerName || "",
+        // Seeded from the booking so the desk confirms rather than retypes: the
+        // phone comes off the customer's account at booking time and the
+        // location off the delivery address they gave.
+        phoneNumber: booking.phoneNumber || "",
+        location: booking.location || "",
         shippingAddress: booking.shippingAddress || booking.location || "",
         billingAddress: booking.billingAddress || booking.shippingAddress || booking.location || "",
         shopNumber: booking.shopNumber || "",
@@ -125,7 +132,36 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 />
               </div>
 
-              {/* 2. Shipping Address */}
+              {/* 2. Phone Number — printed on the pick list beside the
+                  location, so the two are collected together here. */}
+              <div>
+                <label className={labelClass}>
+                  <Phone size={14} className="text-emerald-600" /> Phone Number
+                </label>
+                <input
+                  type="tel"
+                  value={formData.phoneNumber}
+                  onChange={(e) => handleChange("phoneNumber", e.target.value)}
+                  placeholder="e.g. +91 98765 43210"
+                  className={inputClass}
+                />
+              </div>
+
+              {/* 3. Location */}
+              <div>
+                <label className={labelClass}>
+                  <Navigation size={14} className="text-rose-600" /> Location
+                </label>
+                <input
+                  type="text"
+                  value={formData.location}
+                  onChange={(e) => handleChange("location", e.target.value)}
+                  placeholder="e.g. Okhla Phase II, New Delhi"
+                  className={inputClass}
+                />
+              </div>
+
+              {/* 4. Shipping Address */}
               <div>
                 <label className={labelClass}>
                   <MapPin size={14} className="text-blue-600" /> Shipping Address
@@ -139,7 +175,7 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 />
               </div>
 
-              {/* 3. Billing Address */}
+              {/* 5. Billing Address */}
               <div>
                 <label className={labelClass}>
                   <Building2 size={14} className="text-indigo-600" /> Billing Address
@@ -153,7 +189,7 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 />
               </div>
 
-              {/* 4. Shop Number */}
+              {/* 6. Shop Number */}
               <div>
                 <label className={labelClass}>
                   <Store size={14} className="text-emerald-600" /> Shop Number
@@ -167,7 +203,7 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 />
               </div>
 
-              {/* 5. GST Code */}
+              {/* 7. GST Code */}
               <div>
                 <label className={labelClass}>
                   <FileText size={14} className="text-amber-600" /> GST Code / Number
@@ -181,7 +217,7 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 />
               </div>
 
-              {/* 6. Vendor Code */}
+              {/* 8. Vendor Code */}
               <div>
                 <label className={labelClass}>
                   <Hash size={14} className="text-violet-600" /> Vendor Code
@@ -195,7 +231,7 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 />
               </div>
 
-              {/* 7. PO Number */}
+              {/* 9. PO Number */}
               <div>
                 <label className={labelClass}>
                   <FileCheck2 size={14} className="text-primary-600" /> PO Number
@@ -209,7 +245,7 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 />
               </div>
 
-              {/* 8. PO Date */}
+              {/* 10. PO Date */}
               <div>
                 <label className={labelClass}>
                   <Calendar size={14} className="text-sky-600" /> PO Date
@@ -223,7 +259,7 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 />
               </div>
 
-              {/* 9. Payment Term */}
+              {/* 11. Payment Term */}
               <div>
                 <label className={labelClass}>
                   <CreditCard size={14} className="text-teal-600" /> Payment Term
@@ -243,7 +279,7 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 </select>
               </div>
 
-              {/* 10. Promise Date */}
+              {/* 12. Promise Date */}
               <div>
                 <label className={labelClass}>
                   <Clock size={14} className="text-rose-600" /> Promise Date

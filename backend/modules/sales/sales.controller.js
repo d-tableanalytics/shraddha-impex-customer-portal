@@ -618,6 +618,8 @@ export const raisePo = async (req, res, next) => {
 
     const {
       customerName,
+      phoneNumber,
+      location,
       shippingAddress,
       billingAddress,
       shopNumber,
@@ -634,6 +636,11 @@ export const raisePo = async (req, res, next) => {
       poGeneratedBy: req.user._id,
     };
     if (customerName) setFields.company = customerName;
+    // Contact pair for the pick list, which prints location and phone together
+    // for whoever carries it to the customer. Both are stamped on every row of
+    // the booking so a row read on its own still carries them.
+    if (phoneNumber !== undefined) setFields.phoneNumber = String(phoneNumber).trim() || null;
+    if (location !== undefined) setFields.location = String(location).trim() || null;
     if (shippingAddress) setFields.shippingAddress = shippingAddress;
     if (billingAddress) setFields.billingAddress = billingAddress;
     if (shopNumber) setFields.shopNumber = shopNumber;
