@@ -127,11 +127,13 @@ export const SalesBookingDrawer = () => {
     ];
     const title = `Booking ${selected.orderId}${selected.customer ? ` — ${selected.customer}` : ""}`;
     // Reference lines under the title. The pick list travels to the warehouse
-    // floor, so the delivery location and its phone number ride on it.
+    // floor, so the delivery location and its phone number ride on it — always
+    // both lines, with an em dash when unknown, so a missing value is VISIBLY
+    // missing rather than the field silently absent from the form.
     const meta = [
-      selected.location ? `Location: ${selected.location}` : null,
-      selected.phoneNumber ? `Phone: ${selected.phoneNumber}` : null,
-    ].filter(Boolean);
+      `Location: ${selected.location || "—"}`,
+      `Phone: ${selected.phoneNumber || "—"}`,
+    ];
     return { rows, columns, title, meta };
   };
 
@@ -139,9 +141,9 @@ export const SalesBookingDrawer = () => {
   // drawer never download anything.
   const handleDownload = () => {
     if (draft.length === 0) return toast.error("Nothing to download — this booking has no lines.");
-    const { rows, columns } = buildExport();
+    const { rows, columns, meta } = buildExport();
     import("../../utils/exportUtils").then(({ exportToExcel }) => {
-      const ok = exportToExcel(rows, columns, `Booking_${selected.orderId}`);
+      const ok = exportToExcel(rows, columns, `Booking_${selected.orderId}`, meta);
       if (ok) toast.success(`Downloaded ${rows.length} line(s).`);
       else toast.error("Download failed.");
     });

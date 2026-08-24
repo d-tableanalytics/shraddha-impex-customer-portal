@@ -300,11 +300,13 @@ export const OrderDrawer = () => {
     ];
     const title = `Booking ${selectedOrder.orderNumber}${selectedOrder.customer ? ` - ${selectedOrder.customer}` : ""}`;
     // Reference lines under the title. The pick list travels to the warehouse
-    // floor, so the delivery location and its phone number ride on it.
+    // floor, so the delivery location and its phone number ride on it — always
+    // both lines, with an em dash when unknown, so a missing value is VISIBLY
+    // missing rather than the field silently absent from the form.
     const meta = [
-      selectedOrder.location ? `Location: ${selectedOrder.location}` : null,
-      selectedOrder.phoneNumber ? `Phone: ${selectedOrder.phoneNumber}` : null,
-    ].filter(Boolean);
+      `Location: ${selectedOrder.location || "—"}`,
+      `Phone: ${selectedOrder.phoneNumber || "—"}`,
+    ];
     return { rows, columns, title, meta };
   };
 

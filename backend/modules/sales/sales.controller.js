@@ -15,6 +15,7 @@ import {
   adjustReservedQty, adjustConsumedQty,
 } from '../../utils/stockLedger.js';
 import { recordAudit } from '../../utils/auditLog.js';
+import { fillCustomerContact } from '../../utils/customerContact.js';
 import {
   QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
 } from '../../utils/bookingJourney.js';
@@ -114,28 +115,7 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary, journeyH
   `;
 };
 
-/**
- * Older bookings predate the phone/location stamp on their Order rows, so the
- * shaped booking arrives with those fields null. Fall back to the customer's
- * PROFILE — the pick list needs a contact for exactly the bookings the desk is
- * still working, which are as likely as not the old ones. One batched query
- * for the whole page, never one per booking. Mutates in place and returns the
- * same array for chaining.
- */
-const fillCustomerContact = async (bookings) => {
-  const missing = bookings.filter((b) => !b.phoneNumber || !b.location);
-  const ids = [...new Set(missing.map((b) => String(b.user || '')).filter(Boolean))];
-  if (!ids.length) return bookings;
-  const users = await User.find({ _id: { $in: ids } }, 'phone location').lean();
-  const byId = new Map(users.map((u) => [String(u._id), u]));
-  for (const b of missing) {
-    const u = byId.get(String(b.user));
-    if (!u) continue;
-    if (!b.phoneNumber) b.phoneNumber = u.phone || null;
-    if (!b.location) b.location = u.location || null;
-  }
-  return bookings;
-};
+// Profile fallback for phone/location — shared with order.controller.
 
 /**
  * GET /api/v1/sales/bookings?status=pending|generated|all

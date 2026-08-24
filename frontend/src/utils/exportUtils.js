@@ -21,10 +21,15 @@ const formatDataForExport = (data, columns) => {
   });
 };
 
-export const exportToExcel = (data, columns, filename = 'export') => {
+export const exportToExcel = (data, columns, filename = 'export', meta = []) => {
   try {
     const formattedData = formatDataForExport(data, columns);
-    const worksheet = XLSX.utils.json_to_sheet(formattedData);
+    // Reference lines ("Location: …", "Phone: …") sit above the table,
+    // followed by a blank spacer row, so the sheet carries the same header
+    // block as the printed and PDF pick lists.
+    const metaRows = meta.length ? [...meta.map((line) => [String(line)]), []] : [];
+    const worksheet = XLSX.utils.aoa_to_sheet(metaRows);
+    XLSX.utils.sheet_add_json(worksheet, formattedData, { origin: metaRows.length ? -1 : 'A1' });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Data');
     XLSX.writeFile(workbook, `${filename}_${new Date().getTime()}.xlsx`);
