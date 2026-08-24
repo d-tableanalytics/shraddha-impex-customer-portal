@@ -1,13 +1,13 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter } from "react-router-dom";
 import MainLayout from "../components/layout/MainLayout";
 import { ProtectedRoute } from "../components/layout/ProtectedRoute";
 import { lazy } from 'react';
 
 const Dashboard = lazy(() => import("../pages/Dashboard/Dashboard").then(m => ({ default: m.Dashboard })));
 const CustomerOrders = lazy(() => import("../pages/CustomerOrders/CustomerOrders").then(m => ({ default: m.CustomerOrders })));
-// Booking History and Indent History share one page, switched by ?tab=.
-const BookingIndentHistory = lazy(() => import("../pages/OrderHistory/BookingIndentHistory").then(m => ({ default: m.BookingIndentHistory })));
+const OrderHistory = lazy(() => import("../pages/OrderHistory/OrderHistory").then(m => ({ default: m.OrderHistory })));
 const BulkUpload = lazy(() => import("../pages/BulkUpload/BulkUpload").then(m => ({ default: m.BulkUpload })));
+const IndentHistory = lazy(() => import("../pages/IndentHistory/IndentHistory").then(m => ({ default: m.IndentHistory })));
 const SalesDesk = lazy(() => import("../pages/SalesDesk/SalesDesk").then(m => ({ default: m.SalesDesk })));
 const Admin = lazy(() => import("../pages/Admin/Admin").then(m => ({ default: m.Admin })));
 const UserManagement = lazy(() => import("../pages/Admin/Settings/UserManagement").then(m => ({ default: m.UserManagement })));
@@ -51,17 +51,15 @@ export const router = createBrowserRouter([
           },
           {
             path: "orders/history",
-            element: <BookingIndentHistory />,
+            element: <OrderHistory />,
           },
           {
             path: "orders/bulk-upload",
             element: <BulkUpload />,
           },
           {
-            // The old standalone page. Kept as a redirect so bookmarks and
-            // notification links keep landing on the indent list.
             path: "orders/indent-history",
-            element: <Navigate to="/orders/history?tab=indents" replace />,
+            element: <IndentHistory />,
           },
           {
             // Sales desk. The page re-checks the permission itself, and every
