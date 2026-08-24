@@ -33,6 +33,7 @@ import { io } from '../../server.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { sendBookingStatusMail } from '../../utils/bookingStatusMail.js';
+import { buildBookingJourney, journeyTablesHtml } from '../../utils/bookingJourney.js';
 import {
   bookingStatusOf, stageOf, stageLabel, isNotifiableStage, normalizeStatus,
 } from '../../utils/bookingLifecycle.js';
@@ -110,6 +111,16 @@ const notifyCustomer = async ({ event, orderId, status, previousStatus, rows, ch
     ? await User.findById(rows[0].user).select(CUSTOMER_FIELDS).lean()
     : null;
 
+  // The shared three-table journey. Best-effort: a status mail without the
+  // journey (falling back to the simple lines table) beats no status mail.
+  let journeyHtml = null;
+  try {
+    const journey = await buildBookingJourney({ orderId, rows });
+    if (journey) journeyHtml = journeyTablesHtml(journey, { audience: 'customer' });
+  } catch (e) {
+    console.error(`[Booking Status] ${orderId}: journey build failed, using lines table:`, e.message);
+  }
+
   const result = await sendBookingStatusMail({
     customer,
     orderId,
@@ -118,6 +129,7 @@ const notifyCustomer = async ({ event, orderId, status, previousStatus, rows, ch
     changedAt,
     poNumber: rows[0]?.poNumber,
     lines: lineSummary(rows),
+    journeyHtml,
   });
 
   const notification = {

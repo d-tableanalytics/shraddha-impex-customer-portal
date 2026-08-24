@@ -26,6 +26,7 @@
 import { sendEmail } from './mailer.js';
 import { COMPANY_CC, supportRecipients } from './mailRecipients.js';
 import { isPurchaseOrder } from './transactionTerms.js';
+import { buildBookingJourney, indentOnlyJourney, journeyTablesHtml } from './bookingJourney.js';
 
 // ── Presentation helpers ───────────────────────────────────────────────────
 
@@ -254,6 +255,11 @@ export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, po
   const count = lines.length;
   const units = lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
 
+  // The shared three-table journey. A standalone indent has no booking, so
+  // tables 1 and 3 render their "nothing was confirmed" state — the structure
+  // stays identical to every other booking mail.
+  const journey = indentOnlyJourney({ indentId, lines });
+
   const facts = (audience) => `
     ${referenceBox({
       heading: 'Indent Number',
@@ -262,7 +268,7 @@ export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, po
         + (poNumber && poNumber !== '-' ? ` &nbsp;·&nbsp; PO: <strong>${esc(poNumber)}</strong>` : ''),
     })}
     ${customerBlock(customer, { audience })}
-    ${indentTable(lines, { audience })}`;
+    ${journeyTablesHtml(journey, { audience })}`;
 
   const customerBody = `
     <p>Hi ${esc(name)},</p>
@@ -307,15 +313,21 @@ export const sendBookingMails = async ({
   const totalRequested = totalConfirmed + totalPending;
   const hasIndent = totalPending > 0;
 
-  const indentLines = summary
-    .filter((s) => s.pendingQty > 0)
-    .map((s) => ({
-      skuCode: s.skuCode,
-      msilCode: s.msilCode,
-      category: s.category,
-      quantity: s.pendingQty,
-      reference: s.reservationId,
-    }));
+  // The shared three-table journey, loaded from the rows the confirmation just
+  // committed. If the load fails the mail still goes, with the classic single
+  // booking table — a mail outage over a table is the wrong trade.
+  let journeyByAudience = null;
+  try {
+    const journey = await buildBookingJourney({ orderId: orderNumber });
+    if (journey) {
+      journeyByAudience = {
+        customer: journeyTablesHtml(journey, { audience: 'customer' }),
+        support: journeyTablesHtml(journey, { audience: 'support' }),
+      };
+    }
+  } catch (e) {
+    console.error('[Mail] booking journey build failed, falling back to summary table:', e.message);
+  }
 
   const facts = (audience) => `
     <div style="margin: 18px 0; padding: 14px 18px; background: #f0f6ff; border: 1px solid #cfe0f7; border-radius: 4px;">
@@ -328,12 +340,7 @@ export const sendBookingMails = async ({
       </div>
     </div>
     ${customerBlock(customer, { audience })}
-    ${bookingTable(summary, { audience })}
-    ${hasIndent ? `
-      <h4 style="margin: 22px 0 6px; font-size: 13px; color: #b54708; text-transform: uppercase; letter-spacing: 0.5px;">
-        Indent ${esc(indentId)} — awaiting stock
-      </h4>
-      ${indentTable(indentLines, { audience })}` : ''}`;
+    ${journeyByAudience ? journeyByAudience[audience] : bookingTable(summary, { audience })}`;
 
   const customerBody = `
     <p>Hi ${esc(name)},</p>

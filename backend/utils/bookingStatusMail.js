@@ -126,6 +126,11 @@ const linesTable = (lines = []) => {
  */
 export const buildStatusMail = ({
   customer, orderId, status, previousStatus, changedAt, poNumber, lines = [],
+  // The shared three-table booking journey (utils/bookingJourney.js), built by
+  // the caller because this function is deliberately sync and DB-free. When
+  // absent — a caller that has no rows handy, or the build failed — the mail
+  // falls back to the simple lines table rather than not going.
+  journeyHtml = null,
 }) => {
   const stage = stageOf(status);
   if (!stage) return null;
@@ -153,7 +158,7 @@ export const buildStatusMail = ({
 
     ${lifecycleStrip(status, terms)}
     ${customerBlock(customer)}
-    ${linesTable(lines)}
+    ${journeyHtml || linesTable(lines)}
 
     <p style="font-size: 13px; color: #666;">
       You can follow this ${esc(terms.nounLower)}'s full timeline at any time from
@@ -173,8 +178,9 @@ export const buildStatusMail = ({
  */
 export const sendBookingStatusMail = async ({
   customer, orderId, status, previousStatus, changedAt, poNumber, lines = [],
+  journeyHtml = null,
 }) => {
-  const mail = buildStatusMail({ customer, orderId, status, previousStatus, changedAt, poNumber, lines });
+  const mail = buildStatusMail({ customer, orderId, status, previousStatus, changedAt, poNumber, lines, journeyHtml });
   if (!mail) {
     return { state: 'not_applicable', reason: `"${status}" is not a lifecycle stage, so no status email is sent.` };
   }

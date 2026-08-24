@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 import Order from '../../models/Order.js';
 import User from '../../models/User.js';
 import Reservation from '../../models/Reservation.js';
-import AuditLog from '../../models/AuditLog.js';
 import { nextSequence } from '../../models/Counter.js';
 import { io } from '../../server.js';
 import { notifyUser } from '../../utils/notify.js';
@@ -16,6 +15,9 @@ import {
   adjustReservedQty, adjustConsumedQty,
 } from '../../utils/stockLedger.js';
 import { recordAudit } from '../../utils/auditLog.js';
+import {
+  QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
+} from '../../utils/bookingJourney.js';
 import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 
 /**
@@ -67,176 +69,13 @@ const esc = (v) =>
  * Removed lines no longer exist as rows and come from the same trail. A SKU the
  * desk both added and later removed is ignored — the customer never saw it.
  */
-/**
- * The two audit actions a quantity change is written under.
- *
- * They are kept apart because they mean opposite things to the customer. A
- * DESK edit is an adjustment made to the customer's order by us, and belongs
- * in the Change column of the PO mail. A CUSTOMER edit is the customer
- * revising their own request — it is not something we did to them, and
- * reporting it back as "our team adjusted your quantity" would be nonsense.
- * A customer edit therefore RESETS the baseline the desk's changes are
- * measured from, rather than counting as one.
- */
-export const QTY_EDIT_ACTIONS = {
-  desk: 'Booking Edited (Sales)',
-  customer: 'Booking Edited (Customer)',
-};
+// QTY_EDIT_ACTIONS, buildChangeSummary and changeLabel moved to
+// utils/bookingJourney.js so every booking mail (confirmation, status, PO)
+// can replay the same edit trail. Re-exported here because order.controller
+// imports QTY_EDIT_ACTIONS from this module.
+export { QTY_EDIT_ACTIONS };
 
-const buildChangeSummary = async (rows, orderId) => {
-  const editLogs = await AuditLog.find({
-    action: { $in: [QTY_EDIT_ACTIONS.desk, QTY_EDIT_ACTIONS.customer] },
-    'meta.orderId': orderId,
-  }).sort({ createdAt: 1 }).lean();
-
-  // Replay the edits forward, keyed by the SKU each line carries at that point
-  // in time, so a line that was re-coded still resolves to the quantity it was
-  // booked with.
-  const origin = new Map();  // current skuCode → { qty, addedByDesk, fromSku }
-  const removed = new Map(); // skuCode → booking-stage qty
-
-  for (const log of editLogs) {
-    // A customer revising their own order moves the baseline: from here on,
-    // "what the booking held" is what THEY last asked for, and only the desk's
-    // later edits read as adjustments.
-    const byCustomer = log.action === QTY_EDIT_ACTIONS.customer;
-    for (const c of log?.meta?.changes || []) {
-      if (byCustomer) {
-        if (c.type === 'removed') { origin.delete(c.skuCode); continue; }
-        const sku = c.type === 'sku' ? c.toSku : c.skuCode;
-        const prior = origin.get(sku);
-        origin.set(sku, {
-          qty: c.toQty ?? 0,
-          addedByDesk: prior?.addedByDesk ?? false,
-          fromSku: prior?.fromSku ?? null,
-        });
-        continue;
-      }
-      if (c.type === 'added') {
-        origin.set(c.skuCode, { qty: 0, addedByDesk: true, fromSku: null });
-        removed.delete(c.skuCode); // re-added → no longer a removal
-      } else if (c.type === 'removed') {
-        const prior = origin.get(c.skuCode);
-        // Only report a line the CUSTOMER booked. One the desk both added and
-        // removed never reached them.
-        if (!prior?.addedByDesk) removed.set(c.skuCode, prior?.qty ?? c.fromQty ?? 0);
-        origin.delete(c.skuCode);
-      } else if (c.type === 'sku') {
-        // The line survives under a new code — carry its origin across, keeping
-        // the code it was booked under so the customer can recognise it.
-        const prior = origin.get(c.fromSku)
-          ?? { qty: c.fromQty ?? 0, addedByDesk: false, fromSku: c.fromSku };
-        origin.delete(c.fromSku);
-        origin.set(c.toSku, { ...prior, fromSku: prior.fromSku ?? c.fromSku });
-      } else if (!origin.has(c.skuCode)) {
-        // First sighting of a line wins: that is its pre-edit, booking-stage state.
-        origin.set(c.skuCode, { qty: c.fromQty ?? 0, addedByDesk: false, fromSku: null });
-      }
-    }
-  }
-
-  // LIVE indent balance, not the pendingQty frozen on the order row. An indent
-  // shrinks as stock arrives against it ('Indent Auto-Booked'), so the snapshot
-  // would tell the customer 20 pcs are still outstanding when only 15 are.
-  // Scoped to THIS booking's indent — a booking and its indent share a sequence
-  // number and differ only in the prefix.
-  const openIndents = await Reservation.find({
-    indentNumber: String(orderId).replace(/^BO-/, 'PI-'),
-    status: { $in: ['Pending', 'Partially Confirmed'] },
-  }).lean();
-  const indentBySku = new Map();
-  for (const r of openIndents) {
-    indentBySku.set(r.skuCode, (indentBySku.get(r.skuCode) || 0) + (r.quantity || 0));
-  }
-
-  const lines = rows.map((r) => {
-    const booked = r.confirmedQty || 0;
-    const indent = indentBySku.get(r.skuCode) || 0;
-    const base = {
-      skuCode: r.skuCode,
-      msilCode: r.msilCode || null,
-      fromSku: null,
-      onPo: r.bookedQty || 0,
-      booked,
-      indent,
-    };
-    const o = origin.get(r.skuCode);
-
-    if (!o) {
-      // Never edited by the desk. The bookedQty check is the marker
-      // runUpdateItems stamps on a line it added itself, and covers the case
-      // where that line's audit entry did not survive — no customer line is
-      // ever written with bookedQty 0.
-      const deskAdded = (r.bookedQty || 0) === 0 && booked > 0;
-      return { ...base, change: deskAdded ? booked : 0, type: deskAdded ? 'added' : 'unchanged' };
-    }
-
-    if (o.addedByDesk) return { ...base, onPo: 0, change: booked, type: 'added' };
-
-    const change = booked - o.qty;
-    // A re-code is a change even when the quantity is untouched, so it is typed
-    // in its own right rather than falling through to "no change".
-    if (o.fromSku && o.fromSku !== r.skuCode) {
-      return { ...base, fromSku: o.fromSku, change, type: 'recoded' };
-    }
-    return { ...base, change, type: change > 0 ? 'increased' : change < 0 ? 'reduced' : 'unchanged' };
-  });
-
-  const currentSkus = new Set(rows.map((r) => r.skuCode));
-  for (const [skuCode, qty] of removed) {
-    if (currentSkus.has(skuCode)) continue;
-    lines.push({
-      skuCode, msilCode: null, fromSku: null,
-      onPo: qty, booked: 0, change: -qty, indent: indentBySku.get(skuCode) || 0,
-      type: 'removed',
-    });
-  }
-
-  const sum = (key) => lines.reduce((n, l) => n + l[key], 0);
-  return {
-    lines,
-    changed: lines.some((l) => l.type !== 'unchanged'),
-    totalOnPo: sum('onPo'),
-    totalBooked: sum('booked'),
-    totalChange: sum('change'),
-    totalIndent: sum('indent'),
-  };
-};
-
-/** Signed description of what the desk did to one line, for the Change column. */
-const changeLabel = (l) => {
-  const signed = `${l.change > 0 ? '+' : '-'}${Math.abs(l.change)} pcs`;
-  if (l.type === 'added') return `${signed} — line added`;
-  if (l.type === 'removed') return `${signed} — line removed`;
-  if (l.type === 'recoded') {
-    return l.change === 0
-      ? `re-coded from ${l.fromSku}`
-      : `re-coded from ${l.fromSku}, ${signed}`;
-  }
-  return l.change === 0 ? 'No change' : signed;
-};
-
-const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
-  const cell = 'padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
-  const head = 'padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;';
-  const tone = {
-    increased: 'color: #1a7f37; font-weight: bold;',
-    reduced: 'color: #b54708; font-weight: bold;',
-    added: 'color: #1a5b9e; font-weight: bold;',
-    removed: 'color: #b42318; font-weight: bold;',
-    recoded: 'color: #1a5b9e; font-weight: bold;',
-    unchanged: 'color: #888;',
-  };
-
-  const rows = summary.lines.map((l) => `
-    <tr>
-      <td style="${cell}"><strong>${esc(l.skuCode)}</strong></td>
-      <td style="${cell} text-align: right;">${l.onPo} pcs</td>
-      <td style="${cell} text-align: right;">${l.booked} pcs</td>
-      <td style="${cell} ${tone[l.type]}">${esc(changeLabel(l))}</td>
-      <td style="${cell} text-align: right; ${l.indent > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #888;'}">${l.indent} pcs</td>
-    </tr>`).join('');
-
+const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary, journeyHtml }) => {
   // THE CONVERSION EMAIL. Deliberately carries NO booking TAT line: this mail
   // exists only because a PO has been raised, and the 7-day booking turnaround
   // stops applying at that point. Quoting it against a purchase order tells the
@@ -247,6 +86,10 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
   // quote from now on. The booking id stays, demoted to a back-reference, purely
   // so they can reconcile which booking became this PO; it is the one mail that
   // legitimately spans both names.
+  //
+  // The line detail is the shared three-table journey (utils/bookingJourney.js):
+  // what was confirmed at booking, what sits on indent / the PO facts, and the
+  // final quantities this PO commits — the same tables every booking mail shows.
   return `
     <p>Hi ${esc(customerName)},</p>
     <p>Your booking has been processed and converted into a Purchase Order.
@@ -262,32 +105,10 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary }) => {
     </div>
 
     ${summary.changed
-      ? `<p><strong>Please note:</strong> our team adjusted some quantities before this purchase order was raised. The adjustments are shown in the Change column below.</p>`
-      : `<p>No quantities were adjusted by our team${summary.totalIndent > 0 ? ' — the Indent column shows what is still awaiting stock' : ''}.</p>`}
+      ? `<p><strong>Please note:</strong> our team adjusted some quantities before this purchase order was raised. The adjustments are shown in the Change column of the Final Booking Details below.</p>`
+      : `<p>No quantities were adjusted by our team${summary.totalIndent > 0 ? ' — the Indent table below shows what is still awaiting stock' : ''}.</p>`}
 
-    <table style="border-collapse: collapse; margin: 0 0 20px; width: 100%;">
-      <thead>
-        <tr>
-          <th style="${head}">SKU</th>
-          <th style="${head} text-align: right;">On PO</th>
-          <th style="${head} text-align: right;">Booked</th>
-          <th style="${head}">Change</th>
-          <th style="${head} text-align: right;">Indent</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-      <tfoot>
-        <tr>
-          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
-          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalOnPo} pcs</td>
-          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalBooked} pcs</td>
-          <td style="${cell} border-bottom: none; font-weight: bold;">${
-            summary.totalChange === 0 ? '' : `${summary.totalChange > 0 ? '+' : '-'}${Math.abs(summary.totalChange)} pcs`
-          }</td>
-          <td style="${cell} border-bottom: none; text-align: right; font-weight: bold;">${summary.totalIndent} pcs</td>
-        </tr>
-      </tfoot>
-    </table>
+    ${journeyHtml}
 
     <p>Thank you for your business.</p>
   `;
@@ -863,7 +684,8 @@ export const raisePo = async (req, res, next) => {
 
     // Tell the customer their PO is through — in-app, and by email with a
     // line-by-line account of anything the sales desk changed.
-    const summary = await buildChangeSummary(updated, orderId);
+    const journey = await buildBookingJourney({ orderId, rows: updated });
+    const summary = journey.summary;
 
     if (updated[0]?.user) {
       notifyUser(updated[0].user, {
@@ -882,6 +704,7 @@ export const raisePo = async (req, res, next) => {
           orderId,
           poNumber,
           summary,
+          journeyHtml: journeyTablesHtml(journey, { audience: 'customer' }),
         });
         // Subject names the PURCHASE ORDER, not the booking: this is the mail
         // that tells the customer the reference has changed, and every mail
