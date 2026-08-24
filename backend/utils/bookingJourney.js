@@ -1,19 +1,17 @@
 /**
- * The booking journey — one structure, three tables, every booking mail.
+ * The booking journey — one structure, one table, every booking mail.
  *
  * Every booking-related email (confirmation, indent raised, PO raised, and the
- * lifecycle status mails) shows the same three tables so the customer can read
- * the whole story of an order in any one of them:
+ * lifecycle status mails) shows the SAME single table, so the customer can read
+ * the whole story of an order in any one of them. One row per SKU:
  *
- *   1. Confirmed Booking Details   what the booking held at confirmation time
- *   2. Indent / PO Details         what is awaiting stock, and the PO once raised
- *   3. Final Booking Details       what the booking holds NOW, with any changes
+ *   SKU | Booked | Confirmed | Indent | Change
  *
- * Table 1 is reconstructed, not stored: the edit audit trail is replayed
- * forward (buildChangeSummary) to recover each line's booking-stage quantity,
- * so a booking edited five times still shows what it looked like on day one.
- * Table 3 is the live rows. When nothing was ever edited the two agree — which
- * is exactly what a customer should see.
+ * The Change column is reconstructed, not stored: the edit audit trail is
+ * replayed forward (buildChangeSummary) to recover each line's booking-stage
+ * quantity, so a booking edited five times still reports only what the desk
+ * actually decided. When nothing was ever edited the column reads "No change",
+ * which is exactly what a customer should see.
  *
  * This module is a LEAF: it imports models only, so both mail utils and the
  * sales controller can build on it without an import cycle.
@@ -172,7 +170,7 @@ export const changeLabel = (l) => {
 // ── Journey assembly ───────────────────────────────────────────────────────
 
 /**
- * Everything the three tables need, computed once per mail.
+ * Everything the table needs, computed once per mail.
  *
  * @param {string} orderId
  * @param {object[]|null} rows  pass the already-loaded booking to skip a query
@@ -253,8 +251,8 @@ export const buildBookingJourney = async ({ orderId, rows = null }) => {
 
 /**
  * The journey shape for a STANDALONE indent — a confirmation where nothing
- * could be fulfilled, so no booking exists. The three tables still render,
- * with tables 1 and 3 stating plainly that no units were confirmed.
+ * could be fulfilled, so no booking exists. The table still renders, from the
+ * indent lines, showing every unit as ordered but none confirmed.
  */
 export const indentOnlyJourney = ({ indentId, lines = [] }) => ({
   orderId: null,
@@ -310,7 +308,25 @@ const emptyNote = (text) => `
             border-radius: 4px; font-size: 13px; color: #777;">${escHtml(text)}</p>`;
 
 /**
- * The three journey tables, as one HTML fragment.
+ * The booking, as ONE table.
+ *
+ * This was three tables — as-confirmed, indent, final — which left the customer
+ * cross-reading three grids to answer a single question: what did I order, what
+ * am I actually getting, and what changed. One row per SKU carries the same
+ * facts in five columns:
+ *
+ *   Booked     what the customer ordered, indent included. Never moves.
+ *   Confirmed  what the booking holds against stock right now.
+ *   Indent     what is still awaiting stock. Read live, so it shrinks as stock
+ *              arrives against it.
+ *   Change     what Admin or Sales adjusted AFTER the booking was placed, and
+ *              nothing else — a stock shortfall at booking time is not an
+ *              adjustment, it is the Indent column.
+ *
+ * Booked minus Confirmed is therefore the shortfall, and Change is the human
+ * decision laid over it. Keeping those two apart is the whole point of the
+ * table: conflating them is what once told a customer their 50 had been
+ * "changed to 2" when nobody had touched it.
  *
  * The MSIL column follows the audience rule the rest of the mails use: the
  * customer orders by SKU; support reconciles codes, so only support sees it.
@@ -319,126 +335,94 @@ export const journeyTablesHtml = (journey, { audience = 'customer' } = {}) => {
   if (!journey) return '';
   const showMsil = audience === 'support';
   const msilHead = showMsil ? `<th style="${HEAD}">MSIL Code</th>` : '';
-  const msilCell = (v) => (showMsil ? `<td style="${CELL}">${escHtml(v || '—')}</td>` : '');
-  const table = (heads, body, foot) => `
-    <table style="border-collapse: collapse; margin: 0 0 8px; width: 100%;">
-      <thead><tr>${heads}</tr></thead>
-      <tbody>${body}</tbody>
-      <tfoot>${foot}</tfoot>
-    </table>`;
+  const msilCell = (v) => (showMsil ? `<td style="${CELL}">${escHtml(v || '\u2014')}</td>` : '');
 
-  // ── 1 · Confirmed Booking Details ────────────────────────────────────────
-  let confirmedHtml;
-  if (journey.confirmed.length) {
-    const rows = journey.confirmed.map((l) => `
-      <tr>
-        <td style="${CELL}"><strong>${escHtml(l.skuCode)}</strong></td>
-        ${msilCell(l.msilCode)}
-        <td style="${CELL} text-align: right;">${l.booked} pcs</td>
-        <td style="${CELL} text-align: right; color: #1a7f37; font-weight: bold;">${l.confirmed} pcs</td>
-        <td style="${CELL} text-align: right; ${l.indent > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #bbb;'}">${l.indent} pcs</td>
-      </tr>`).join('');
-    const t = (k) => journey.confirmed.reduce((n, l) => n + l[k], 0);
-    confirmedHtml = table(
-      `<th style="${HEAD}">SKU</th>${msilHead}
-       <th style="${HEAD} text-align: right;">Booked</th>
-       <th style="${HEAD} text-align: right;">Confirmed from Stock</th>
-       <th style="${HEAD} text-align: right;">Moved to Indent</th>`,
-      rows,
-      `<tr>
+  // One row per SKU. Driven by the change replay when a booking exists; a
+  // STANDALONE indent has no booking rows at all, so its lines come straight
+  // off the indent and read as "ordered, none confirmed, all awaiting stock".
+  const rows = journey.summary
+    ? journey.summary.lines.map((l) => ({
+      skuCode: l.skuCode,
+      msilCode: l.msilCode,
+      booked: l.onPo,
+      confirmed: l.booked,
+      indent: l.indent,
+      change: l.change,
+      type: l.type,
+      label: changeLabel(l),
+    }))
+    : journey.indentLines.map((l) => ({
+      skuCode: l.skuCode,
+      msilCode: l.msilCode,
+      booked: l.quantity,
+      confirmed: 0,
+      indent: l.quantity,
+      change: 0,
+      type: 'unchanged',
+      label: 'No change',
+    }));
+
+  if (!rows.length) return emptyNote('This booking has no line items.');
+
+  const t = (k) => rows.reduce((n, r) => n + r[k], 0);
+  const tc = t('change');
+  const ti = t('indent');
+
+  const body = rows.map((r) => `
+    <tr>
+      <td style="${CELL}"><strong>${escHtml(r.skuCode)}</strong></td>
+      ${msilCell(r.msilCode)}
+      <td style="${CELL} text-align: right;">${r.booked} pcs</td>
+      <td style="${CELL} text-align: right; font-weight: bold; ${r.confirmed > 0 ? 'color: #1a7f37;' : 'color: #bbb;'}">${r.confirmed} pcs</td>
+      <td style="${CELL} text-align: right; ${r.indent > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #bbb;'}">${r.indent} pcs</td>
+      <td style="${CELL} ${TONE[r.type] || TONE.unchanged}">${escHtml(r.label)}</td>
+    </tr>`).join('');
+
+  const tableHtml = `
+    <table style="border-collapse: collapse; margin: 0 0 10px; width: 100%;">
+      <thead><tr>
+        <th style="${HEAD}">SKU</th>${msilHead}
+        <th style="${HEAD} text-align: right;">Booked</th>
+        <th style="${HEAD} text-align: right;">Confirmed</th>
+        <th style="${HEAD} text-align: right;">Indent</th>
+        <th style="${HEAD}">Change</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr>
         <td colspan="${showMsil ? 2 : 1}" style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
         <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">${t('booked')} pcs</td>
         <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">${t('confirmed')} pcs</td>
-        <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; ${t('indent') > 0 ? 'color: #b54708;' : 'color: #bbb;'}">${t('indent')} pcs</td>
-      </tr>`,
-    );
-  } else {
-    confirmedHtml = emptyNote(
-      'No units could be confirmed from stock at booking time — the entire request was raised as an indent.',
-    );
-  }
-
-  // ── 2 · Indent / PO Details ──────────────────────────────────────────────
-  const poBox = journey.po
-    ? `<table style="border-collapse: collapse; margin: 0 0 10px;">
-        <tr><td style="padding: 2px 12px 2px 0; color: #777; font-size: 13px;">PO Number</td>
-            <td style="padding: 2px 0; font-weight: bold; font-size: 13px; font-family: monospace;">${escHtml(journey.po.number)}</td></tr>
-        <tr><td style="padding: 2px 12px 2px 0; color: #777; font-size: 13px;">PO Raised on</td>
-            <td style="padding: 2px 0; font-weight: bold; font-size: 13px;">${fmtD(journey.po.raisedAt)}</td></tr>
-        ${journey.po.promiseDate ? `
-        <tr><td style="padding: 2px 12px 2px 0; color: #777; font-size: 13px;">Promise Date</td>
-            <td style="padding: 2px 0; font-weight: bold; font-size: 13px;">${fmtD(journey.po.promiseDate)}</td></tr>` : ''}
-      </table>`
-    : `<p style="margin: 4px 0 8px; font-size: 13px; color: #777;">Purchase Order: <strong>not yet raised</strong>.</p>`;
-
-  let indentHtml;
-  if (journey.indentLines.length) {
-    const rows = journey.indentLines.map((l) => `
-      <tr>
-        <td style="${CELL}"><strong>${escHtml(l.skuCode)}</strong></td>
-        ${msilCell(l.msilCode)}
-        <td style="${CELL} text-align: right; color: #b54708; font-weight: bold;">${l.quantity} pcs</td>
-      </tr>`).join('');
-    const total = journey.indentLines.reduce((n, l) => n + l.quantity, 0);
-    indentHtml = table(
-      `<th style="${HEAD}">SKU</th>${msilHead}
-       <th style="${HEAD} text-align: right;">Qty Awaiting Stock</th>`,
-      rows,
-      `<tr>
-        <td colspan="${showMsil ? 2 : 1}" style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
-        <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">${total} pcs</td>
-      </tr>`,
-    );
-    indentHtml = `<p style="margin: 0 0 6px; font-size: 12px; color: #888;">
-        Indent reference: <strong style="font-family: monospace; color: #b54708;">${escHtml(journey.indentId)}</strong>
-        — these figures are live and shrink as stock arrives.</p>${indentHtml}`;
-  } else {
-    indentHtml = emptyNote('No units are awaiting stock on this booking.');
-  }
-
-  // ── 3 · Final Booking Details ────────────────────────────────────────────
-  let finalHtml;
-  if (journey.final.length) {
-    const rows = journey.final.map((l) => `
-      <tr>
-        <td style="${CELL}"><strong>${escHtml(l.skuCode)}</strong></td>
-        ${msilCell(l.msilCode)}
-        <td style="${CELL} text-align: right; font-weight: bold;">${l.qty} pcs</td>
-        <td style="${CELL} ${TONE[l.type] || TONE.unchanged}">${escHtml(l.label)}</td>
-        <td style="${CELL} text-align: right; ${l.indent > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #bbb;'}">${l.indent} pcs</td>
-      </tr>`).join('');
-    const tq = journey.final.reduce((n, l) => n + l.qty, 0);
-    const ti = journey.final.reduce((n, l) => n + l.indent, 0);
-    const tc = journey.final.reduce((n, l) => n + l.change, 0);
-    finalHtml = table(
-      `<th style="${HEAD}">SKU</th>${msilHead}
-       <th style="${HEAD} text-align: right;">Final Qty</th>
-       <th style="${HEAD}">Change</th>
-       <th style="${HEAD} text-align: right;">On Indent</th>`,
-      rows,
-      `<tr>
-        <td colspan="${showMsil ? 2 : 1}" style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
-        <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">${tq} pcs</td>
-        <td style="${CELL} border-bottom: none; font-weight: bold;">${tc === 0 ? '' : `${tc > 0 ? '+' : '-'}${Math.abs(tc)} pcs`}</td>
         <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; ${ti > 0 ? 'color: #b54708;' : 'color: #bbb;'}">${ti} pcs</td>
-      </tr>`,
-    );
-  } else {
-    finalHtml = emptyNote('No booking exists yet — every unit is awaiting stock on the indent above.');
-  }
+        <td style="${CELL} border-bottom: none; font-weight: bold;">${tc === 0 ? '' : `${tc > 0 ? '+' : '-'}${Math.abs(tc)} pcs`}</td>
+      </tr></tfoot>
+    </table>`;
+
+  // PO facts stay: they are the reference the customer quotes from the moment
+  // the PO exists, and with the tables merged this is the only place the status
+  // mails carry them. A few labelled values, not a fourth table.
+  const poHtml = journey.po
+    ? `<p style="margin: 0 0 10px; font-size: 12px; color: #666;">
+         Purchase Order <strong style="font-family: monospace; color: #1a5b9e;">${escHtml(journey.po.number)}</strong>
+         raised on <strong>${fmtD(journey.po.raisedAt)}</strong>${journey.po.promiseDate
+           ? ` &middot; promise date <strong>${fmtD(journey.po.promiseDate)}</strong>` : ''}.
+       </p>`
+    : '';
+
+  // The indent has its own reference number, and the customer needs it to chase
+  // the outstanding units — so it is named whenever any remain.
+  const indentNote = ti > 0 && journey.indentId
+    ? `<p style="margin: 0 0 8px; font-size: 12px; color: #888;">
+         Indent reference <strong style="font-family: monospace; color: #b54708;">${escHtml(journey.indentId)}</strong>
+         &mdash; the Indent column is live and shrinks as stock arrives.
+       </p>`
+    : '';
 
   return `
-    ${sectionHeading('1 · Confirmed Booking Details',
-      journey.bookingDate ? `As confirmed on ${fmtD(journey.bookingDate)}.` : null)}
-    ${confirmedHtml}
-    ${sectionHeading('2 · Indent / PO Details')}
-    ${poBox}
-    ${indentHtml}
-    ${sectionHeading('3 · Final Booking Details',
-      journey.po
-        ? 'The quantities committed on the purchase order, including any adjustments made while raising it.'
-        : 'The booking as it stands today, including any adjustments so far.')}
-    ${finalHtml}`;
+    ${sectionHeading('Booking Details',
+      journey.bookingDate ? `As booked on ${fmtD(journey.bookingDate)}.` : null)}
+    ${poHtml}
+    ${tableHtml}
+    ${indentNote}`;
 };
 
 export default {

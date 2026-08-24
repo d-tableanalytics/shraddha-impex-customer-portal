@@ -6,7 +6,7 @@ import { INVENTORY_ROLES } from "../utils/permissions";
  *
  * MSIL Codes are only meaningful to Admins, to Sales (who work the desk for
  * both kinds of customer), to MSIL customers themselves, to anyone explicitly
- * flagged, and to internal inventory staff. A Regular customer never sees or
+ * flagged, and to internal inventory staff. A non-MSIL customer never sees or
  * enters one, so it stays hidden from their tables, forms, templates and
  * exports.
  *

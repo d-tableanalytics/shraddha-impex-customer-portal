@@ -11,7 +11,7 @@ export const Admin = () => {
   const adminCards = [
     {
       name: "User Management",
-      desc: "Add customers and set/change their category (MSIL / Regular Customer).",
+      desc: "Add customers and set/change their category (MSIL / Customer).",
       icon: Users,
       path: "/admin/users",
     },

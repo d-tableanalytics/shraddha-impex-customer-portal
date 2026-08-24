@@ -1,0 +1,76 @@
+<meta charset="utf-8">
+<title>PO Modal Header</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; background: #f1f5f9; margin: 0; padding: 32px; color: #0f172a; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.sub { font-size: 13px; color: #64748b; margin: 0 0 26px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; margin: 26px 0 8px; }
+  .modal { max-width: 620px; background: #fff; border-radius: 16px; overflow: hidden;
+           box-shadow: 0 20px 40px rgba(15,23,42,.16); border: 1px solid #f1f5f9; }
+  .hdr { padding: 16px 24px; color: #fff; display: flex; align-items: center; justify-content: space-between; }
+  .old { background: #0f172a; }
+  .new { background: linear-gradient(to right, #1a5b9e, #15467a); }
+  .left { display: flex; align-items: center; gap: 10px; }
+  .chip { width: 36px; height: 36px; border-radius: 12px; display: flex; align-items: center;
+          justify-content: center; font-size: 17px; }
+  .chip-old { background: rgba(37,99,235,.30); border: 1px solid rgba(59,130,246,.40); color: #60a5fa; }
+  .chip-new { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: #fff; }
+  .ttl { font-size: 16px; font-weight: 800; letter-spacing: -.01em; }
+  .ref { font-size: 12px; margin-top: 2px; }
+  .ref-old { color: #94a3b8; } .ref-old b { color: #93c5fd; font-family: monospace; }
+  .ref-new { color: #dbeafe; } .ref-new b { color: #fff; font-family: monospace; }
+  .x-old { color: #94a3b8; } .x-new { color: rgba(255,255,255,.7); }
+  .banner { padding: 11px 24px; background: #fffbeb; border-bottom: 1px solid #fde68a;
+            font-size: 12px; color: #78350f; }
+  .body { padding: 20px 24px; font-size: 13px; color: #475569; }
+  .swatches { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+  .sw { font-size: 11px; color: #475569; text-align: center; }
+  .sw i { display: block; width: 78px; height: 34px; border-radius: 7px; margin-bottom: 4px;
+          border: 1px solid rgba(15,23,42,.08); }
+</style>
+
+<h1>Confirm &amp; Lock Purchase Order — modal header</h1>
+<p class="sub">Rendered with the exact colours now in the component.</p>
+
+<h2>Before — slate-900</h2>
+<div class="modal">
+  <div class="hdr old">
+    <div class="left">
+      <div class="chip chip-old">✔</div>
+      <div>
+        <div class="ttl">Confirm &amp; Lock Purchase Order</div>
+        <div class="ref ref-old">Booking Reference: <b>BO-2026-000009</b></div>
+      </div>
+    </div>
+    <div class="x-old">✕</div>
+  </div>
+  <div class="banner">Review and update the purchase order details below.</div>
+  <div class="body">Customer Name, Phone Number, Location, Shipping Address…</div>
+</div>
+
+<h2>After — ERP brand blue</h2>
+<div class="modal">
+  <div class="hdr new">
+    <div class="left">
+      <div class="chip chip-new">✔</div>
+      <div>
+        <div class="ttl">Confirm &amp; Lock Purchase Order</div>
+        <div class="ref ref-new">Booking Reference: <b>BO-2026-000009</b></div>
+      </div>
+    </div>
+    <div class="x-new">✕</div>
+  </div>
+  <div class="banner">Review and update the purchase order details below.</div>
+  <div class="body">Customer Name, Phone Number, Location, Shipping Address…</div>
+</div>
+
+<h2>The brand blue, where else it appears</h2>
+<div class="swatches">
+  <div class="sw"><i style="background:#1a5b9e"></i>#1a5b9e</div>
+  <div class="sw"><i style="background:#15467a"></i>#15467a</div>
+  <div class="sw"><i style="background:linear-gradient(to right,#1a5b9e,#15467a)"></i>gradient</div>
+</div>
+<p class="sub" style="margin-top:10px;">
+  Same pair used by the Create Booking accent bar, the primary call-to-action button,
+  and the headings in every customer email.
+</p>

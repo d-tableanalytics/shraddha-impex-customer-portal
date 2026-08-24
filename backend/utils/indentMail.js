@@ -61,7 +61,7 @@ export const customerBlock = (customer = {}, { audience = 'customer' } = {}) => 
   // Phone and Customer Category are for the people who have to ACT on the mail,
   // not for the customer it is addressed to. Reading their own phone number
   // back is noise, and "Customer Category" is an internal classification
-  // (MSIL / Regular Customer) that drives our pricing and MOQ rules — it is not
+  // (MSIL / Customer) that drives our pricing and MOQ rules — it is not
   // something the customer asked to be told about themselves.
   //
   // Support keeps both: its copy is the operational record, and a support
@@ -255,7 +255,7 @@ export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, po
   const count = lines.length;
   const units = lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
 
-  // The shared three-table journey. A standalone indent has no booking, so
+  // The shared booking table. A standalone indent has no booking, so
   // tables 1 and 3 render their "nothing was confirmed" state — the structure
   // stays identical to every other booking mail.
   const journey = indentOnlyJourney({ indentId, lines });
@@ -313,7 +313,7 @@ export const sendBookingMails = async ({
   const totalRequested = totalConfirmed + totalPending;
   const hasIndent = totalPending > 0;
 
-  // The shared three-table journey, loaded from the rows the confirmation just
+  // The shared booking table, loaded from the rows the confirmation just
   // committed. If the load fails the mail still goes, with the classic single
   // booking table — a mail outage over a table is the wrong trade.
   let journeyByAudience = null;

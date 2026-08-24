@@ -81,7 +81,7 @@ export const getUsers = async (req, res, next) => {
   }
 };
 
-// Admin creates a customer, choosing its category (MSIL / Regular Customer).
+// Admin creates a customer, choosing its category (MSIL / Customer).
 export const createUser = async (req, res, next) => {
   try {
     const { email, password, user, company, role, customerCategory, status, brandAccess } = req.body;
@@ -140,7 +140,7 @@ export const createUser = async (req, res, next) => {
       user: user || null,
       company: company || null,
       role: requestedRole,
-      customerCategory: customerCategory === 'MSIL' ? 'MSIL' : 'Regular Customer',
+      customerCategory: customerCategory === 'MSIL' ? 'MSIL' : 'Customer',
       status: status || 'Active',
       ...(brandAccess ? { brandAccess } : {}),
       // Written once, here. updateUser() refuses them from now on.
@@ -184,8 +184,10 @@ export const updateUser = async (req, res, next) => {
       if (key in req.body) updates[key] = req.body[key];
     }
 
-    if (updates.customerCategory && !['MSIL', 'Regular Customer', 'Non-MSIL'].includes(updates.customerCategory)) {
-      return res.status(400).json({ success: false, message: 'Invalid customer category. Use "MSIL" or "Regular Customer".' });
+    // The two legacy spellings stay accepted so an integration still sending
+    // them does not start failing; anything else is a typo worth rejecting.
+    if (updates.customerCategory && !['MSIL', 'Customer', 'Regular Customer', 'Non-MSIL'].includes(updates.customerCategory)) {
+      return res.status(400).json({ success: false, message: 'Invalid customer category. Use "MSIL" or "Customer".' });
     }
 
     // If email is being changed, ensure it is not taken by another user.

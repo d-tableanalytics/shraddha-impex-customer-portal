@@ -106,24 +106,19 @@ export const canEditBooking = (user, booking) => {
 /**
  * Who may amend the QUANTITIES on this booking right now.
  *
- * Wider than canEditBooking, which answers "may this user work the sales desk
- * on it". Two audiences, two rules:
+ * ADMIN AND SALES ONLY. Once a booking has been placed the customer cannot
+ * change its quantities — they ask the desk, and the desk is emailed-of-record
+ * for the adjustment. This briefly allowed the customer to revise their own
+ * booking; that is no longer the rule.
  *
- *   • Staff — the desk rules, unchanged: Sales until the PO is raised, Admin
- *     after it too.
- *   • The customer who placed it — until the PO is raised. Their booking list
- *     only ever contains their own bookings, so ownership is implied here; the
- *     server checks it properly on every write and confines them to quantity
- *     changes on lines that already exist.
+ * Identical to canEditBooking, and kept as its own name because the screens
+ * that gate a quantity field read better asking that question, and because the
+ * server enforces the quantity rule on a route of its own.
  *
  * Once the PO is raised the quantities are committed and only an Admin may
  * move them, which is what canEditBooking already encodes.
  */
-export const canEditBookingQuantity = (user, booking) => {
-  if (!booking) return false;
-  if (hasPermission(user, PERMISSIONS.VIEW_ALL_BOOKINGS)) return canEditBooking(user, booking);
-  return hasPermission(user, PERMISSIONS.CREATE_ORDER) && !booking.locked;
-};
+export const canEditBookingQuantity = (user, booking) => canEditBooking(user, booking);
 
 export const canRaisePo = (user, booking) =>
   Boolean(booking) && !booking.locked && hasPermission(user, PERMISSIONS.RAISE_PO);

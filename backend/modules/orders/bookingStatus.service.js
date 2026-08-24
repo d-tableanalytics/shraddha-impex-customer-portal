@@ -111,7 +111,7 @@ const notifyCustomer = async ({ event, orderId, status, previousStatus, rows, ch
     ? await User.findById(rows[0].user).select(CUSTOMER_FIELDS).lean()
     : null;
 
-  // The shared three-table journey. Best-effort: a status mail without the
+  // The shared booking table. Best-effort: a status mail without the
   // journey (falling back to the simple lines table) beats no status mail.
   let journeyHtml = null;
   try {

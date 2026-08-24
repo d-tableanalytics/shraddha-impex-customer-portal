@@ -126,7 +126,7 @@ const linesTable = (lines = []) => {
  */
 export const buildStatusMail = ({
   customer, orderId, status, previousStatus, changedAt, poNumber, lines = [],
-  // The shared three-table booking journey (utils/bookingJourney.js), built by
+  // The shared booking table (utils/bookingJourney.js), built by
   // the caller because this function is deliberately sync and DB-free. When
   // absent — a caller that has no rows handy, or the build failed — the mail
   // falls back to the simple lines table rather than not going.

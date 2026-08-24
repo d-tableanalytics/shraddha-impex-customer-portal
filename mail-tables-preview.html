@@ -1,0 +1,334 @@
+<div style="max-width:720px;margin:0 auto;padding:24px;">
+     <h1 style="font-family:Arial;font-size:20px;">Consolidated booking table — scenarios</h1>
+     <h3 style="font-family:Arial;margin:34px 0 4px;color:#111;border-top:2px solid #ddd;padding-top:18px;">1. Real booking BO-2026-000009 — stock short, NO desk edit</h3>
+   <p style="font-family:Arial;font-size:13px;color:#666;margin:0 0 10px;">Booked 50, only 2 in stock, 48 to indent. Change must read "No change".</p>
+   <div style="font-family:Arial,sans-serif;color:#333;font-size:14px;line-height:1.6;">
+    
+  <h4 style="margin: 22px 0 2px; font-size: 13px; color: #1a5b9e; text-transform: uppercase; letter-spacing: 0.5px;">
+    Booking Details
+  </h4>
+  <p style="margin: 0 0 8px; font-size: 12px; color: #888;">As booked on 21 Aug 2026.</p>
+    <p style="margin: 0 0 10px; font-size: 12px; color: #666;">
+         Purchase Order <strong style="font-family: monospace; color: #1a5b9e;">2242890</strong>
+         raised on <strong>21 Aug 2026</strong>.
+       </p>
+    
+    <table style="border-collapse: collapse; margin: 0 0 10px; width: 100%;">
+      <thead><tr>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">SKU</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Booked</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Confirmed</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Indent</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">Change</th>
+      </tr></thead>
+      <tbody>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>183H.35-8</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">50 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #1a7f37;">2 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #b54708; font-weight: bold;">48 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #888;">No change</td>
+    </tr></tbody>
+      <tfoot><tr>
+        <td colspan="1" style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">50 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">2 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">48 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; font-weight: bold;"></td>
+      </tr></tfoot>
+    </table>
+    <p style="margin: 0 0 8px; font-size: 12px; color: #888;">
+         Indent reference <strong style="font-family: monospace; color: #b54708;">PI-2026-000009</strong>
+         &mdash; the Indent column is live and shrinks as stock arrives.
+       </p></div><h3 style="font-family:Arial;margin:34px 0 4px;color:#111;border-top:2px solid #ddd;padding-top:18px;">2. Booked 100, 20 on indent, Sales raised 80 → 90</h3>
+   <p style="font-family:Arial;font-size:13px;color:#666;margin:0 0 10px;">Booked stays 100. Confirmed 90. Indent 20. Change +10.</p>
+   <div style="font-family:Arial,sans-serif;color:#333;font-size:14px;line-height:1.6;">
+    
+  <h4 style="margin: 22px 0 2px; font-size: 13px; color: #1a5b9e; text-transform: uppercase; letter-spacing: 0.5px;">
+    Booking Details
+  </h4>
+  <p style="margin: 0 0 8px; font-size: 12px; color: #888;">As booked on 21 Aug 2026.</p>
+    
+    
+    <table style="border-collapse: collapse; margin: 0 0 10px; width: 100%;">
+      <thead><tr>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">SKU</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Booked</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Confirmed</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Indent</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">Change</th>
+      </tr></thead>
+      <tbody>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>A-100</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">100 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #1a7f37;">90 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #b54708; font-weight: bold;">20 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #1a7f37; font-weight: bold;">+10 pcs</td>
+    </tr></tbody>
+      <tfoot><tr>
+        <td colspan="1" style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">100 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">90 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">20 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; font-weight: bold;">+10 pcs</td>
+      </tr></tfoot>
+    </table>
+    <p style="margin: 0 0 8px; font-size: 12px; color: #888;">
+         Indent reference <strong style="font-family: monospace; color: #b54708;">PI-X</strong>
+         &mdash; the Indent column is live and shrinks as stock arrives.
+       </p></div><h3 style="font-family:Arial;margin:34px 0 4px;color:#111;border-top:2px solid #ddd;padding-top:18px;">3. Same booking, Sales reduced 80 → 60</h3>
+   <p style="font-family:Arial;font-size:13px;color:#666;margin:0 0 10px;">Change shows -20.</p>
+   <div style="font-family:Arial,sans-serif;color:#333;font-size:14px;line-height:1.6;">
+    
+  <h4 style="margin: 22px 0 2px; font-size: 13px; color: #1a5b9e; text-transform: uppercase; letter-spacing: 0.5px;">
+    Booking Details
+  </h4>
+  <p style="margin: 0 0 8px; font-size: 12px; color: #888;">As booked on 21 Aug 2026.</p>
+    
+    
+    <table style="border-collapse: collapse; margin: 0 0 10px; width: 100%;">
+      <thead><tr>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">SKU</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Booked</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Confirmed</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Indent</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">Change</th>
+      </tr></thead>
+      <tbody>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>A-100</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">100 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #1a7f37;">60 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #b54708; font-weight: bold;">20 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #b54708; font-weight: bold;">-20 pcs</td>
+    </tr></tbody>
+      <tfoot><tr>
+        <td colspan="1" style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">100 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">60 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">20 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; font-weight: bold;">-20 pcs</td>
+      </tr></tfoot>
+    </table>
+    <p style="margin: 0 0 8px; font-size: 12px; color: #888;">
+         Indent reference <strong style="font-family: monospace; color: #b54708;">PI-X</strong>
+         &mdash; the Indent column is live and shrinks as stock arrives.
+       </p></div><h3 style="font-family:Arial;margin:34px 0 4px;color:#111;border-top:2px solid #ddd;padding-top:18px;">4. Mixed — one untouched, one added by desk, one removed by desk</h3>
+   <p style="font-family:Arial;font-size:13px;color:#666;margin:0 0 10px;">Added line has Booked 0; removed line has Confirmed 0.</p>
+   <div style="font-family:Arial,sans-serif;color:#333;font-size:14px;line-height:1.6;">
+    
+  <h4 style="margin: 22px 0 2px; font-size: 13px; color: #1a5b9e; text-transform: uppercase; letter-spacing: 0.5px;">
+    Booking Details
+  </h4>
+  <p style="margin: 0 0 8px; font-size: 12px; color: #888;">As booked on 21 Aug 2026.</p>
+    
+    
+    <table style="border-collapse: collapse; margin: 0 0 10px; width: 100%;">
+      <thead><tr>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">SKU</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Booked</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Confirmed</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Indent</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">Change</th>
+      </tr></thead>
+      <tbody>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>A-100</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">100 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #1a7f37;">80 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #b54708; font-weight: bold;">20 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #888;">No change</td>
+    </tr>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>NEW-9</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">0 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #1a7f37;">7 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #bbb;">0 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #1a5b9e; font-weight: bold;">+7 pcs — line added</td>
+    </tr>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>GONE-1</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">12 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #bbb;">0 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #bbb;">0 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #b42318; font-weight: bold;">-12 pcs — line removed</td>
+    </tr></tbody>
+      <tfoot><tr>
+        <td colspan="1" style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">112 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">87 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">20 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; font-weight: bold;">-5 pcs</td>
+      </tr></tfoot>
+    </table>
+    <p style="margin: 0 0 8px; font-size: 12px; color: #888;">
+         Indent reference <strong style="font-family: monospace; color: #b54708;">PI-X</strong>
+         &mdash; the Indent column is live and shrinks as stock arrives.
+       </p></div><h3 style="font-family:Arial;margin:34px 0 4px;color:#111;border-top:2px solid #ddd;padding-top:18px;">5. Standalone indent — nothing could be confirmed</h3>
+   <p style="font-family:Arial;font-size:13px;color:#666;margin:0 0 10px;">No booking exists; every unit is awaiting stock.</p>
+   <div style="font-family:Arial,sans-serif;color:#333;font-size:14px;line-height:1.6;">
+    
+  <h4 style="margin: 22px 0 2px; font-size: 13px; color: #1a5b9e; text-transform: uppercase; letter-spacing: 0.5px;">
+    Booking Details
+  </h4>
+  <p style="margin: 0 0 8px; font-size: 12px; color: #888;">As booked on 24 Aug 2026.</p>
+    
+    
+    <table style="border-collapse: collapse; margin: 0 0 10px; width: 100%;">
+      <thead><tr>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">SKU</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Booked</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Confirmed</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Indent</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">Change</th>
+      </tr></thead>
+      <tbody>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>B-1</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">40 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #bbb;">0 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #b54708; font-weight: bold;">40 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #888;">No change</td>
+    </tr>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>B-2</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">15 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #bbb;">0 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #b54708; font-weight: bold;">15 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #888;">No change</td>
+    </tr></tbody>
+      <tfoot><tr>
+        <td colspan="1" style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">55 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">0 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">55 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; font-weight: bold;"></td>
+      </tr></tfoot>
+    </table>
+    <p style="margin: 0 0 8px; font-size: 12px; color: #888;">
+         Indent reference <strong style="font-family: monospace; color: #b54708;">PI-2026-000042</strong>
+         &mdash; the Indent column is live and shrinks as stock arrives.
+       </p></div><h3 style="font-family:Arial;margin:34px 0 4px;color:#111;border-top:2px solid #ddd;padding-top:18px;">6. Quantity-change mail (sent the moment Sales/Admin edits)</h3>
+   <p style="font-family:Arial;font-size:13px;color:#666;margin:0 0 10px;">Full mail body.</p>
+   <div style="font-family:Arial,sans-serif;color:#333;font-size:14px;line-height:1.6;">
+    <p>Hi Nikita,</p>
+    <p>The quantities on your booking
+       <strong style="font-family: monospace;">BO-2026-000099</strong>
+       have been updated by our team (Sales Desk).</p>
+
+    <div style="margin: 18px 0; padding: 12px 16px; background: #fff8ec; border: 1px solid #f2d9a8; border-radius: 4px; font-size: 13px; color: #7a5b1e;">
+      The <strong>Change</strong> column in the table below shows exactly what was
+      adjusted and by how much. Everything else on your booking is unchanged.
+    </div>
+
+    
+    
+  <h4 style="margin: 22px 0 2px; font-size: 13px; color: #1a5b9e; text-transform: uppercase; letter-spacing: 0.5px;">
+    Booking Details
+  </h4>
+  <p style="margin: 0 0 8px; font-size: 12px; color: #888;">As booked on 21 Aug 2026.</p>
+    
+    
+    <table style="border-collapse: collapse; margin: 0 0 10px; width: 100%;">
+      <thead><tr>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">SKU</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Booked</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Confirmed</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Indent</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">Change</th>
+      </tr></thead>
+      <tbody>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>A-100</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">100 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #1a7f37;">90 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #b54708; font-weight: bold;">20 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #1a7f37; font-weight: bold;">+10 pcs</td>
+    </tr></tbody>
+      <tfoot><tr>
+        <td colspan="1" style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">100 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">90 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">20 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; font-weight: bold;">+10 pcs</td>
+      </tr></tfoot>
+    </table>
+    <p style="margin: 0 0 8px; font-size: 12px; color: #888;">
+         Indent reference <strong style="font-family: monospace; color: #b54708;">PI-2026-000099</strong>
+         &mdash; the Indent column is live and shrinks as stock arrives.
+       </p>
+
+    <p style="font-size: 13px; color: #666;">
+      No purchase order has been raised yet — you will receive a separate mail
+      when it is. If any of this looks wrong, reply to your usual contact and we
+      will put it right before the PO goes out.
+    </p>
+  </div><h3 style="font-family:Arial;margin:34px 0 4px;color:#111;border-top:2px solid #ddd;padding-top:18px;">7. PO-raised mail</h3>
+   <p style="font-family:Arial;font-size:13px;color:#666;margin:0 0 10px;">Full mail body.</p>
+   <div style="font-family:Arial,sans-serif;color:#333;font-size:14px;line-height:1.6;">
+    <p>Hi Nikita,</p>
+    <p>Your booking has been processed and converted into a Purchase Order.
+       <strong>PO No. 2242890</strong> has been raised against it, and
+       all further updates will refer to this purchase order.</p>
+
+    <div style="margin: 18px 0; padding: 14px 18px; background: #f0f6ff; border: 1px solid #cfe0f7; border-radius: 4px;">
+      <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">Purchase Order No.</div>
+      <div style="font-size: 22px; font-weight: bold; color: #1a5b9e; font-family: monospace;">2242890</div>
+      <div style="margin-top: 10px; font-size: 11px; color: #5a7ca8; letter-spacing: 0.3px;">
+        Raised against booking reference <strong style="font-family: monospace;">BO-2026-000099</strong>
+      </div>
+    </div>
+
+    <p><strong>Please note:</strong> our team adjusted some quantities before this purchase order was raised. The adjustments are shown in the Change column below.</p>
+
+    
+    
+  <h4 style="margin: 22px 0 2px; font-size: 13px; color: #1a5b9e; text-transform: uppercase; letter-spacing: 0.5px;">
+    Booking Details
+  </h4>
+  <p style="margin: 0 0 8px; font-size: 12px; color: #888;">As booked on 21 Aug 2026.</p>
+    
+    
+    <table style="border-collapse: collapse; margin: 0 0 10px; width: 100%;">
+      <thead><tr>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">SKU</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Booked</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Confirmed</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb; text-align: right;">Indent</th>
+        <th style="padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;">Change</th>
+      </tr></thead>
+      <tbody>
+    <tr>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;"><strong>A-100</strong></td>
+      
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right;">100 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; font-weight: bold; color: #1a7f37;">90 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; text-align: right; color: #b54708; font-weight: bold;">20 pcs</td>
+      <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; color: #1a7f37; font-weight: bold;">+10 pcs</td>
+    </tr></tbody>
+      <tfoot><tr>
+        <td colspan="1" style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold;">100 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">90 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">20 pcs</td>
+        <td style="padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px; border-bottom: none; font-weight: bold;">+10 pcs</td>
+      </tr></tfoot>
+    </table>
+    <p style="margin: 0 0 8px; font-size: 12px; color: #888;">
+         Indent reference <strong style="font-family: monospace; color: #b54708;">PI-2026-000099</strong>
+         &mdash; the Indent column is live and shrinks as stock arrives.
+       </p>
+
+    <p>Thank you for your business.</p>
+  </div>
+   </div>

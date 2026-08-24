@@ -43,18 +43,24 @@ router.get('/booking/:orderId/timeline', protect, getBookingStatusTimeline);
 // timeline above — the handler applies it.
 router.get('/booking/:orderId/quantity-history', protect, getBookingQuantityHistory);
 
-// AMEND QUANTITIES ON YOUR OWN BOOKING.
+// AMEND QUANTITIES ON A BOOKING. ADMIN AND SALES ONLY.
 //
 // Deliberately the SAME handler the sales desk calls, not a second write path.
 // That handler already moves the stock, honours the PO lock and writes the
-// audit entry the history above and the PO mail are both built from;
+// audit entry the quantity history and the PO mail are both built from;
 // reimplementing any of it here would leave two versions to keep in step.
 //
-// Not behind a permission, for the same reason /cancel is not: a customer
-// revising their own booking is the main case. runUpdateItems() checks
-// ownership itself and confines a non-staff caller to quantity changes on
-// lines that already exist.
-router.put('/booking/:orderId/items', protect, updateBookingItems);
+// Behind edit_booking_pre_po, so a CUSTOMER cannot change a quantity once the
+// booking exists — only Admin and Sales can, and the customer is emailed the
+// adjustment. This route was previously open so a customer could revise their
+// own booking; that is no longer the rule. runUpdateItems() still applies its
+// own ownership and quantity-only confinement as defence in depth.
+router.put(
+  '/booking/:orderId/items',
+  protect,
+  authorize('edit_booking_pre_po'),
+  updateBookingItems,
+);
 
 // Retry a status email that never reached the customer.
 router.post(

@@ -405,7 +405,7 @@ export const lookupProducts = async (req, res, next) => {
 
     // Pool all codes from both columns into one deduped list. For MSIL users
     // every code is tried against both fields, so the column it came from does
-    // not matter. For Regular customers, msilCodes are silently ignored.
+    // not matter. For non-MSIL customers, msilCodes are silently ignored.
     const seen = new Set();
     const codes = [];
     for (const value of [...rawSku, ...(msilApplies ? rawMsil : [])]) {
@@ -427,7 +427,7 @@ export const lookupProducts = async (req, res, next) => {
 
     // ── Fetch products ────────────────────────────────────────────────────
     // For MSIL users each code is tried against both skuCode and msilCode.
-    // For Regular customers only skuCode is searched.
+    // For non-MSIL customers only skuCode is searched.
     const bySku  = new Map(); // skuCode  → product
     const byMsil = new Map(); // msilCode → product
 

@@ -88,9 +88,9 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary, journeyH
   // so they can reconcile which booking became this PO; it is the one mail that
   // legitimately spans both names.
   //
-  // The line detail is the shared three-table journey (utils/bookingJourney.js):
-  // what was confirmed at booking, what sits on indent / the PO facts, and the
-  // final quantities this PO commits — the same tables every booking mail shows.
+  // The line detail is the shared booking table (utils/bookingJourney.js):
+  // booked, confirmed, indent and change in one row per SKU — the same table
+  // every booking mail shows.
   return `
     <p>Hi ${esc(customerName)},</p>
     <p>Your booking has been processed and converted into a Purchase Order.
@@ -106,14 +106,43 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary, journeyH
     </div>
 
     ${summary.changed
-      ? `<p><strong>Please note:</strong> our team adjusted some quantities before this purchase order was raised. The adjustments are shown in the Change column of the Final Booking Details below.</p>`
-      : `<p>No quantities were adjusted by our team${summary.totalIndent > 0 ? ' — the Indent table below shows what is still awaiting stock' : ''}.</p>`}
+      ? `<p><strong>Please note:</strong> our team adjusted some quantities before this purchase order was raised. The adjustments are shown in the Change column below.</p>`
+      : ''}
 
     ${journeyHtml}
 
     <p>Thank you for your business.</p>
   `;
 };
+
+/**
+ * Sent to the customer the moment ADMIN OR SALES amends a quantity.
+ *
+ * The customer can no longer change a booking themselves, so an adjustment they
+ * did not make must not wait for the PO mail to surface it — by then the
+ * quantities are committed and the conversation is too late. This mail is that
+ * notice, and it carries the same booking table every other booking mail
+ * shows, so the Change column tells them exactly what moved and by how much.
+ */
+const buildQuantityAmendedEmail = ({ customerName, orderId, editorName, journeyHtml }) => `
+    <p>Hi ${esc(customerName)},</p>
+    <p>The quantities on your booking
+       <strong style="font-family: monospace;">${esc(orderId)}</strong>
+       have been updated by our team${editorName ? ` (${esc(editorName)})` : ''}.</p>
+
+    <div style="margin: 18px 0; padding: 12px 16px; background: #fff8ec; border: 1px solid #f2d9a8; border-radius: 4px; font-size: 13px; color: #7a5b1e;">
+      The <strong>Change</strong> column in the table below shows exactly what was
+      adjusted and by how much. Everything else on your booking is unchanged.
+    </div>
+
+    ${journeyHtml}
+
+    <p style="font-size: 13px; color: #666;">
+      No purchase order has been raised yet — you will receive a separate mail
+      when it is. If any of this looks wrong, reply to your usual contact and we
+      will put it right before the PO goes out.
+    </p>
+  `;
 
 // Profile fallback for phone/location — shared with order.controller.
 
@@ -535,6 +564,34 @@ export const updateBookingItems = async (req, res, next) => {
       );
 
       io.emit('booking-updated', { orderId: req.params.orderId });
+
+      // TELL THE CUSTOMER. Quantity edits are Admin/Sales-only, so every one
+      // of them is a change made TO the customer's booking without them — the
+      // notice cannot wait for the PO mail, which only goes out once the
+      // quantities are already committed.
+      //
+      // Fire-and-forget, and wrapped: the edit and its stock movement are
+      // already committed, so a mail failure must not fail the request or roll
+      // anything back.
+      (async () => {
+        const owner = updated[0]?.user;
+        if (!owner) return;
+        const customer = await User.findById(owner).lean();
+        const to = customer?.email || updated[0].emailId;
+        if (!to || customer?.preferences?.emailNotifications === false) return;
+
+        const journey = await buildBookingJourney({ orderId: req.params.orderId, rows: updated });
+        const body = buildQuantityAmendedEmail({
+          customerName: customer?.user || customer?.company || updated[0].company || 'Customer',
+          orderId: req.params.orderId,
+          editorName: req.user.user || req.user.email || null,
+          journeyHtml: journeyTablesHtml(journey, { audience: 'customer' }),
+        });
+        await sendEmail(to, `Quantities updated on your booking ${req.params.orderId}`, body, {
+          cc: [...(customer?.bookingCcEmails || []), ...COMPANY_CC],
+        });
+      })().catch((e) =>
+        console.error('[updateBookingItems] quantity-change email failed:', e.message));
 
       // Splits are worth a nudge of their own: the customer asked for a
       // quantity and got part of it, and silence here reads as "it worked".

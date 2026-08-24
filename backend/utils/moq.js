@@ -1,7 +1,7 @@
 /**
  * Customer category and MOQ — the single place both rules are decided.
  *
- * MOQ (Minimum Order Quantity) applies to Regular customers ONLY. MSIL
+ * MOQ (Minimum Order Quantity) applies to non-MSIL customers ONLY. MSIL
  * customers are exempt and must never be stopped by it.
  *
  *   IF customer = MSIL      → no MOQ validation at all
@@ -11,7 +11,7 @@
  * site as `user.customerCategory !== 'MSIL'`. Every copy was correct in
  * isolation and the set of them was not: a category stored as 'msil' or with a
  * stray space — which is what a spreadsheet import produces — failed the exact
- * comparison, so the customer was silently reclassified as Regular Customer and had MOQ
+ * comparison, so the customer was silently reclassified as Customer and had MOQ
  * enforced against them. That is the reported defect, and it cannot be fixed by
  * correcting one call site. Classification is therefore derived here, once,
  * tolerantly, and every flow (individual booking, quantity edit, bulk upload,
@@ -58,7 +58,7 @@ export const isCompanyUser = (user) =>
  *
  * Three ways out: being an MSIL customer, being Shraddha Impex staff (company
  * email domain), and the per-user 'SKIP' override on the account (User.moq),
- * which predates the category field and is still how a specific Regular Customer
+ * which predates the category field and is still how a specific Customer
  * account is exempted by hand.
  */
 export const moqAppliesTo = (user) => {

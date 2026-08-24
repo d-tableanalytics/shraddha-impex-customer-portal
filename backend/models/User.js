@@ -29,7 +29,12 @@ const userSchema = new mongoose.Schema({
     default: 'Customer',
   },
   // Customer categorisation — drives which bulk-import template applies.
-  customerCategory: { type: String, enum: ['MSIL', 'Regular Customer', 'Non-MSIL'], default: 'Regular Customer' },
+  // 'Customer' is the current name for the non-MSIL category. 'Regular
+  // Customer' and 'Non-MSIL' are the two spellings it has had before, kept in
+  // the enum so accounts written under them still validate on save — every
+  // rule that reads this field asks whether it is 'MSIL', never which of the
+  // other three it is (see utils/moq.js).
+  customerCategory: { type: String, enum: ['MSIL', 'Customer', 'Regular Customer', 'Non-MSIL'], default: 'Customer' },
 
   // ── Customer master details ─────────────────────────────────────────────
   // Captured once, when the account is created, and NEVER editable afterwards.

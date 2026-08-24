@@ -82,24 +82,31 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
           transition={{ type: "spring", damping: 25, stiffness: 300 }}
           className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] z-10 border border-slate-100"
         >
-          {/* Header */}
-          <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+          {/* Header.
+              The brand blue the rest of the ERP uses — the same
+              #1a5b9e -> #15467a gradient as the Create Booking accent bar and
+              the primary call-to-action. This was slate-900, a near-black that
+              matched nothing else in the app and read as a different product.
+              The inner elements are tinted with white alpha rather than the
+              primary-* scale, which was picked for contrast against the old
+              near-black and is too dim against this blue. */}
+          <div className="px-6 py-4 bg-gradient-to-r from-[#1a5b9e] to-[#15467a] text-white flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-primary-600/30 border border-primary-500/40 flex items-center justify-center text-primary-400">
+              <div className="w-9 h-9 rounded-xl bg-white/15 border border-white/25 flex items-center justify-center text-white">
                 <FileCheck2 size={20} />
               </div>
               <div>
                 <h3 className="text-base font-black tracking-tight text-white flex items-center gap-2">
                   Confirm &amp; Lock Purchase Order
                 </h3>
-                <p className="text-xs text-slate-400">
-                  Booking Reference: <span className="font-mono text-primary-300 font-bold">{booking?.orderId}</span>
+                <p className="text-xs text-blue-100">
+                  Booking Reference: <span className="font-mono text-white font-bold">{booking?.orderId}</span>
                 </p>
               </div>
             </div>
             <button
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+              className="p-1.5 text-white/70 hover:text-white hover:bg-white/15 rounded-lg transition-colors"
             >
               <X size={20} />
             </button>
