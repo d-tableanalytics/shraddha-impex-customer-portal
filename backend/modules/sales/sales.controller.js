@@ -115,6 +115,29 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary, journeyH
 };
 
 /**
+ * Older bookings predate the phone/location stamp on their Order rows, so the
+ * shaped booking arrives with those fields null. Fall back to the customer's
+ * PROFILE — the pick list needs a contact for exactly the bookings the desk is
+ * still working, which are as likely as not the old ones. One batched query
+ * for the whole page, never one per booking. Mutates in place and returns the
+ * same array for chaining.
+ */
+const fillCustomerContact = async (bookings) => {
+  const missing = bookings.filter((b) => !b.phoneNumber || !b.location);
+  const ids = [...new Set(missing.map((b) => String(b.user || '')).filter(Boolean))];
+  if (!ids.length) return bookings;
+  const users = await User.find({ _id: { $in: ids } }, 'phone location').lean();
+  const byId = new Map(users.map((u) => [String(u._id), u]));
+  for (const b of missing) {
+    const u = byId.get(String(b.user));
+    if (!u) continue;
+    if (!b.phoneNumber) b.phoneNumber = u.phone || null;
+    if (!b.location) b.location = u.location || null;
+  }
+  return bookings;
+};
+
+/**
  * GET /api/v1/sales/bookings?status=pending|generated|all
  * Bookings grouped by orderId. Defaults to those still awaiting a PO.
  */
@@ -143,7 +166,9 @@ export const getBookings = async (req, res, next) => {
 
     // One lookup for every row on the screen, not one per booking.
     const boxNumbers = await currentBoxNumbers(rows);
-    const all = [...byBooking.values()].map((b) => shapeBooking(b, boxNumbers));
+    const all = await fillCustomerContact(
+      [...byBooking.values()].map((b) => shapeBooking(b, boxNumbers)),
+    );
 
     // Counts come from the UNFILTERED set (search still applies) so the tabs
     // keep showing the same totals whichever one is selected — otherwise
@@ -176,7 +201,7 @@ export const getBookingDetail = async (req, res, next) => {
     }
     res.status(200).json({
       success: true,
-      data: shapeBooking(rows, await currentBoxNumbers(rows)),
+      data: (await fillCustomerContact([shapeBooking(rows, await currentBoxNumbers(rows))]))[0],
     });
   } catch (error) {
     next(error);
@@ -550,7 +575,7 @@ export const updateBookingItems = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: shapeBooking(updated, await currentBoxNumbers(updated)),
+      data: (await fillCustomerContact([shapeBooking(updated, await currentBoxNumbers(updated))]))[0],
       changes,
     });
   } catch (error) {
@@ -723,7 +748,7 @@ export const raisePo = async (req, res, next) => {
 
     io.emit('po-generated', { orderId, poNumber });
 
-    res.status(200).json({ success: true, data: shapeBooking(updated) });
+    res.status(200).json({ success: true, data: (await fillCustomerContact([shapeBooking(updated)]))[0] });
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ success: false, message: error.message });

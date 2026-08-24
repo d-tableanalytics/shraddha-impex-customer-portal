@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
   Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle, Download, FileText,
+  MapPin,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
@@ -246,7 +247,7 @@ export const SalesBookingDrawer = () => {
             )}
 
             {/* Info cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
                 <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
                   <User size={16} className="text-blue-600" />
@@ -274,6 +275,18 @@ export const SalesBookingDrawer = () => {
                   <p className="text-sm font-bold text-slate-800">
                     {selected.date ? new Date(selected.date).toLocaleDateString() : "—"}
                   </p>
+                </div>
+              </div>
+              {/* The pair the pick list prints — shown on screen so the desk
+                  can check it before printing, and spot a booking without one. */}
+              <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+                <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
+                  <MapPin size={16} className="text-emerald-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase">Location &amp; Phone</p>
+                  <p className="text-sm font-bold text-slate-800 truncate">{selected.location || "—"}</p>
+                  <p className="text-xs font-semibold text-slate-500 truncate">{selected.phoneNumber || "—"}</p>
                 </div>
               </div>
             </div>

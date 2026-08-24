@@ -115,7 +115,8 @@ export const downloadBookingPdf = async (booking, { generatedBy = "—" } = {}) 
     const info = [
       ["Customer Name", booking.customer || "—", "PO Number", poRaised ? booking.poNumber : "Not Raised"],
       ["Phone Number", booking.phoneNumber || "—", "PO Date", poRaised ? fmtDate(booking.poDate) : "—"],
-      ["Shop No.", booking.shopNumber || "—", "Booking Date", fmtDate(booking.date)],
+      ["Location", booking.location || "—", "Booking Date", fmtDate(booking.date)],
+      ["Shop No.", booking.shopNumber || "—", "", ""],
     ];
     autoTable(doc, {
       startY: 32,
