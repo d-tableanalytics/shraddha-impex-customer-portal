@@ -146,14 +146,21 @@ export const SalesBookingDrawer = () => {
     });
   };
 
-  const handleDownloadPdf = () => {
-    if (draft.length === 0) return toast.error("Nothing to download — this booking has no lines.");
-    const { rows, columns, title, meta } = buildExport();
-    import("../../utils/exportUtils").then(({ exportToPDF }) => {
-      const ok = exportToPDF(rows, columns, title, `Booking_${selected.orderId}`, meta);
-      if (ok) toast.success(`Downloaded ${rows.length} line(s) as PDF.`);
-      else toast.error("PDF download failed.");
+  const handleDownloadPdf = async () => {
+    if ((selected.lines || []).length === 0) {
+      return toast.error("Nothing to download — this booking has no lines.");
+    }
+    // The PDF is a formal document of the SAVED booking, never the draft —
+    // an unsaved edit is not booking data until Save commits it.
+    if (dirty) {
+      toast("Unsaved edits are not in the PDF — save them first to include them.", { icon: "ℹ️" });
+    }
+    const { downloadBookingPdf } = await import("../../utils/bookingPdf");
+    const ok = await downloadBookingPdf(selected, {
+      generatedBy: user?.user || user?.name || user?.email || "Sales Desk",
     });
+    if (ok) toast.success(`Booking ${selected.orderId} downloaded as PDF.`);
+    else toast.error("PDF download failed.");
   };
 
   const handleOpenModal = () => {
