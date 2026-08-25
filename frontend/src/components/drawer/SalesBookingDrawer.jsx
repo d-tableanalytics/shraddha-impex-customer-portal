@@ -27,7 +27,10 @@ const toDraft = (booking) =>
     skuCode: l.skuCode,
     msilCode: l.msilCode,
     boxNo: l.boxNo,
-    quantity: l.confirmedQty,
+    // The line's TOTAL — confirmed plus indent — because that is what the
+    // edit endpoint takes: "make this line 15" means fifteen units for the
+    // customer, however stock splits them.
+    quantity: (l.confirmedQty || 0) + (l.pendingQty || 0),
   }));
 
 export const SalesBookingDrawer = () => {
@@ -86,7 +89,7 @@ export const SalesBookingDrawer = () => {
       if (splits.length) {
         toast.success(
           splits
-            .map((s) => `${s.skuCode}: ${s.toQty} confirmed, ${s.indentQty} moved to indent (stock short).`)
+            .map((s) => `${s.skuCode}: set to ${s.toQty} — ${s.confirmed} confirmed, ${s.indentQty} on indent (stock short).`)
             .join(" "),
           { duration: 8000, icon: "⚠️" },
         );
