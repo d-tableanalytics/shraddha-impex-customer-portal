@@ -11,11 +11,19 @@ import * as service from './employee.service.js';
 import { recordAudit } from '../../../utils/auditLog.js';
 import { AUDIT_ACTIONS } from '../../../shared/constants/hrms.js';
 
-/** GET /api/v1/hrms/employees */
+/**
+ * GET /api/v1/hrms/employees
+ *
+ * The whole page object goes UNDER `data`, not spread beside it. Every HRMS
+ * endpoint answers `{ success, data }` and `hrmsClient` unwraps exactly one
+ * level, so spreading here returned the bare array to the caller and dropped
+ * `total`, `page` and `pageSize` on the floor — leaving the directory with no
+ * rows to render and no way to paginate.
+ */
 export const listEmployees = async (req, res, next) => {
   try {
     const result = await service.listEmployees(req.hrmsActor, req.query);
-    res.status(200).json({ success: true, ...result });
+    res.status(200).json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

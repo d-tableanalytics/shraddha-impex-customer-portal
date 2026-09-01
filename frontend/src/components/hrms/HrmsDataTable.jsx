@@ -58,6 +58,16 @@ export function HrmsDataTable({
   emptyDescription = "No records match your current filters.",
   className,
 }) {
+  /**
+   * A page that is still loading, or one whose request failed, has no rows to
+   * give. Treating that as an empty set renders the skeleton or the error
+   * state, which is what the caller wants; reading `.length` off it instead
+   * takes down the whole route with a render error, which is never what the
+   * caller wants. A missing dataset is a normal moment in a table's life, not
+   * a programming mistake worth crashing over.
+   */
+  const safeRows = Array.isArray(rows) ? rows : [];
+
   const showPagination = !loading && !error && total > pageSize;
 
   const handleSort = (key) => {
@@ -126,7 +136,7 @@ export function HrmsDataTable({
             <tbody className="divide-y divide-slate-100 bg-white">
               {loading ? (
                 <TableSkeleton rows={Math.min(pageSize, 8)} columns={columns.length} />
-              ) : rows.length === 0 ? (
+              ) : safeRows.length === 0 ? (
                 <tr>
                   <td colSpan={columns.length} className="p-0">
                     <EmptyState
@@ -137,7 +147,7 @@ export function HrmsDataTable({
                   </td>
                 </tr>
               ) : (
-                rows.map((row, rIdx) => (
+                safeRows.map((row, rIdx) => (
                   <tr
                     key={rowKey(row) ?? rIdx}
                     onClick={

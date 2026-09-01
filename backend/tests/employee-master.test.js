@@ -14,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import mongoose from 'mongoose';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 
 import Employee, { MAX_EMERGENCY_CONTACTS } from '../models/hrms/Employee.js';
 import EmployeeCustomField from '../models/hrms/EmployeeCustomField.js';
@@ -581,4 +581,69 @@ test('only HRMS roles can be granted through the employee endpoints', async () =
   assert.match(service, /Only HRMS roles can be granted here/);
   assert.match(service, /assertRolesAssignable\(/, 'the AD-4 rule is re-checked on the write path');
   assert.match(service, /portalRoles/, 'portal roles on the same account must survive');
+});
+
+// ---------------------------------------------------------------------------
+// The response envelope
+// ---------------------------------------------------------------------------
+
+test('every HRMS endpoint nests its payload under `data`', async () => {
+  // `hrmsClient` unwraps exactly one level: `res.data?.data`. An endpoint that
+  // spreads its result BESIDE `data` therefore hands the caller whatever
+  // happens to sit at `.data` and silently drops the rest.
+  //
+  // That is not hypothetical. The employee list shipped as
+  // `json({ success: true, ...result })`, so the client received the bare row
+  // array instead of `{ data, total, page, pageSize }`, the directory read
+  // `.data` off an array, got undefined, and the route died on `.length`.
+  //
+  // Checked across every HRMS controller, because the next one to get this
+  // wrong will not be the employee list.
+  const dir = new URL('../modules/hrms/', import.meta.url);
+  const names = await readdir(dir, { recursive: true });
+  const sources = names.filter((n) => n.endsWith('.js') && !n.endsWith('.test.js'));
+
+  const offenders = [];
+  for (const name of sources) {
+    const code = (await readFile(new URL(name, dir), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+    // Each res.json({...}) call, up to the first closing brace of its object.
+    for (const call of code.match(/res(?:\.status\([0-9]+\))?\.json\(\{[^}]*/g) ?? []) {
+      // Only a spread in PROPERTY position breaks the envelope — one directly
+      // after `{` or `,`. A spread inside a value, such as
+      // `data: [...history].sort(...)`, is just building the payload and is
+      // perfectly fine.
+      if (/[{,]\s*\.\.\./.test(call)) {
+        offenders.push(`${name}: ${call.replace(/\s+/g, ' ').trim()}`);
+      }
+    }
+  }
+
+  assert.deepEqual(offenders, [], 'these responses spread instead of nesting under `data`');
+});
+
+test('the employee list returns the whole page object, not just the rows', async () => {
+  const controller = await src('../modules/hrms/employees/employee.controller.js');
+  const handler = controller.slice(
+    controller.indexOf('export const listEmployees'),
+    controller.indexOf('export const getEmployee'),
+  );
+
+  // `data: result` — the service returns { data, total, page, pageSize } and
+  // all four have to survive the trip, or the table cannot paginate.
+  assert.match(handler, /json\(\{ success: true, data: result \}\)/);
+  assert.doesNotMatch(handler, /\.\.\.result/);
+});
+
+test('the service supplies every field the table binds to', async () => {
+  const service = await src('../modules/hrms/employees/employee.service.js');
+  const list = service.slice(service.indexOf('export async function listEmployees'));
+  const shape = list.slice(list.indexOf('return {'), list.indexOf('}', list.indexOf('return {')));
+
+  for (const key of ['data', 'total', 'page', 'pageSize']) {
+    assert.ok(shape.includes(`${key}:`) || shape.includes(`${key},`),
+      `listEmployees must return ${key}`);
+  }
 });
