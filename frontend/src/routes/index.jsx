@@ -30,6 +30,7 @@ const Help = lazy(() => import("../pages/Help/Help").then(m => ({ default: m.Hel
 // Lazy like every other route, so a customer never downloads an HRMS chunk.
 import { HrmsProtectedRoute } from "../components/hrms/HrmsProtectedRoute";
 const HrmsDashboard = lazy(() => import("../pages/Hrms/HrmsDashboard").then(m => ({ default: m.HrmsDashboard })));
+const HrmsMyProfilePage = lazy(() => import("../pages/Hrms/MyProfilePage").then(m => ({ default: m.MyProfilePage })));
 const HrmsEmployeesPage = lazy(() => import("../pages/Hrms/employees/EmployeesPage").then(m => ({ default: m.EmployeesPage })));
 const HrmsEmployeeProfilePage = lazy(() => import("../pages/Hrms/employees/EmployeeProfilePage").then(m => ({ default: m.EmployeeProfilePage })));
 const HrmsEmployeeEditPage = lazy(() => import("../pages/Hrms/employees/EmployeeEditPage").then(m => ({ default: m.EmployeeEditPage })));
@@ -143,6 +144,16 @@ export const router = createBrowserRouter([
             children: [
               { index: true, element: <Navigate to="/hrms/dashboard" replace /> },
               { path: "dashboard", element: <HrmsDashboard /> },
+              {
+                // "My Profile". A redirect to the actor's own employee record,
+                // as in the reference. Behind the employees module because
+                // that is where it lands, and because the nav item declares
+                // the same requirement - a link the router would then refuse
+                // is exactly the dead end the nav gate exists to prevent.
+                path: "me",
+                element: <HrmsProtectedRoute module="employees" />,
+                children: [{ index: true, element: <HrmsMyProfilePage /> }],
+              },
               {
                 // Employee Master. The route shape matches the reference,
                 // which has NO /employees/new — creation happens in a drawer
