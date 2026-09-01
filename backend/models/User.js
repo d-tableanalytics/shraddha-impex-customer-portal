@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { isAssignableRoleKey, assertRolesAssignable } from '../shared/permissions/assignment.js';
 
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
@@ -27,6 +28,29 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Customer'],
     default: 'Customer',
+  },
+
+  // ── HRMS roles (AD-3) ───────────────────────────────────────────────────
+  // Additive. `role` above is untouched and remains the portal's authority, so
+  // every existing check (`req.user.role === 'Admin'`, INVENTORY_ROLES, the
+  // legacy permission map) keeps working exactly as before.
+  //
+  // This array holds HRMS role keys — always `hrms_`-prefixed, so they can
+  // never collide with a portal role name. A user may hold both: a salesperson
+  // who is also an employee carries role='Sales' and roles=['hrms_employee'].
+  //
+  // AD-4: a Customer must never hold an HRMS role. Enforced in three places —
+  // here at the schema, in assertRolesAssignable() at every write path, and
+  // structurally in buildHrmsActor(), which only ever derives grants from
+  // `hrms_*` keys. An empty array therefore means no HRMS access at all, which
+  // is the correct default for every existing account.
+  roles: {
+    type: [String],
+    default: [],
+    validate: {
+      validator: (values) => (values ?? []).every((v) => isAssignableRoleKey(v)),
+      message: (props) => `roles contains an unknown role key: ${props.value}`,
+    },
   },
   // Customer categorisation — drives which bulk-import template applies.
   // 'Customer' is the current name for the non-MSIL category. 'Regular
@@ -67,5 +91,27 @@ const userSchema = new mongoose.Schema({
   status: { type: String, enum: ['Active', 'Inactive', 'Suspended'], default: 'Active' },
   lastLogin: { type: Date }
 }, { timestamps: true });
+
+/**
+ * AD-4, at the document level: a Customer may hold no HRMS role.
+ *
+ * The path validator on `roles` above catches unknown keys, but the
+ * Customer rule is a cross-field check and needs both `role` and `roles`, so it
+ * lives here.
+ *
+ * Note this hook does NOT run for `findOneAndUpdate` / `findByIdAndUpdate`,
+ * even with `runValidators: true` — Mongoose runs update validators against the
+ * query, not a document. Every write path must therefore call
+ * `assertRolesAssignable()` itself; this hook is the backstop for `.save()`,
+ * not the only guard.
+ */
+userSchema.pre('validate', function assertRoleCombinationIsValid(next) {
+  try {
+    assertRolesAssignable(this.role, this.roles);
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default mongoose.model('User', userSchema);

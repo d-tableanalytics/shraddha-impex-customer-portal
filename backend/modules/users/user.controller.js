@@ -1,6 +1,7 @@
 import User from '../../models/User.js';
 import ArchivedUser from '../../models/ArchivedUser.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
+import { assertRolesAssignable, RoleAssignmentError } from '../../shared/permissions/assignment.js';
 
 /**
  * Roles an admin may assign. Derived from the User schema enum so the two can
@@ -37,6 +38,26 @@ export const CUSTOMER_MASTER_FIELDS = [
 const canManageAllUsers = (actor) => hasPermission(actor, PERMISSIONS.MANAGE_USERS);
 
 const isCustomerAccount = (account) => (account?.role || 'Customer') === 'Customer';
+
+/**
+ * AD-4: a Customer may hold no HRMS role.
+ *
+ * The portal-role endpoints below can create that violation from the other
+ * direction - demoting an employee to Customer while they still hold `hrms_*`
+ * keys. `assertRolesAssignable` is the single rule; this wraps it for the HTTP
+ * layer. Responds 409 (a conflicting state) rather than 400, and returns true
+ * when it has already answered.
+ */
+const denyIfRoleCombinationInvalid = (res, role, roles) => {
+  try {
+    assertRolesAssignable(role, roles ?? []);
+    return false;
+  } catch (err) {
+    if (!(err instanceof RoleAssignmentError)) throw err;
+    res.status(409).json({ success: false, message: err.message, code: err.code });
+    return true;
+  }
+};
 
 /**
  * Refuse when the actor may not act on this account. Returns true when it has
@@ -98,6 +119,7 @@ export const createUser = async (req, res, next) => {
     // requested, before anything is written — otherwise the obvious escalation
     // is to POST /users with role: 'Admin'.
     if (denyIfOutOfScope(req, res, { role: requestedRole }, 'create')) return;
+    if (denyIfRoleCombinationInvalid(res, requestedRole, req.body.roles)) return;
 
     // Master details are mandatory for a NEW customer, and only meaningful for
     // one — staff accounts carry no GST or shop number.
@@ -178,6 +200,10 @@ export const updateUser = async (req, res, next) => {
         message: 'You can only manage customer accounts, so this account must stay a Customer.',
       });
     }
+
+    // AD-4, same reasoning as updateUserRole: a role change must not leave the
+    // account holding HRMS roles it may no longer have.
+    if ('role' in req.body && denyIfRoleCombinationInvalid(res, req.body.role, target.roles)) return;
 
     const updates = {};
     for (const key of ALLOWED_UPDATES) {
@@ -324,6 +350,14 @@ export const updateUserRole = async (req, res, next) => {
         message: 'Only an administrator can change an account role.',
       });
     }
+
+    // The document-level pre('validate') hook does not run for
+    // findByIdAndUpdate, so the AD-4 rule is checked here against the roles the
+    // account already holds. Demoting an employee to Customer while they still
+    // carry HRMS roles is exactly the case this catches.
+    const target = await User.findById(req.params.id).select('roles').lean();
+    if (!target) return res.status(404).json({ success: false, message: 'User not found' });
+    if (denyIfRoleCombinationInvalid(res, role, target.roles)) return;
 
     const user = await User.findByIdAndUpdate(
       req.params.id,

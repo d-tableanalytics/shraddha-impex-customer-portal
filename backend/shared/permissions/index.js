@@ -51,3 +51,14 @@ export {
   permissionsFor,
   hasLegacyPermission,
 } from './legacy.js';
+
+export {
+  CUSTOMER_ROLE,
+  ASSIGNABLE_ROLE_KEYS,
+  RoleAssignmentError,
+  isAssignableRoleKey,
+  assertRolesAssignable,
+  canAssignRoles,
+  assignableHrmsRolesFor,
+  hasHrmsRole,
+} from './assignment.js';

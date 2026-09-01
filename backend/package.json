@@ -10,8 +10,8 @@
     "migrate": "node scripts/migrate.js",
     "verify:box": "node scripts/verify-box-numbers.js",
     "verify:features": "node scripts/verify-feature-pack.js",
-    "test": "node --test --test-reporter=spec",
-    "test:watch": "node --test --watch"
+    "test": "node --test --test-reporter=spec \"tests/**/*.test.js\"",
+    "test:watch": "node --test --watch \"tests/**/*.test.js\""
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
