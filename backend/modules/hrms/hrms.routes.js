@@ -21,7 +21,9 @@ import express from 'express';
 
 import { protect } from '../../middlewares/auth.js';
 import { hrmsAuthorizationChain } from '../../middlewares/hrmsAuth.js';
-import { getHrmsMe } from './hrms.controller.js';
+import { getHrmsMe, getHrmsStatus } from './hrms.controller.js';
+import companyRoutes from './company/company.routes.js';
+import { hrmsErrorHandler } from './hrms.errors.js';
 import storageRoutes from './storage/storage.routes.js';
 import retentionRoutes from './retention/retention.routes.js';
 import employeeImportRoutes from './import/import.routes.js';
@@ -40,6 +42,15 @@ router.use(hrmsAuthorizationChain);
  */
 router.get('/me', getHrmsMe);
 
+/**
+ * What the foundation has wired up. No permission gate beyond HRMS access -
+ * it reports capability, not data.
+ */
+router.get('/status', getHrmsStatus);
+
+// AD-1: single tenant. One company profile, not an Organization per tenant.
+router.use('/company', companyRoutes);
+
 // AD-7: presigned, per-object-authorised file access.
 router.use('/files', storageRoutes);
 
@@ -49,5 +60,11 @@ router.use('/config/retention', retentionRoutes);
 // AD-11: the source-agnostic employee import pipeline. No source adapter is
 // shipped - the migration source is deliberately undecided.
 router.use('/imports/employees', employeeImportRoutes);
+
+// HRMS-specific errors become their own status codes here, ahead of the
+// app-wide handler, so a missing department is a 404 and an unbuilt capability
+// is a 503 rather than both surfacing as 500. Portal error handling is
+// untouched - this is mounted on the HRMS router only.
+router.use(hrmsErrorHandler);
 
 export default router;

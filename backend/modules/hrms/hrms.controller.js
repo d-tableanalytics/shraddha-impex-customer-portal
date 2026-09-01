@@ -4,6 +4,10 @@
 
 import { modulesForHrmsRoles } from '../../shared/permissions/matrix.js';
 import { HRMS_ROLE_LABELS } from '../../shared/permissions/constants.js';
+import { describe as describeReferences } from './references/reference.service.js';
+import { registeredRetentionCategories } from './retention/retention.registry.js';
+import { registeredFileCategories } from './storage/storage.service.js';
+import { IMPLEMENTED_HRMS_MODULES } from './hrms.modules.js';
 
 /**
  * GET /api/v1/hrms/me
@@ -38,4 +42,37 @@ export const getHrmsMe = async (req, res, next) => {
   }
 };
 
-export default { getHrmsMe };
+/**
+ * GET /api/v1/hrms/status
+ *
+ * What the HRMS foundation currently has wired up.
+ *
+ * Exists so the shell and the dashboard can be HONEST. The permission matrix
+ * declares 31 modules; two are built. Without this the dashboard would either
+ * invent numbers or show a permission error for a module that simply does not
+ * exist yet - and those read very differently to a user.
+ */
+export const getHrmsStatus = async (req, res, next) => {
+  try {
+    const actor = req.hrmsActor;
+    const permitted = modulesForHrmsRoles(actor.roleKeys);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        implementedModules: IMPLEMENTED_HRMS_MODULES,
+        // Modules this actor may reach AND that exist. The nav renders these.
+        availableModules: IMPLEMENTED_HRMS_MODULES.filter((m) => permitted.includes(m)),
+        foundation: {
+          references: describeReferences(),
+          retentionHandlers: registeredRetentionCategories(),
+          fileCategories: registeredFileCategories(),
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export default { getHrmsMe, getHrmsStatus };

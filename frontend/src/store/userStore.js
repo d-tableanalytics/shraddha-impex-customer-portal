@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { usersApi } from "../services/users";
 import { refreshSocketAuth } from "../services/socketService";
 import { useNotificationStore } from "./notificationStore";
+import { useHrmsStore } from "./hrmsStore";
 
 export const useUserStore = create((set) => ({
   user: null,
@@ -73,6 +74,9 @@ export const useUserStore = create((set) => ({
     localStorage.removeItem('token');
     set({ user: null });
     useNotificationStore.getState().clear();
+    // Drop the HRMS actor too, or the next person to sign in on this browser
+    // briefly sees the previous user's HRMS menu.
+    useHrmsStore.getState().clear();
     refreshSocketAuth(); // drop out of the user/admin rooms
   },
 }));

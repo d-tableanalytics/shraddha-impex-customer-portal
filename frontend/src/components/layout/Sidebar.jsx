@@ -31,6 +31,11 @@ import {
   INVENTORY_ROLES,
   canOpenUserManagement,
 } from "../../utils/permissions";
+import { useHrmsPermissions } from "../../hooks/useHrmsPermissions";
+import {
+  visibleHrmsNavItems,
+  groupHrmsNavItems,
+} from "../hrms/navItems";
 
 export const Sidebar = () => {
   const { sidebarOpen, toggleSidebar } = useUIStore();
@@ -38,6 +43,14 @@ export const Sidebar = () => {
 
   const { user, logout } = useUserStore();
   const location = useLocation();
+
+  // HRMS navigation. Permission-aware through the canonical evaluator, and
+  // filtered again by which modules actually exist — so the menu never links to
+  // a page that has not been built (AD-4, AD-14).
+  const { can, implementedModules, hasAccess: hasHrmsAccess } = useHrmsPermissions();
+  const hrmsGroups = hasHrmsAccess
+    ? groupHrmsNavItems(visibleHrmsNavItems(can, implementedModules))
+    : [];
 
   const handleLogout = () => {
     logout();
@@ -126,11 +139,57 @@ export const Sidebar = () => {
     return location.pathname === basePath || location.pathname.startsWith(`${basePath}/`);
   };
 
-  const activeItemName = menuItems.reduce((best, item) => {
+  // HRMS items join the same longest-path contest, so exactly one row is lit
+  // whichever section the user is in. Keeping two independent calculations
+  // would highlight a portal item and an HRMS item at the same time.
+  const allNavPaths = [
+    ...menuItems,
+    ...hrmsGroups.flatMap((g) => g.items.map((i) => ({ name: i.key, path: i.path }))),
+  ];
+
+  const activeItemName = allNavPaths.reduce((best, item) => {
     if (!matches(item)) return best;
     const len = item.path.split('?')[0].length;
     return !best || len > best.len ? { name: item.name, len } : best;
   }, null)?.name ?? null;
+
+  /**
+   * One link renderer for both the portal items and the HRMS items.
+   *
+   * Extracted rather than duplicated: the brief is to extend the existing
+   * navigation, and two copies of this markup would drift the moment either
+   * side is restyled.
+   */
+  const renderNavLink = ({ key, name, path, icon: Icon, badge }) => {
+    const isActuallyActive = key === activeItemName || name === activeItemName;
+    return (
+      <NavLink
+        key={key ?? name}
+        to={path}
+        className={() =>
+          `group relative flex items-center gap-3.5 px-3 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${isActuallyActive
+            ? "nav-active bg-white text-primary-800 shadow-md shadow-primary-950/30 border border-transparent"
+            : "text-primary-100 border border-transparent hover:bg-primary-400/20 hover:text-white hover:border-primary-400/30 hover:translate-x-1 hover:shadow-[0_0_15px_rgba(96,165,250,0.3)]"
+          }`
+        }
+      >
+        {() => (
+          <>
+            {isActuallyActive && (
+              <span className="absolute -left-3 top-1/2 -translate-y-1/2 h-6 w-1 rounded-full bg-white" />
+            )}
+            <Icon size={20} className="shrink-0" />
+            {sidebarOpen && <span className="flex-1 truncate">{name}</span>}
+            {sidebarOpen && badge !== undefined && (
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isActuallyActive ? "bg-primary-600 text-white" : "bg-white text-primary-800"}`}>
+                {badge}
+              </span>
+            )}
+          </>
+        )}
+      </NavLink>
+    );
+  };
 
   return (
     <aside
@@ -155,38 +214,34 @@ export const Sidebar = () => {
       </div>
 
       <nav className="flex-1 overflow-y-auto py-6 px-3 space-y-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent]">
-        {menuItems.map((item) => {
-          const isActuallyActive = item.name === activeItemName;
+        {menuItems.map((item) => renderNavLink({ ...item, key: item.name }))}
 
-          return (
-          <NavLink
-            key={item.name}
-            to={item.path}
-            className={() =>
-              `group relative flex items-center gap-3.5 px-3 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${isActuallyActive
-                ? "nav-active bg-white text-primary-800 shadow-md shadow-primary-950/30 border border-transparent"
-                : "text-primary-100 border border-transparent hover:bg-primary-400/20 hover:text-white hover:border-primary-400/30 hover:translate-x-1 hover:shadow-[0_0_15px_rgba(96,165,250,0.3)]"
-              }`
-            }
-          >
-            {() => (
-              <>
-                {isActuallyActive && (
-                  <span className="absolute -left-3 top-1/2 -translate-y-1/2 h-6 w-1 rounded-full bg-white" />
-                )}
-                <item.icon size={20} className="shrink-0" />
-                {sidebarOpen && (
-                  <span className="flex-1 truncate">{item.name}</span>
-                )}
-                {sidebarOpen && item.badge !== undefined && (
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isActuallyActive ? "bg-primary-600 text-white" : "bg-white text-primary-800"}`}>
-                    {item.badge}
-                  </span>
-                )}
-              </>
+        {/*
+          HRMS navigation, appended to the SAME rail rather than a second
+          sidebar. Each group is hidden entirely when it has no visible items,
+          so a customer — who has no HRMS permissions at all — sees no trace of
+          HRMS, not even a heading (AD-4).
+        */}
+        {hrmsGroups.map((group) => (
+          <div key={group.group} className="pt-4 first:pt-0">
+            {sidebarOpen && (
+              <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-primary-300/70 select-none">
+                {group.label}
+              </p>
             )}
-          </NavLink>
-        )})}
+            {!sidebarOpen && <div className="mx-3 mb-2 border-t border-white/10" />}
+            <div className="space-y-1">
+              {group.items.map((item) =>
+                renderNavLink({
+                  key: item.key,
+                  name: item.label,
+                  path: item.path,
+                  icon: item.icon,
+                }),
+              )}
+            </div>
+          </div>
+        ))}
       </nav>
 
       {/* Signed-in user. Collapses to avatar + sign-out when the rail is narrow.

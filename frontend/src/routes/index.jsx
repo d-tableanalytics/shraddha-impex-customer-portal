@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 import MainLayout from "../components/layout/MainLayout";
 import { ProtectedRoute } from "../components/layout/ProtectedRoute";
 import { lazy } from 'react';
@@ -25,6 +25,11 @@ const InventoryImport = lazy(() => import("../pages/Inventory/InventoryImport").
 const Reports = lazy(() => import("../pages/Reports/Reports").then(m => ({ default: m.Reports })));
 const Settings = lazy(() => import("../pages/Settings/Settings").then(m => ({ default: m.Settings })));
 const Help = lazy(() => import("../pages/Help/Help").then(m => ({ default: m.Help })));
+
+// ── HRMS (AD-14: same domain, /hrms prefix, same session) ─────────────────
+// Lazy like every other route, so a customer never downloads an HRMS chunk.
+import { HrmsProtectedRoute } from "../components/hrms/HrmsProtectedRoute";
+const HrmsDashboard = lazy(() => import("../pages/Hrms/HrmsDashboard").then(m => ({ default: m.HrmsDashboard })));
 
 export const router = createBrowserRouter([
   {
@@ -121,7 +126,26 @@ export const router = createBrowserRouter([
           {
             path: "help",
             element: <Help />,
-          }
+          },
+          {
+            // HRMS lives INSIDE the portal's MainLayout — same sidebar, same
+            // top bar, same session. Not a second application (AD-14).
+            //
+            // HrmsProtectedRoute adds the AD-4 check on top of the portal's
+            // authentication: being signed in is not being an HRMS user, so a
+            // customer typing /hrms/... is redirected here, not just hidden
+            // from the menu.
+            path: "hrms",
+            element: <HrmsProtectedRoute />,
+            children: [
+              { index: true, element: <Navigate to="/hrms/dashboard" replace /> },
+              { path: "dashboard", element: <HrmsDashboard /> },
+              // Module routes are added here as each one ships. Deliberately
+              // absent until then: a route to an unbuilt page is worse than a
+              // 404, because it looks like a broken feature rather than a
+              // feature that does not exist yet.
+            ],
+          },
         ],
       }
     ]
