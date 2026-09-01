@@ -2,6 +2,7 @@ import User from '../../models/User.js';
 import ArchivedUser from '../../models/ArchivedUser.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { assertRolesAssignable, RoleAssignmentError } from '../../shared/permissions/assignment.js';
+import { hashPassword } from '../../utils/password.js';
 
 /**
  * Roles an admin may assign. Derived from the User schema enum so the two can
@@ -158,7 +159,9 @@ export const createUser = async (req, res, next) => {
 
     const newUser = await User.create({
       email,
-      password,
+      // AD-10: a password is only ever stored as a bcrypt hash. This used to
+      // write the plaintext straight through.
+      password: await hashPassword(password),
       user: user || null,
       company: company || null,
       role: requestedRole,
@@ -316,16 +319,22 @@ export const resetUserPassword = async (req, res, next) => {
     if (!target) return res.status(404).json({ success: false, message: 'User not found' });
     if (denyIfOutOfScope(req, res, target, 'reset the password for')) return;
 
+    const hashed = await hashPassword(newPassword);
+
     const user = await User.findById(req.params.id).select('+password');
     if (user) {
-      user.password = newPassword;
-      await user.save({ validateBeforeSave: false });
+      // Also drops refreshTokenHash: an admin reset is an account takeover, so
+      // any session the previous holder still has must stop working.
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { password: hashed, refreshTokenHash: null } },
+      );
       return res.status(200).json({ success: true, message: `Password reset for ${user.email}.` });
     }
 
     // Suspended account: set the password on the archived copy so it is in place
     // the moment the account is restored.
-    const archived = await ArchivedUser.findByIdAndUpdate(req.params.id, { password: newPassword });
+    const archived = await ArchivedUser.findByIdAndUpdate(req.params.id, { password: hashed });
     if (!archived) return res.status(404).json({ success: false, message: 'User not found' });
 
     return res.status(200).json({

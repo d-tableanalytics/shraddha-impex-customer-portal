@@ -89,7 +89,17 @@ const userSchema = new mongoose.Schema({
   showMsilCode: { type: Boolean, default: false }, // Maps to 'Show MSIL Code'
   bookingCcEmails: { type: [String], default: [] }, // Maps to 'Booking CC Emails'
   status: { type: String, enum: ['Active', 'Inactive', 'Suspended'], default: 'Active' },
-  lastLogin: { type: Date }
+  lastLogin: { type: Date },
+
+  // ── Refresh-token rotation ──────────────────────────────────────────────
+  // SHA-256 of the CURRENT refresh token, so a database leak yields no usable
+  // sessions. Presenting a refresh token that does not hash to this value means
+  // an older one was replayed: every session for the account is then revoked by
+  // nulling this field, rather than merely refusing the one request.
+  //
+  // `select: false` keeps it out of every existing query and every API response
+  // that returns a user document — no controller needs to know it exists.
+  refreshTokenHash: { type: String, default: null, select: false },
 }, { timestamps: true });
 
 /**

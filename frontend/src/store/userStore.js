@@ -66,7 +66,10 @@ export const useUserStore = create((set) => ({
     }
   },
 
-  logout: () => {
+  logout: async () => {
+    // Revoke server-side first so the refresh cookie cannot be exchanged again;
+    // usersApi.logout never rejects, so the local clear below always runs.
+    await usersApi.logout();
     localStorage.removeItem('token');
     set({ user: null });
     useNotificationStore.getState().clear();

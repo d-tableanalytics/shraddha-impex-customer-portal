@@ -2,6 +2,7 @@ import express from 'express';
 import { getUsers, createUser, updateUser, updateUserRole, resetUserPassword } from './user.controller.js';
 import { protect } from '../../middlewares/auth.js';
 import { authorize, PERMISSIONS } from '../../middlewares/rbac.js';
+import { passwordLimiter } from '../../middlewares/rateLimiters.js';
 import { auditLogger } from '../../middlewares/auditLogger.js';
 
 const router = express.Router();
@@ -27,6 +28,6 @@ router.post('/', auditLogger('Create User'), createUser);
 router.patch('/:id', auditLogger('Update User'), updateUser);
 // Changing a role is Admin-only; the handler refuses anyone else outright.
 router.put('/:id/roles', auditLogger('Update User Role'), updateUserRole);
-router.put('/:id/password', auditLogger('Reset User Password'), resetUserPassword);
+router.put('/:id/password', passwordLimiter, auditLogger('Reset User Password'), resetUserPassword);
 
 export default router;
