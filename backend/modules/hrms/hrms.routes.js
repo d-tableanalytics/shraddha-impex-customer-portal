@@ -24,6 +24,7 @@ import { hrmsAuthorizationChain } from '../../middlewares/hrmsAuth.js';
 import { getHrmsMe, getHrmsStatus } from './hrms.controller.js';
 import companyRoutes from './company/company.routes.js';
 import employeeRoutes from './employees/employee.routes.js';
+import orgRoutes from './org/org.routes.js';
 import { hrmsErrorHandler } from './hrms.errors.js';
 import storageRoutes from './storage/storage.routes.js';
 import retentionRoutes from './retention/retention.routes.js';
@@ -54,6 +55,12 @@ router.use('/company', companyRoutes);
 
 // Employee Master.
 router.use('/employees', employeeRoutes);
+
+// Org Structure: the department and location catalogues, and the org chart.
+// Grouped under /org rather than mounted flat as the reference does
+// (/departments, /locations, /organization/tree), so the module owns one
+// prefix and the API reads the way the permission key does.
+router.use('/org', orgRoutes);
 
 // AD-7: presigned, per-object-authorised file access.
 router.use('/files', storageRoutes);

@@ -96,6 +96,16 @@ export const put = (baseUrl, path, payload, init = {}) =>
     body: payload === undefined ? undefined : JSON.stringify(payload),
   });
 
+export const patch = (baseUrl, path, payload, init = {}) =>
+  request(baseUrl, path, {
+    ...init,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...init.headers },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  });
+
+export const del = (baseUrl, path, init = {}) => request(baseUrl, path, { ...init, method: 'DELETE' });
+
 /** Run `fn(url)` against a freshly started app, always shutting it down after. */
 export async function withServer(app, fn) {
   const { url, close } = await startServer(app);
