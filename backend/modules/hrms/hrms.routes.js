@@ -24,6 +24,7 @@ import { hrmsAuthorizationChain } from '../../middlewares/hrmsAuth.js';
 import { getHrmsMe } from './hrms.controller.js';
 import storageRoutes from './storage/storage.routes.js';
 import retentionRoutes from './retention/retention.routes.js';
+import employeeImportRoutes from './import/import.routes.js';
 
 const router = express.Router();
 
@@ -45,7 +46,8 @@ router.use('/files', storageRoutes);
 // AD-16: retention policy - configurable, versioned, audited.
 router.use('/config/retention', retentionRoutes);
 
-// Mounted here as the remaining Phase 0 area lands:
-//   /imports/employees  AD-11 canonical import pipeline
+// AD-11: the source-agnostic employee import pipeline. No source adapter is
+// shipped - the migration source is deliberately undecided.
+router.use('/imports/employees', employeeImportRoutes);
 
 export default router;
