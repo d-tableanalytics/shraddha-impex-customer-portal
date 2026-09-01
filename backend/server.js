@@ -13,6 +13,8 @@ import { seedAlertRules } from './config/seedAlertRules.js';
 import { subscribeAlerts } from './modules/inventory/alert.subscriber.js';
 import { onEvent, EVENTS } from './utils/eventBus.js';
 import { sweepUploads } from './middlewares/importUpload.js';
+import { bootstrapHrms } from './modules/hrms/hrms.bootstrap.js';
+import { runHrmsRetentionSweep } from './modules/hrms/retention/retention.sweep.js';
 import cron from 'node-cron';
 
 dotenv.config();
@@ -110,6 +112,12 @@ const startServer = async () => {
   // disk is debris — and debris nobody reads accumulates until the disk fills.
   await sweepUploads();
 
+  // Register the HRMS retention handlers and file access rules. Explicit and
+  // central, so what is armed in a running system is answerable by reading
+  // modules/hrms/hrms.bootstrap.js — and so importing an HRMS service from a
+  // script does not arm a background behaviour as a side effect.
+  bootstrapHrms();
+
   // Initial check on boot
   await runReservationExpiryChecks();
   // Settle the stock held by confirmed bookings: consume it where a PO was
@@ -122,6 +130,11 @@ const startServer = async () => {
     runReservationExpiryChecks();
     runPoSettlement();
     sweepUploads();
+    // AD-16: the application policy is authoritative for retention; the S3
+    // lifecycle rule sits behind it at a longer window as a backstop only.
+    runHrmsRetentionSweep().catch((err) =>
+      console.error('[Cron] HRMS retention sweep failed:', err.message),
+    );
   });
   
   server.listen(PORT, () => {

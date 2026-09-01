@@ -23,6 +23,7 @@ import { protect } from '../../middlewares/auth.js';
 import { hrmsAuthorizationChain } from '../../middlewares/hrmsAuth.js';
 import { getHrmsMe } from './hrms.controller.js';
 import storageRoutes from './storage/storage.routes.js';
+import retentionRoutes from './retention/retention.routes.js';
 
 const router = express.Router();
 
@@ -41,8 +42,10 @@ router.get('/me', getHrmsMe);
 // AD-7: presigned, per-object-authorised file access.
 router.use('/files', storageRoutes);
 
-// Mounted here as each remaining Phase 0 area lands:
-//   /config/retention   AD-16 retention policy
+// AD-16: retention policy - configurable, versioned, audited.
+router.use('/config/retention', retentionRoutes);
+
+// Mounted here as the remaining Phase 0 area lands:
 //   /imports/employees  AD-11 canonical import pipeline
 
 export default router;
