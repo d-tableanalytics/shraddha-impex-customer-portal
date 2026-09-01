@@ -179,17 +179,23 @@ test('the portal permission model is untouched by Phase 1', async () => {
 test('/status reports only modules that actually exist', async () => {
   await withServer(hrmsAppFor(HR_ADMIN), async (url) => {
     const { body } = await get(url, `${HRMS_API_PREFIX}/status`);
-    assert.deepEqual(body.data.implementedModules, [M.DASHBOARD]);
-    // HR admin holds far more than dashboard, but only built modules surface.
-    assert.deepEqual(body.data.availableModules, [M.DASHBOARD]);
-    assert.equal(body.data.foundation.references.employee, false);
+    // Dashboard from Phase 1, employees from the Employee Master phase.
+    assert.deepEqual(body.data.implementedModules, [M.DASHBOARD, M.EMPLOYEES]);
+    // HR admin holds far more than these, but only built modules surface.
+    assert.deepEqual(body.data.availableModules, [M.DASHBOARD, M.EMPLOYEES]);
+    assert.equal(
+      body.data.implementedModules.includes(M.PAYROLL),
+      false,
+      'an unbuilt module must never be reported as available',
+    );
   });
 });
 
 test('implemented and planned modules are disjoint and cover the matrix', () => {
-  assert.deepEqual(IMPLEMENTED_HRMS_MODULES, [M.DASHBOARD]);
+  assert.deepEqual(IMPLEMENTED_HRMS_MODULES, [M.DASHBOARD, M.EMPLOYEES]);
   assert.equal(isModuleImplemented(M.DASHBOARD), true);
-  assert.equal(isModuleImplemented(M.PAYROLL), false, 'payroll is not built in Phase 1');
+  assert.equal(isModuleImplemented(M.EMPLOYEES), true);
+  assert.equal(isModuleImplemented(M.PAYROLL), false, 'payroll is not built yet');
   for (const m of IMPLEMENTED_HRMS_MODULES) {
     assert.equal(PLANNED_HRMS_MODULES.includes(m), false, `${m} cannot be both`);
   }

@@ -30,6 +30,9 @@ const Help = lazy(() => import("../pages/Help/Help").then(m => ({ default: m.Hel
 // Lazy like every other route, so a customer never downloads an HRMS chunk.
 import { HrmsProtectedRoute } from "../components/hrms/HrmsProtectedRoute";
 const HrmsDashboard = lazy(() => import("../pages/Hrms/HrmsDashboard").then(m => ({ default: m.HrmsDashboard })));
+const HrmsEmployeesPage = lazy(() => import("../pages/Hrms/employees/EmployeesPage").then(m => ({ default: m.EmployeesPage })));
+const HrmsEmployeeProfilePage = lazy(() => import("../pages/Hrms/employees/EmployeeProfilePage").then(m => ({ default: m.EmployeeProfilePage })));
+const HrmsEmployeeEditPage = lazy(() => import("../pages/Hrms/employees/EmployeeEditPage").then(m => ({ default: m.EmployeeEditPage })));
 
 export const router = createBrowserRouter([
   {
@@ -140,10 +143,26 @@ export const router = createBrowserRouter([
             children: [
               { index: true, element: <Navigate to="/hrms/dashboard" replace /> },
               { path: "dashboard", element: <HrmsDashboard /> },
-              // Module routes are added here as each one ships. Deliberately
-              // absent until then: a route to an unbuilt page is worse than a
-              // 404, because it looks like a broken feature rather than a
-              // feature that does not exist yet.
+              {
+                // Employee Master. The route shape matches the reference,
+                // which has NO /employees/new — creation happens in a drawer
+                // over the directory, and only editing gets its own page.
+                //
+                // The nested guard re-checks the module, so a customer or an
+                // HRMS user without employee access is redirected rather than
+                // shown an empty screen.
+                path: "employees",
+                element: <HrmsProtectedRoute module="employees" />,
+                children: [
+                  { index: true, element: <HrmsEmployeesPage /> },
+                  { path: ":id", element: <HrmsEmployeeProfilePage /> },
+                  { path: ":id/edit", element: <HrmsEmployeeEditPage /> },
+                ],
+              },
+              // Further module routes are added here as each one ships.
+              // Deliberately absent until then: a route to an unbuilt page is
+              // worse than a 404, because it looks like a broken feature
+              // rather than a feature that does not exist yet.
             ],
           },
         ],

@@ -18,20 +18,32 @@ import { setEmployeeResolver } from '../../middlewares/hrmsAuth.js';
 import {
   resolveEmployeeByUser,
   describe as describeReferences,
+  registerReferenceProvider,
 } from './references/reference.service.js';
+import {
+  employeeReferenceProvider,
+  employeePersistencePort,
+} from './employees/employee.provider.js';
+import { registerEmployeePersistence } from './import/adapter.js';
 import { RETENTION_CATEGORIES } from '../../shared/constants/hrms.js';
 
 /**
  * Wire up the HRMS foundation.
  *
  * Phase 1 registers what Phase 1 owns. Later phases add their own:
- *   employees   -> the employee reference PROVIDER (see below)
  *   org         -> the department and location providers
  *   attendance  -> the selfie retention handler + its file access rule
  *   payroll     -> payslip and bank-file access rules
  */
 export function bootstrapHrms() {
   registerRetentionHandler(RETENTION_CATEGORIES.AUDIT_LOG, auditRetentionHandler);
+
+  // Employee Master fills the two registries Phase 0 left empty on purpose.
+  // Until this ran, every employee lookup rejected with 503 and the import
+  // pipeline refused to commit - which was the correct behaviour while the
+  // collection did not exist.
+  registerReferenceProvider('employee', employeeReferenceProvider);
+  registerEmployeePersistence(employeePersistencePort);
 
   /**
    * Bridge the actor's employee lookup onto the reference service.

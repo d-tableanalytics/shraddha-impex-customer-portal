@@ -23,6 +23,7 @@ import { protect } from '../../middlewares/auth.js';
 import { hrmsAuthorizationChain } from '../../middlewares/hrmsAuth.js';
 import { getHrmsMe, getHrmsStatus } from './hrms.controller.js';
 import companyRoutes from './company/company.routes.js';
+import employeeRoutes from './employees/employee.routes.js';
 import { hrmsErrorHandler } from './hrms.errors.js';
 import storageRoutes from './storage/storage.routes.js';
 import retentionRoutes from './retention/retention.routes.js';
@@ -50,6 +51,9 @@ router.get('/status', getHrmsStatus);
 
 // AD-1: single tenant. One company profile, not an Organization per tenant.
 router.use('/company', companyRoutes);
+
+// Employee Master.
+router.use('/employees', employeeRoutes);
 
 // AD-7: presigned, per-object-authorised file access.
 router.use('/files', storageRoutes);

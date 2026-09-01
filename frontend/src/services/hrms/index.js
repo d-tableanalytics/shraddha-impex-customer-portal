@@ -12,3 +12,4 @@ export { hrmsClient, HrmsApiError } from "./client";
 export { hrmsMeApi, hrmsStatusApi } from "./meta";
 export { companyApi } from "./company";
 export { retentionApi } from "./retention";
+export { employeesApi, employeeCustomFieldsApi } from "./employees";

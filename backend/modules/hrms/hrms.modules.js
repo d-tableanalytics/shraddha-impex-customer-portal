@@ -19,13 +19,12 @@ import { HRMS_MODULES as M } from '../../shared/permissions/constants.js';
 /**
  * Modules with a real, reachable SCREEN.
  *
- * Phase 1 ships the shell, so the dashboard is the only one. The company
- * profile and retention endpoints exist too, but they are foundation
- * infrastructure consumed by the shell rather than a module a user navigates
- * to - listing `settings` here would put a nav link in front of a page nobody
- * has built.
+ * The company profile and retention endpoints exist too, but they are
+ * foundation infrastructure consumed by the shell rather than a module a user
+ * navigates to - listing `settings` here would put a nav link in front of a
+ * page nobody has built.
  */
-export const IMPLEMENTED_HRMS_MODULES = Object.freeze([M.DASHBOARD]);
+export const IMPLEMENTED_HRMS_MODULES = Object.freeze([M.DASHBOARD, M.EMPLOYEES]);
 
 /**
  * Modules whose permissions exist but whose implementation does not.

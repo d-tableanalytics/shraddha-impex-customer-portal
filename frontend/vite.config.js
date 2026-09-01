@@ -32,5 +32,14 @@ export default defineConfig({
     rollupOptions: {
       // Use default chunking strategy
     }
-  }
+  },
+  test: {
+    // jsdom, because the HRMS tests render real components. The pure ones
+    // (permission matrices, nav filtering) do not need it and are unaffected.
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.js'],
+    // Node also resolves `@shared`; without this the shared module is loaded
+    // twice under two identities and instanceof checks across it would fail.
+    alias: { '@shared': shared },
+  },
 })
