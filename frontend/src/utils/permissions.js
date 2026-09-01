@@ -1,92 +1,37 @@
 /**
- * Frontend mirror of backend/middlewares/rbac.js — keep the two in step.
+ * Portal permissions for the UI.
  *
  * This governs what the UI *offers*. It is never the enforcement point: every
  * sales and inventory endpoint re-checks permissions and the PO lock
  * server-side, so hiding a button here is a convenience, not a control.
+ *
+ * ---------------------------------------------------------------------------
+ * No longer a hand-maintained mirror
+ * ---------------------------------------------------------------------------
+ * `PERMISSIONS`, the role map and the evaluator used to be copied here from
+ * `backend/middlewares/rbac.js`, with a comment asking whoever changed one to
+ * remember the other. They now come from `@shared/permissions/legacy.js` - one
+ * definition, imported by both halves - so the two cannot drift.
+ *
+ * The named predicates below stay here: they are UI affordances built on top of
+ * the shared model, and several encode rules that are deliberately narrower
+ * than any single permission.
+ *
+ * HRMS authorization is a different model entirely (module x action x scope).
+ * It lives in `../hooks/usePermissions.js` over `@shared/permissions`.
  */
 
-export const PERMISSIONS = {
-  CREATE_ORDER: "create_order",
-  MANAGE_ORDERS: "manage_orders",
-  MANAGE_INVENTORY: "manage_inventory",
-  MANAGE_USERS: "manage_users",
-  MANAGE_CUSTOMER_USERS: "manage_customer_users",
-  MANAGE_ROLES: "manage_roles",
-  VIEW_REPORTS: "view_reports",
-  VIEW_ALL_BOOKINGS: "view_all_bookings",
-  EDIT_BOOKING_PRE_PO: "edit_booking_pre_po",
-  RAISE_PO: "raise_po",
-  OVERRIDE_PO_LOCK: "override_po_lock",
+import {
+  PERMISSIONS,
+  INVENTORY_ROLES,
+  permissionsFor,
+  hasLegacyPermission,
+} from '@shared/permissions/legacy.js';
 
-  // Inventory Management System. The full set is mirrored so the map does not
-  // need reopening for each module; only the M1 four are used by any screen yet.
-  VIEW_INVENTORY: "view_inventory",
-  MANAGE_INVENTORY_MASTER: "manage_inventory_master",
-  MANAGE_BOX_NUMBER: "manage_box_number",
-  CONFIGURE_INVENTORY: "configure_inventory",
-  EXPORT_INVENTORY: "export_inventory",
-  VIEW_STOCK_LEDGER: "view_stock_ledger",
-  POST_STOCK_IN: "post_stock_in",
-  POST_STOCK_OUT: "post_stock_out",
-  ADJUST_STOCK: "adjust_stock",
-  APPROVE_ADJUSTMENT: "approve_adjustment",
-  PERFORM_COUNT: "perform_count",
-  APPROVE_COUNT: "approve_count",
-  TRANSFER_STOCK: "transfer_stock",
-};
+export { PERMISSIONS, INVENTORY_ROLES, permissionsFor };
 
-const ROLE_PERMISSIONS = {
-  Admin: ["*"],
-  Sales: [
-    PERMISSIONS.VIEW_ALL_BOOKINGS,
-    PERMISSIONS.MANAGE_CUSTOMER_USERS,
-    PERMISSIONS.EDIT_BOOKING_PRE_PO,
-    PERMISSIONS.RAISE_PO,
-    PERMISSIONS.VIEW_REPORTS,
-    PERMISSIONS.VIEW_INVENTORY,
-  ],
-  "Inventory Manager": [
-    PERMISSIONS.VIEW_INVENTORY,
-    PERMISSIONS.VIEW_STOCK_LEDGER,
-    PERMISSIONS.MANAGE_INVENTORY_MASTER,
-    PERMISSIONS.EXPORT_INVENTORY,
-    PERMISSIONS.POST_STOCK_IN,
-    PERMISSIONS.POST_STOCK_OUT,
-    PERMISSIONS.ADJUST_STOCK,
-    PERMISSIONS.PERFORM_COUNT,
-    PERMISSIONS.APPROVE_COUNT,
-    PERMISSIONS.TRANSFER_STOCK,
-    PERMISSIONS.VIEW_REPORTS,
-  ],
-  "Warehouse User": [
-    PERMISSIONS.VIEW_INVENTORY,
-    PERMISSIONS.VIEW_STOCK_LEDGER,
-    PERMISSIONS.EXPORT_INVENTORY,
-    PERMISSIONS.POST_STOCK_IN,
-    PERMISSIONS.PERFORM_COUNT,
-    PERMISSIONS.TRANSFER_STOCK,
-  ],
-  Management: [
-    PERMISSIONS.VIEW_INVENTORY,
-    PERMISSIONS.VIEW_STOCK_LEDGER,
-    PERMISSIONS.EXPORT_INVENTORY,
-    PERMISSIONS.APPROVE_ADJUSTMENT,
-    PERMISSIONS.APPROVE_COUNT,
-    PERMISSIONS.VIEW_REPORTS,
-  ],
-  Customer: [PERMISSIONS.CREATE_ORDER],
-};
-
-/** Roles that work the business's own stock rather than their own orders. */
-export const INVENTORY_ROLES = ["Inventory Manager", "Warehouse User", "Management"];
-
-export const permissionsFor = (user) => ROLE_PERMISSIONS[user?.role] || [];
-
-export const hasPermission = (user, permission) => {
-  const perms = permissionsFor(user);
-  return perms.includes("*") || perms.includes(permission);
-};
+/** True when the user holds the permission (or the Admin wildcard). */
+export const hasPermission = hasLegacyPermission;
 
 export const isAdmin = (user) => user?.role === "Admin";
 export const isSales = (user) => user?.role === "Sales";
@@ -108,15 +53,11 @@ export const canEditBooking = (user, booking) => {
  *
  * ADMIN AND SALES ONLY. Once a booking has been placed the customer cannot
  * change its quantities — they ask the desk, and the desk is emailed-of-record
- * for the adjustment. This briefly allowed the customer to revise their own
- * booking; that is no longer the rule.
+ * for the adjustment.
  *
  * Identical to canEditBooking, and kept as its own name because the screens
  * that gate a quantity field read better asking that question, and because the
  * server enforces the quantity rule on a route of its own.
- *
- * Once the PO is raised the quantities are committed and only an Admin may
- * move them, which is what canEditBooking already encodes.
  */
 export const canEditBookingQuantity = (user, booking) => canEditBooking(user, booking);
 
@@ -193,9 +134,7 @@ export const canViewBoxNo = (user) =>
  * The two rules are separate on purpose. A line item belongs to a customer's
  * booking, and the order drawer that renders it is the customer's own order
  * history screen — so the audience there is not "internal staff" but
- * specifically the desk that acts on the booking. Widening this to match the
- * inventory rule would put a picking location in front of the customer who
- * placed the order.
+ * specifically the desk that acts on the booking.
  */
 export const canViewLineItemBoxNo = (user) => isAdmin(user) || isSales(user);
 
