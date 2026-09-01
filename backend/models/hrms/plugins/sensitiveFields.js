@@ -60,14 +60,27 @@ export function sensitiveFields(schema, options = {}) {
 
     if (indexed.includes(field)) {
       schema.add({
-        [idxPath(field)]: {
-          type: String,
-          default: null,
-          select: false,
-          // Sparse: most documents have no value, and null must not collide.
-          index: { unique: true, sparse: true },
-        },
+        [idxPath(field)]: { type: String, default: null, select: false },
       });
+
+      /**
+       * Unique across documents that actually HAVE the value.
+       *
+       * `sparse` is the obvious choice here and is wrong: it excludes documents
+       * where the path is MISSING, and this path has `default: null`, so every
+       * document has it present and null. Two employees with no PAN both index
+       * null, collide, and the second one cannot be created at all.
+       *
+       * A partial index on `$type: 'string'` excludes null and missing alike,
+       * so absent values never collide while two real PANs still cannot.
+       */
+      schema.index(
+        { [idxPath(field)]: 1 },
+        {
+          unique: true,
+          partialFilterExpression: { [idxPath(field)]: { $type: 'string' } },
+        },
+      );
     }
   }
 

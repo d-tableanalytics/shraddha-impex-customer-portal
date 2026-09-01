@@ -11,6 +11,10 @@
 import mongoose from 'mongoose';
 
 import Employee from '../../../models/hrms/Employee.js';
+import {
+  departmentReferenceProvider,
+  locationReferenceProvider,
+} from '../org/org.provider.js';
 import User from '../../../models/User.js';
 import { hashPassword } from '../../../utils/password.js';
 import { sanitiseCustomFields } from '../../../utils/hrms/crypto/index.js';
@@ -98,18 +102,24 @@ export const employeePersistencePort = {
   },
 
   /**
-   * Org Structure is not built, so these cannot resolve yet.
+   * Code -> id, for the import's reference check.
    *
-   * Returning an empty Map is correct rather than evasive: the pipeline treats
-   * an unresolved code as a row error and reports it, which is exactly the
-   * outcome wanted — "create the department first" — instead of a dangling id.
+   * These delegate to the Org Structure providers, which return live rows
+   * only. A sheet naming a retired department therefore fails the pipeline's
+   * per-row check with "Create it before importing" rather than storing a
+   * dangling id - AD-2 left no foreign key to catch that later.
+   *
+   * Before Org Structure existed both returned an empty Map, which was honest
+   * then and would be a silent bug now.
    */
-  async resolveDepartmentCodes() {
-    return new Map();
+  async resolveDepartmentCodes(codes = []) {
+    const refs = await departmentReferenceProvider.byCodes(codes);
+    return new Map([...refs].map(([code, ref]) => [code, ref.id]));
   },
 
-  async resolveLocationCodes() {
-    return new Map();
+  async resolveLocationCodes(codes = []) {
+    const refs = await locationReferenceProvider.byCodes(codes);
+    return new Map([...refs].map(([code, ref]) => [code, ref.id]));
   },
 
   /**

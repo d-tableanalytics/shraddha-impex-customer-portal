@@ -24,6 +24,10 @@ import {
   employeeReferenceProvider,
   employeePersistencePort,
 } from './employees/employee.provider.js';
+import {
+  departmentReferenceProvider,
+  locationReferenceProvider,
+} from './org/org.provider.js';
 import { registerEmployeePersistence } from './import/adapter.js';
 import { RETENTION_CATEGORIES } from '../../shared/constants/hrms.js';
 
@@ -31,7 +35,6 @@ import { RETENTION_CATEGORIES } from '../../shared/constants/hrms.js';
  * Wire up the HRMS foundation.
  *
  * Phase 1 registers what Phase 1 owns. Later phases add their own:
- *   org         -> the department and location providers
  *   attendance  -> the selfie retention handler + its file access rule
  *   payroll     -> payslip and bank-file access rules
  */
@@ -44,6 +47,13 @@ export function bootstrapHrms() {
   // collection did not exist.
   registerReferenceProvider('employee', employeeReferenceProvider);
   registerEmployeePersistence(employeePersistencePort);
+
+  // Org Structure fills the last two registries. With these registered,
+  // `assertReferencesResolve` stops answering 503 for a departmentId or
+  // locationId and starts doing what it was written to do - checking that the
+  // id actually resolves, and refusing it when it does not.
+  registerReferenceProvider('department', departmentReferenceProvider);
+  registerReferenceProvider('location', locationReferenceProvider);
 
   /**
    * Bridge the actor's employee lookup onto the reference service.

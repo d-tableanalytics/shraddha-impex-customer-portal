@@ -182,6 +182,28 @@ export const CONSENT_PURPOSE_LIST = Object.freeze(Object.values(CONSENT_PURPOSES
 export const CURRENT_CONSENT_VERSION = 1;
 
 // ---------------------------------------------------------------------------
+// Org Structure
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape of a Department / Location code.
+ *
+ * The reference enforces this pattern ONLY in the browser
+ * (`DepartmentsTab.tsx:188`); its server schema is a bare
+ * `z.string().min(1).max(30)`, so `POST /departments {"code":"eng dept!"}`
+ * succeeds. Declared here once and applied on the server, so the rule binds
+ * every client - the form, the API, and the import.
+ */
+export const ORG_CODE_PATTERN = /^[A-Z0-9_-]+$/;
+export const ORG_CODE_MAX_LENGTH = 30;
+export const ORG_NAME_MAX_LENGTH = 100;
+
+/** Location free-text caps, matching the reference's column widths. */
+export const LOCATION_ADDRESS_MAX_LENGTH = 500;
+export const LOCATION_CITY_MAX_LENGTH = 100;
+export const LOCATION_COUNTRY_MAX_LENGTH = 100;
+
+// ---------------------------------------------------------------------------
 // Audit (AD-16 / AD-10 / AD-15)
 // ---------------------------------------------------------------------------
 
@@ -217,6 +239,14 @@ export const AUDIT_ACTIONS = Object.freeze({
   // import (AD-11)
   IMPORT_PREVIEWED: 'hrms.import.previewed',
   IMPORT_COMMITTED: 'hrms.import.committed',
+
+  // org structure
+  DEPARTMENT_CREATED: 'hrms.department.created',
+  DEPARTMENT_UPDATED: 'hrms.department.updated',
+  DEPARTMENT_DELETED: 'hrms.department.deleted',
+  LOCATION_CREATED: 'hrms.location.created',
+  LOCATION_UPDATED: 'hrms.location.updated',
+  LOCATION_DELETED: 'hrms.location.deleted',
 });
 
 /**
