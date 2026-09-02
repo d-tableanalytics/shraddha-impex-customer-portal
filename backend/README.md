@@ -13,6 +13,7 @@ This is the backend API service for the Shraddha Impex ERP and Customer Portal. 
 - **Automatic Seeding**: The server automatically seeds essential enterprise roles into the database on startup if none exist.
 - **Real-Time Sockets**: Integrated `socket.io` for real-time notifications and updates to connected clients.
 - **Security**: Error handling middleware, payload validation, and CORS support.
+- **Scheduled Reports**: A weekly inventory health report, colour-coded by stock band, rendered as .xlsx and .pdf and emailed to the support team. Schedule, recipients, format and thresholds are all environment variables. See [docs/weekly-inventory-report.md](../docs/weekly-inventory-report.md).
 
 ## Tech Stack
 

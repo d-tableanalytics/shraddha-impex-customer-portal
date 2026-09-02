@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import {
   Upload, FileSpreadsheet, Download, Loader2, CheckCircle2, XCircle,
   AlertTriangle, Ban, PlayCircle, RotateCcw, ChevronRight, History,
@@ -16,6 +16,7 @@ import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import { hasPermission, canUseInventoryMaster, PERMISSIONS } from '../../utils/permissions';
 import { NewSkuMoqModal } from '../../components/inventory/NewSkuMoqModal';
+import { NewSkuDetailsModal, isNewSkuAnswered } from '../../components/inventory/NewSkuDetailsModal';
 
 /**
  * Inventory Import — IMS Module M9.
@@ -103,7 +104,7 @@ export const InventoryImport = () => {
     preview, errors, showInvalidOnly, error, duplicateWarning,
     setImportType, setFile, clearError, dismissDuplicate, reset,
     upload, loadPreview, toggleInvalidOnly, confirm, confirming, cancel, resume,
-    stopPolling, downloadTemplate,
+    saveNewSkuDetails, savingNewSkus, stopPolling, downloadTemplate,
     history, historyTotal, historyPages, historyLoading, historyFilters,
     setHistoryFilters, fetchHistory,
   } = useImportStore();
@@ -121,6 +122,25 @@ export const InventoryImport = () => {
   const jobPendingMoq = job?.pendingMoqSkus ?? [];
   const outstandingMoq = pendingMoq ?? jobPendingMoq;
 
+  /**
+   * SKUs this file will CREATE, and whether they have been described yet.
+   *
+   * Read straight off the job, which is the server's list — the same list the
+   * confirm endpoint checks. Deriving it here rather than mirroring it in local
+   * state is what stops the button and the server disagreeing about whether the
+   * import may run.
+   */
+  const newSkus = job?.newSkus ?? [];
+  const unansweredNewSkus = newSkus.filter((s) => !isNewSkuAnswered(s));
+  const [newSkuOpen, setNewSkuOpen] = useState(false);
+
+  // Opens itself as soon as a staged file turns out to contain new SKUs. This
+  // is the prompt the flow is built around: the import is blocked until it is
+  // answered, so it is shown rather than waited for.
+  useEffect(() => {
+    if (unansweredNewSkus.length > 0) setNewSkuOpen(true);
+  }, [unansweredNewSkus.length]);
+
   // Opens itself the moment a finished import reports new SKUs. Reopened by
   // hand afterwards from the summary card — closing is never destructive.
   useEffect(() => {
@@ -134,6 +154,29 @@ export const InventoryImport = () => {
   const [errorsOpen, setErrorsOpen] = useState(false);
 
   useEffect(() => { fetchTypes(); fetchHistory(); }, [fetchTypes, fetchHistory]);
+
+  /**
+   * Preselect the type when another screen sent the user here for a specific
+   * one, e.g. Admin > Product Details > Bulk import.
+   *
+   * Waits for the type list, and only accepts a type the user may actually run:
+   * a link is a request, not an authorisation, and the alternative is a wizard
+   * sitting on a type whose upload the server would refuse.
+   *
+   * Runs once. The user picking a different type afterwards must stick, and
+   * re-applying the parameter on every render would drag them back.
+   */
+  const [searchParams] = useSearchParams();
+  const requestedType = searchParams.get('type');
+  const appliedType = useRef(false);
+
+  useEffect(() => {
+    if (appliedType.current || !requestedType || types.length === 0) return;
+    appliedType.current = true;
+    if (types.some((t) => t.importType === requestedType && t.allowed)) {
+      setImportType(requestedType);
+    }
+  }, [requestedType, types, setImportType]);
   useEffect(() => { if (error) { toast.error(error); clearError(); } }, [error, clearError]);
   // A poll left running after the user navigates away would keep hitting the
   // server for a job nobody is watching.
@@ -347,6 +390,44 @@ export const InventoryImport = () => {
                 </div>
               )}
 
+              {/* New SKUs this file will create. Shown on the card as well as
+                  in the modal, so closing the prompt does not hide the reason
+                  the Import button is disabled. */}
+              {newSkus.length > 0 && (
+                <div className={`p-3 rounded-lg border flex flex-wrap items-center gap-2 ${
+                  unansweredNewSkus.length > 0
+                    ? 'bg-warning-50 border-warning-200'
+                    : 'bg-success-50 border-success-200'
+                }`}
+                >
+                  {unansweredNewSkus.length > 0
+                    ? <AlertTriangle size={15} className="text-warning-600 shrink-0" />
+                    : <CheckCircle2 size={15} className="text-success-600 shrink-0" />}
+                  <span className={`text-xs flex-1 min-w-48 ${
+                    unansweredNewSkus.length > 0 ? 'text-warning-800' : 'text-success-800'
+                  }`}
+                  >
+                    {unansweredNewSkus.length > 0 ? (
+                      <>
+                        <strong>{nf(unansweredNewSkus.length)} new SKU(s)</strong> in this file are not
+                        in the Inventory Master yet and need an MOQ, Lead Time, Safety Factor and Box
+                        Number before the import can run.
+                      </>
+                    ) : (
+                      <>
+                        All <strong>{nf(newSkus.length)} new SKU(s)</strong> are described and will be
+                        created with the details you gave.
+                      </>
+                    )}
+                  </span>
+                  <Button size="xs" variant={unansweredNewSkus.length > 0 ? 'primary' : 'secondary'}
+                    onClick={() => setNewSkuOpen(true)}
+                  >
+                    {unansweredNewSkus.length > 0 ? 'Add details' : 'Review details'}
+                  </Button>
+                </div>
+              )}
+
               {job.invalidRows > 0 && (
                 <div className="p-3 rounded-lg bg-warning-50 border border-warning-100 flex flex-wrap items-center gap-2">
                   <AlertTriangle size={15} className="text-warning-600 shrink-0" />
@@ -374,7 +455,16 @@ export const InventoryImport = () => {
                   <Button variant="secondary" onClick={() => setCancelOpen(true)}>
                     <Ban size={15} className="mr-2" />Cancel
                   </Button>
-                  <Button onClick={handleConfirm} disabled={confirming || job.validRows === 0}>
+                  {/* Held while any new SKU is undescribed. The server refuses
+                      the same request, so this only saves a round trip — it is
+                      not what enforces the rule. */}
+                  <Button
+                    onClick={handleConfirm}
+                    disabled={confirming || job.validRows === 0 || unansweredNewSkus.length > 0}
+                    title={unansweredNewSkus.length > 0
+                      ? `${unansweredNewSkus.length} new SKU(s) still need MOQ, Lead Time, Safety Factor and Box Number.`
+                      : undefined}
+                  >
                     {confirming ? <Loader2 size={15} className="mr-2 animate-spin" /> : <PlayCircle size={15} className="mr-2" />}
                     Import {nf(job.validRows)} row(s)
                   </Button>
@@ -713,6 +803,19 @@ export const InventoryImport = () => {
           </p>
         </div>
       </Modal>
+
+      {/* Only on the preview step: these are inputs to the import, and the
+          server stops accepting them the moment it starts. */}
+      {step === 3 && newSkus.length > 0 && (
+        <NewSkuDetailsModal
+          isOpen={newSkuOpen}
+          jobId={job?.jobId}
+          skus={newSkus}
+          saving={savingNewSkus}
+          onSave={saveNewSkuDetails}
+          onClose={() => setNewSkuOpen(false)}
+        />
+      )}
 
       {moqOpen && outstandingMoq.length > 0 && (
         <NewSkuMoqModal

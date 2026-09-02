@@ -13,6 +13,8 @@ import { seedAlertRules } from './config/seedAlertRules.js';
 import { subscribeAlerts } from './modules/inventory/alert.subscriber.js';
 import { onEvent, EVENTS } from './utils/eventBus.js';
 import { sweepUploads } from './middlewares/importUpload.js';
+import { runWeeklyInventoryReport } from './modules/inventory/inventoryReport.job.js';
+import { readInventoryReportConfig, describeInventoryReportConfig } from './config/inventoryReport.js';
 import cron from 'node-cron';
 
 dotenv.config();
@@ -123,6 +125,33 @@ const startServer = async () => {
     runPoSettlement();
     sweepUploads();
   });
+
+  /**
+   * Weekly inventory health report.
+   *
+   * Its own schedule rather than a passenger on the daily job: the whole point
+   * is that the day and time are configurable, and folding it into a fixed
+   * midnight sweep would make "send it on Monday at 08:00" impossible to
+   * express. Read once here so a bad cron expression or a missing support
+   * address is reported at boot, next to everything else that failed to start,
+   * rather than at 08:00 on a Monday inside a detached job.
+   *
+   * The job NEVER throws at this callback — see the note at the top of
+   * inventoryReport.job.js. An unhandled rejection here would take the portal
+   * down over a spreadsheet.
+   */
+  const reportConfig = readInventoryReportConfig();
+  describeInventoryReportConfig(reportConfig);
+  if (reportConfig.usable) {
+    cron.schedule(
+      reportConfig.schedule,
+      () => {
+        console.log('[Cron] Running the weekly inventory health report...');
+        runWeeklyInventoryReport({ trigger: 'schedule' });
+      },
+      { timezone: reportConfig.timezone },
+    );
+  }
   
   server.listen(PORT, () => {
     console.log(`[Server] ERP Backend running on port ${PORT}`);

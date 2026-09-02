@@ -6,7 +6,7 @@ import ImportJob from '../../models/ImportJob.js';
 import { IMPORT_TEMPLATES, IMPORT_TYPE_NAMES, headersFor } from './import.templates.js';
 import {
   createImportJob, previewJob, errorReport, confirmJob, resumeJob, cancelJob, getJob,
-  setImportMoq,
+  setImportMoq, setNewSkuDetails,
 } from './import.service.js';
 import { hasPermission } from '../../middlewares/rbac.js';
 import { allowedBrands } from '../../utils/brandAccess.js';
@@ -341,6 +341,29 @@ export default {
 export const setImportMoqHandler = async (req, res, next) => {
   try {
     const result = await setImportMoq({
+      jobId: asString(req.params.jobId),
+      entries: Array.isArray(req.body?.entries) ? req.body.entries : null,
+      actor: req.user,
+      req,
+    });
+    res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    handle(error, res, next);
+  }
+};
+
+/**
+ * POST /api/v1/inventory/imports/:jobId/new-skus
+ * Body: { entries: [{ skuCode, moq, leadTime, safetyFactor, boxNo }] }
+ *
+ * Answers the mandatory details for the NEW SKUs a staged import will create.
+ * Accepted only while the job is awaiting confirmation — these are inputs to
+ * the import, and confirming it is refused until every one of them is filled
+ * in. Partial answers are saved, so a closed browser loses nothing.
+ */
+export const setNewSkuDetailsHandler = async (req, res, next) => {
+  try {
+    const result = await setNewSkuDetails({
       jobId: asString(req.params.jobId),
       entries: Array.isArray(req.body?.entries) ? req.body.entries : null,
       actor: req.user,

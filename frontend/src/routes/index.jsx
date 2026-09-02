@@ -1,6 +1,8 @@
 import { createBrowserRouter } from "react-router-dom";
 import MainLayout from "../components/layout/MainLayout";
 import { ProtectedRoute } from "../components/layout/ProtectedRoute";
+import { OrderingRoute } from "../components/layout/OrderingRoute";
+import { HomeRoute } from "../components/layout/HomeRoute";
 import { lazy } from 'react';
 
 const Dashboard = lazy(() => import("../pages/Dashboard/Dashboard").then(m => ({ default: m.Dashboard })));
@@ -12,6 +14,10 @@ const SalesDesk = lazy(() => import("../pages/SalesDesk/SalesDesk").then(m => ({
 const Admin = lazy(() => import("../pages/Admin/Admin").then(m => ({ default: m.Admin })));
 const UserManagement = lazy(() => import("../pages/Admin/Settings/UserManagement").then(m => ({ default: m.UserManagement })));
 const PermissionMatrix = lazy(() => import("../pages/Admin/Settings/PermissionMatrix").then(m => ({ default: m.PermissionMatrix })));
+// Admin - Product Details. Descriptions, photographs and videos,
+// the content the inventory slide-over shows. The page re-checks the
+// permission itself, and every underlying API is guarded server-side.
+const ProductDetailsAdmin = lazy(() => import("../pages/Admin/Settings/ProductDetails").then(m => ({ default: m.ProductDetailsAdmin })));
 const AuthLayout = lazy(() => import("../pages/Auth/AuthLayout").then(m => ({ default: m.AuthLayout })));
 const Login = lazy(() => import("../pages/Auth/Login").then(m => ({ default: m.Login })));
 const Inventory = lazy(() => import("../pages/Inventory/Inventory").then(m => ({ default: m.Inventory })));
@@ -42,24 +48,41 @@ export const router = createBrowserRouter([
         element: <MainLayout />,
         children: [
           {
+            // The front door. Most roles get the main dashboard; the ones whose
+            // home is elsewhere are redirected here rather than in the login
+            // handler, so a bookmark and a restored tab land in the same place
+            // as a fresh sign-in.
             path: "",
-            element: <Dashboard />,
+            element: <HomeRoute><Dashboard /></HomeRoute>,
           },
           {
-            path: "orders/new",
-            element: <CustomerOrders />,
-          },
-          {
-            path: "orders/history",
-            element: <OrderHistory />,
-          },
-          {
-            path: "orders/bulk-upload",
-            element: <BulkUpload />,
-          },
-          {
-            path: "orders/indent-history",
-            element: <IndentHistory />,
+            // The ordering screens, behind one gate.
+            //
+            // Grouped under a layout route rather than repeating a check in
+            // each page: the rule is "does this user work orders at all", it is
+            // the same rule the sidebar uses to decide whether to offer them,
+            // and stating it once is what stops the menu and the router
+            // disagreeing. An internal stock role landing here by URL is sent
+            // to the dashboard.
+            element: <OrderingRoute />,
+            children: [
+              {
+                path: "orders/new",
+                element: <CustomerOrders />,
+              },
+              {
+                path: "orders/history",
+                element: <OrderHistory />,
+              },
+              {
+                path: "orders/bulk-upload",
+                element: <BulkUpload />,
+              },
+              {
+                path: "orders/indent-history",
+                element: <IndentHistory />,
+              },
+            ],
           },
           {
             // Sales desk. The page re-checks the permission itself, and every
@@ -78,6 +101,10 @@ export const router = createBrowserRouter([
           {
             path: "admin/permissions",
             element: <PermissionMatrix />,
+          },
+          {
+            path: "admin/product-details",
+            element: <ProductDetailsAdmin />,
           },
           {
             path: "inventory",

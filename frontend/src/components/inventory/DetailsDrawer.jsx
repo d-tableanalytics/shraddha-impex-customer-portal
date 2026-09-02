@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { productsApi } from '../../services/products';
+import { productDetailsApi } from '../../services/productDetails';
+import { ProductContentSection } from './ProductContentSection';
 import { useUserStore } from '../../store/userStore';
 import { isMsilCustomer } from '../../utils/moq';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
@@ -32,6 +34,16 @@ export const DetailsDrawer = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [item, setItem] = useState(product);
+  /**
+   * The SKU's descriptive content — photographs, description, videos.
+   *
+   * Fetched separately from the product itself, and deliberately allowed to
+   * fail on its own: it is a different collection behind a different endpoint,
+   * and a content service having a bad day must not stop the panel showing the
+   * stock figures, which is what most people opened it for.
+   */
+  const [content, setContent] = useState(null);
+  const [contentLoading, setContentLoading] = useState(false);
   const user = useUserStore((s) => s.user);
   const userShowMsil = useShowMsilCode();
   const isMsilUser = isMsilCustomer(user);
@@ -53,6 +65,29 @@ export const DetailsDrawer = ({
         });
     }
   }, [isOpen, product]);
+
+  // Content follows the SKU CODE, not the product object: the same SKU reopened
+  // from a re-rendered row must not refetch, and a different SKU must not show
+  // the previous one's photographs for a frame.
+  useEffect(() => {
+    const code = product?.code;
+    if (!isOpen || !code) return undefined;
+
+    let cancelled = false;
+    setContent(null);
+    setContentLoading(true);
+
+    productDetailsApi
+      .get(code)
+      .then((fetched) => { if (!cancelled) setContent(fetched); })
+      // Silent by design. A SKU with no content and a content endpoint that is
+      // down look the same from here, and both mean "show the placeholders" —
+      // a toast would be an error message about something nobody asked for.
+      .catch(() => { if (!cancelled) setContent(null); })
+      .finally(() => { if (!cancelled) setContentLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [isOpen, product?.code]);
 
   if (!product) return null;
 
@@ -222,6 +257,16 @@ export const DetailsDrawer = ({
             </div>
           </div>
         </div>
+
+        {/* Photographs, the long description and the videos.
+            Placed above the master fields because it is what a customer opened
+            the panel to see; the stock and planning figures below are what
+            staff came for, and they were already on the row. */}
+        <ProductContentSection
+          skuCode={currentItem.code}
+          detail={content}
+          loading={contentLoading}
+        />
 
         {/* Specifications & Master Details */}
         <div className="bg-slate-50/80 rounded-xl p-4 border border-slate-200 space-y-3">

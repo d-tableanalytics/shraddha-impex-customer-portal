@@ -2,15 +2,20 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Card, CardContent } from '../ui/Card';
-import { Package, Clock, AlertTriangle, Users, PackageX, Loader2 } from 'lucide-react';
+import { Package, Clock, AlertTriangle, Users, PackageX, Layers, Loader2 } from 'lucide-react';
 import { api } from '../../services/api';
 import { useUserStore } from '../../store/userStore';
+import { canUseOrdering } from '../../utils/permissions';
 
 export const KPIStats = () => {
   const navigate = useNavigate();
   const { user } = useUserStore();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Booking and indent tiles link into the ordering screens, which a role with
+  // no ordering permission cannot open. Showing them would offer a tile that
+  // bounces straight back here.
+  const worksOrders = canUseOrdering(user);
 
   useEffect(() => {
     api.get('/dashboard/stats')
@@ -43,13 +48,13 @@ export const KPIStats = () => {
       icon: Package, color: 'primary',
       path: '/inventory',
     },
-    {
+    ...(worksOrders ? [{
       id: 2, title: 'In Process',
       value: stats?.bookedOrders?.toLocaleString() ?? '—',
       sub: `${stats?.totalOrders ?? 0} total bookings`,
       icon: Clock, color: 'warning',
       path: '/orders/history',
-    },
+    }] : []),
     ...(user?.role === 'Admin' ? [{
       id: 5, title: 'Low Stock SKUs',
       value: stats?.lowStockAlerts?.toLocaleString() ?? '—',
@@ -57,13 +62,34 @@ export const KPIStats = () => {
       icon: AlertTriangle, color: 'error',
       path: '/inventory',
     }] : []),
-    {
-      id: 7, title: 'Indent History',
-      value: stats?.pendingBackorders?.toLocaleString() ?? '—',
-      sub: `${stats?.pendingBackorderQty ?? 0} units awaiting stock`,
-      icon: PackageX, color: 'amber',
-      path: '/orders/indent-history',
-    },
+    /**
+     * Indents get two tiles, not one line of small print.
+     *
+     * "How much is waiting" and "how many indents are waiting" are different
+     * questions and are acted on by different people — one drives what to
+     * order, the other how many customers are waiting on something. Folding the
+     * quantity into the subtitle of a count tile made the number nobody could
+     * read at a glance the one everybody wanted.
+     *
+     * The COUNT is grouped indents, matching what Indent History shows. It used
+     * to be the raw line count, which made a five-SKU indent read as five.
+     */
+    ...(worksOrders ? [
+      {
+        id: 7, title: 'Total Indent Count',
+        value: stats?.totalIndentCount?.toLocaleString() ?? '—',
+        sub: `${(stats?.totalIndentLines ?? 0).toLocaleString()} line(s) awaiting stock`,
+        icon: PackageX, color: 'amber',
+        path: '/orders/indent-history',
+      },
+      {
+        id: 8, title: 'Total Indent Quantity',
+        value: stats?.totalIndentQty?.toLocaleString() ?? '—',
+        sub: 'Units awaiting fresh stock',
+        icon: Layers, color: 'indigo',
+        path: '/orders/indent-history',
+      },
+    ] : []),
     ...(user?.role === 'Admin' ? [{
       id: 6, title: 'Active Users',
       value: stats?.activeUsers?.toLocaleString() ?? '—',
@@ -84,6 +110,9 @@ export const KPIStats = () => {
   };
 
   const colClassByCount = {
+    // 1 and 2 exist for the roles that see only the stock tiles; without them a
+    // single tile stretched the full width of the page.
+    1: 'xl:grid-cols-1', 2: 'xl:grid-cols-2',
     3: 'xl:grid-cols-3', 4: 'xl:grid-cols-4', 5: 'xl:grid-cols-5', 6: 'xl:grid-cols-6', 7: 'xl:grid-cols-7'
   };
   const gridCols = colClassByCount[tiles.length] || 'xl:grid-cols-6';

@@ -75,11 +75,27 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.APPROVE_COUNT,
     PERMISSIONS.VIEW_REPORTS,
   ],
+  /**
+   * Import Team - maintains the catalogue and touches nothing else.
+   *
+   * Holds no ordering or booking permission at all, which is what makes the
+   * sales and booking menus disappear for this role rather than merely being
+   * refused after a click. Mirrors backend/middlewares/rbac.js, where the
+   * reasoning for each inclusion and omission is written out.
+   */
+  "Import Team": [
+    PERMISSIONS.VIEW_INVENTORY,
+    PERMISSIONS.MANAGE_INVENTORY_MASTER,
+    PERMISSIONS.EXPORT_INVENTORY,
+    PERMISSIONS.VIEW_STOCK_LEDGER,
+    PERMISSIONS.POST_STOCK_IN,
+  ],
+
   Customer: [PERMISSIONS.CREATE_ORDER],
 };
 
 /** Roles that work the business's own stock rather than their own orders. */
-export const INVENTORY_ROLES = ["Inventory Manager", "Warehouse User", "Management"];
+export const INVENTORY_ROLES = ["Inventory Manager", "Warehouse User", "Management", "Import Team"];
 
 export const permissionsFor = (user) => ROLE_PERMISSIONS[user?.role] || [];
 
@@ -92,6 +108,52 @@ export const isAdmin = (user) => user?.role === "Admin";
 export const isSales = (user) => user?.role === "Sales";
 /** Anyone who works the sales desk — Sales, plus Admin via the wildcard. */
 export const canUseSalesDesk = (user) => hasPermission(user, PERMISSIONS.VIEW_ALL_BOOKINGS);
+
+/**
+ * Whether this user works ORDERS at all — bookings, the selection list, bulk
+ * upload, booking and indent history.
+ *
+ * True for customers (who order for themselves), for Sales and Admin (who order
+ * on a customer's behalf), and false for every internal stock role, which holds
+ * no ordering permission and never has.
+ *
+ * The sidebar has always used this idea to decide which menu items to build;
+ * naming it means the ROUTES can use the same answer, so an ordering screen a
+ * user cannot see is also an ordering screen they cannot reach by typing its
+ * URL. That is the difference between hidden and blocked, and the requirement
+ * asks for both.
+ *
+ * Not the enforcement point: every booking write path re-checks server-side.
+ */
+export const canUseOrdering = (user) =>
+  hasPermission(user, PERMISSIONS.CREATE_ORDER)
+  || hasPermission(user, PERMISSIONS.VIEW_ALL_BOOKINGS);
+
+/**
+ * Where a role's portal starts.
+ *
+ * The main dashboard is a BOOKING dashboard — bookings in process, the
+ * conversion funnel, demand against fulfilment, recent bookings. Import Team
+ * holds no ordering permission, so those panels are hidden for them and what
+ * remains is a single stock tile. Landing them there means every session opens
+ * on an empty page and one more click.
+ *
+ * So their home is the INVENTORY dashboard, which is the screen their work
+ * actually starts from. Stated once, as a path, because three places need the
+ * same answer — the router, the sidebar's first menu item, and where a guard
+ * sends someone it turns away — and three copies would drift.
+ *
+ * Deliberately keyed by ROLE rather than derived from permissions. "Which
+ * screen should this person open on" is a judgement about their job, not a
+ * consequence of what they may click; the other internal roles keep the main
+ * dashboard because that is what they are used to, and moving them is a
+ * decision for whoever owns those roles, not a side effect of this map.
+ */
+export const HOME_PATH_BY_ROLE = {
+  "Import Team": "/inventory/dashboard",
+};
+
+export const homePathFor = (user) => HOME_PATH_BY_ROLE[user?.role] || "/";
 
 /**
  * Whether THIS booking may be edited by THIS user right now.
@@ -158,7 +220,7 @@ export const canManageAccount = (user, account) =>
 /** Roles this actor may assign when creating an account. */
 export const assignableRolesFor = (user) =>
   (canManageAllUsers(user)
-    ? ["Admin", "Sales", "Inventory Manager", "Warehouse User", "Management", "Customer"]
+    ? ["Admin", "Sales", "Inventory Manager", "Warehouse User", "Management", "Import Team", "Customer"]
     : ["Customer"]);
 
 

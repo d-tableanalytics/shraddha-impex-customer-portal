@@ -35,7 +35,7 @@ import {
   listImportTypes, downloadTemplate, upload as uploadImport, preview as previewImport,
   errors as importErrors, confirm as confirmImport, status as importStatus,
   resume as resumeImport, cancel as cancelImport, history as importHistory,
-  setImportMoqHandler,
+  setImportMoqHandler, setNewSkuDetailsHandler,
 } from './import.controller.js';
 import {
   listExportTypes, listRuns as listExportRuns, download as downloadExport,
@@ -254,6 +254,11 @@ router.post('/imports', authorize(...MAY_IMPORT), uploadImportFile, handleUpload
 router.get('/imports/:jobId', authorize(PERMISSIONS.VIEW_INVENTORY), importStatus);
 router.get('/imports/:jobId/preview', authorize(PERMISSIONS.VIEW_INVENTORY), previewImport);
 router.get('/imports/:jobId/errors', authorize(PERMISSIONS.VIEW_INVENTORY), importErrors);
+// Answer the mandatory details — MOQ, lead time, safety factor, box number —
+// for the NEW SKUs a staged import will create. Same permission as the import
+// itself: whoever may create a SKU through a sheet is who must describe it, and
+// the import cannot be confirmed until they have.
+router.post('/imports/:jobId/new-skus', authorize(...MAY_IMPORT), setNewSkuDetailsHandler);
 router.post('/imports/:jobId/confirm', authorize(...MAY_IMPORT), confirmImport);
 // Answer the MOQ prompt for SKUs this import created. Same permission as the
 // import itself — whoever may create a SKU may set the minimum it needs.

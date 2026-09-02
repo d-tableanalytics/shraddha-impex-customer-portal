@@ -23,9 +23,11 @@ const userSchema = new mongoose.Schema({
   //   Management        — oversight: reads everything, approves, creates nothing
   //
   // Permissions live in middlewares/rbac.js — never inline in a controller.
+  //   Import Team      — loads and corrects catalogue data in bulk; holds no
+  //                      ordering or booking permission at all
   role: {
     type: String,
-    enum: ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Customer'],
+    enum: ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Import Team', 'Customer'],
     default: 'Customer',
   },
   // Customer categorisation — drives which bulk-import template applies.

@@ -72,22 +72,54 @@ const emptyForm = {
   },
 };
 
-// A single "access level" maps onto the underlying role + customerCategory fields.
-// 'Sales User' is a role in its own right, not a customer category — it must be
-// listed here, or editing a Sales user would silently demote them to Customer.
-const ACCESS_LEVELS = ['Customer', 'MSIL', 'Sales User', 'Admin'];
+/**
+ * An "access level" is just a ROLE, with one exception: the Customer role is
+ * split by its customer CATEGORY, because 'Customer' and 'MSIL' are one role
+ * and two categories, and the person choosing in this dropdown thinks of them
+ * as two options.
+ *
+ * EVERY LEVEL ROUND-TRIPS. This list used to be four hard-coded entries —
+ * Customer, MSIL, Sales User, Admin — while the system had seven roles. The
+ * consequence was not a missing option but silent data loss: accessLevelOf()
+ * fell through to 'Customer' for every role it did not know, so opening an
+ * Inventory Manager, Warehouse User, Management or Import Team account in the
+ * edit modal showed "Customer", and saving ANY unrelated change — a phone
+ * number, a status, a brand tick — wrote that back and demoted the account.
+ * The comment above the old list warned about exactly this for Sales, and then
+ * the same trap was left open for every role added afterwards.
+ *
+ * So the list is DERIVED from the roles the actor may assign rather than
+ * written out. A role added to permissions.js appears here automatically, and
+ * cannot fall behind again.
+ */
+const SALES_LEVEL = 'Sales User';
 
+/** The level an existing account currently sits at. Never guesses. */
 const accessLevelOf = (u) => {
-  if (u.role === 'Admin') return 'Admin';
-  if (u.role === 'Sales') return 'Sales User';
-  return u.customerCategory === 'MSIL' ? 'MSIL' : 'Customer';
+  const role = u?.role || 'Customer';
+  if (role === 'Customer') return u?.customerCategory === 'MSIL' ? 'MSIL' : 'Customer';
+  if (role === 'Sales') return SALES_LEVEL;
+  return role;
 };
 
+/** What a chosen level means in the fields the server stores. */
 const accessLevelToFields = (level) => {
-  if (level === 'Admin') return { role: 'Admin' };
-  if (level === 'Sales User') return { role: 'Sales' };
-  return { role: 'Customer', customerCategory: level };
+  if (level === 'MSIL') return { role: 'Customer', customerCategory: 'MSIL' };
+  if (level === 'Customer') return { role: 'Customer', customerCategory: 'Customer' };
+  if (level === SALES_LEVEL) return { role: 'Sales' };
+  // Every other level IS the role. The category is deliberately left alone:
+  // it does not apply to a staff account, and clearing it would lose the
+  // category of an account moved to staff and back.
+  return { role: level };
 };
+
+/** Every level this actor may set, in the order the roles are listed. */
+const accessLevelsFor = (actor) =>
+  assignableRolesFor(actor).flatMap((role) => {
+    if (role === 'Customer') return ['Customer', 'MSIL'];
+    if (role === 'Sales') return [SALES_LEVEL];
+    return [role];
+  });
 
 export const UserManagement = () => {
   const { users, fetchUsers, loading, createUser, updateUser, resetUserPassword } = useAdminStore();
@@ -109,6 +141,24 @@ export const UserManagement = () => {
   const mayOpen = canOpenUserManagement(user);
   const isAdmin = canManageAllUsers(user);
   const assignableRoles = assignableRolesFor(user);
+
+  /**
+   * The levels the edit modal offers.
+   *
+   * A non-Admin cannot change the level at all, so they are shown the one the
+   * account already holds rather than a list they cannot use.
+   *
+   * The account's CURRENT level is always included, even for an Admin. Without
+   * it a role this build does not offer — a legacy value, or one removed from
+   * the list — would render as a blank select and be written away by the next
+   * save, which is the same silent demotion this mapping was fixed to stop.
+   */
+  const editLevels = editForm
+    ? [...new Set([
+      ...(isAdmin ? accessLevelsFor(user) : []),
+      editForm.accessLevel,
+    ])].filter(Boolean)
+    : [];
 
   const q = search.trim().toLowerCase();
   const filteredUsers = q
@@ -509,11 +559,19 @@ export const UserManagement = () => {
               </select>
             </Field>
             <Field label="Customer Category">
+              {/* A category belongs to a CUSTOMER. It was disabled for Admin
+                  and Sales by name, which left it editable for every staff role
+                  added since — offering an MSIL category on an Inventory
+                  Manager, where it means nothing and nothing reads it. Asked of
+                  the role now, so a new role needs no edit here. */}
               <select
                 value={form.customerCategory}
                 onChange={setField('customerCategory')}
                 className={inputCls}
-                disabled={form.role === 'Admin' || form.role === 'Sales'}
+                disabled={form.role !== 'Customer'}
+                title={form.role !== 'Customer'
+                  ? `A customer category does not apply to a ${form.role} account.`
+                  : undefined}
               >
                 <option value="Customer">Customer</option>
                 <option value="MSIL">MSIL</option>
@@ -587,10 +645,11 @@ export const UserManagement = () => {
             </Field>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Role">
-                {/* Changing an access level is Admin's alone: the server
-                    refuses a role change from anyone else, in either
-                    direction, so a salesperson sees the level but cannot
-                    move it. */}
+                {/* EVERY role can be changed here, in either direction — an
+                    account is not stuck with the role it was created under.
+                    Which roles are offered is Admin's alone: the server refuses
+                    a role change from anyone else, so a salesperson sees the
+                    level their customer holds but cannot move it. */}
                 <select
                   value={editForm.accessLevel}
                   onChange={setEditField('accessLevel')}
@@ -598,7 +657,7 @@ export const UserManagement = () => {
                   disabled={!isAdmin}
                   title={isAdmin ? undefined : 'Only an administrator can change an account role.'}
                 >
-                  {(isAdmin ? ACCESS_LEVELS : [editForm.accessLevel]).map((lvl) => (
+                  {editLevels.map((lvl) => (
                     <option key={lvl} value={lvl}>{lvl}</option>
                   ))}
                 </select>

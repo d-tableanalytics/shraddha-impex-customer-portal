@@ -45,7 +45,7 @@ const fe = await import(
   pathToFileURL(path.join(REPO, 'frontend', 'src', 'utils', 'permissions.js')).href
 );
 
-const ROLES = ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Customer'];
+const ROLES = ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Import Team', 'Customer'];
 const asUser = (role) => ({ role, _id: `id-${role}` });
 
 // Mirrors denyIfOutOfScope() in the user controller.
@@ -62,7 +62,7 @@ check('Sales holds MANAGE_CUSTOMER_USERS',
 check('Sales does NOT hold MANAGE_USERS (no staff accounts)',
   !hasPermission(asUser('Sales'), PERMISSIONS.MANAGE_USERS));
 check('Admin still manages everything', canManageAll(asUser('Admin')));
-for (const role of ['Inventory Manager', 'Warehouse User', 'Management', 'Customer']) {
+for (const role of ['Inventory Manager', 'Warehouse User', 'Management', 'Import Team', 'Customer']) {
   check(`${role} cannot reach user management`,
     !hasPermission(asUser(role), PERMISSIONS.MANAGE_USERS)
     && !hasPermission(asUser(role), PERMISSIONS.MANAGE_CUSTOMER_USERS));

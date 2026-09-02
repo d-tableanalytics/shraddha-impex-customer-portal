@@ -252,14 +252,36 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
     if (req.user && req.user.role !== 'Admin') {
       pendingReservationFilter.customerId = req.user._id;
     }
-    const [pendingBackorders, pendingBackorderAgg] = await Promise.all([
+    const [pendingBackorders, pendingBackorderAgg, indentAgg] = await Promise.all([
       Reservation.countDocuments(pendingReservationFilter),
       Reservation.aggregate([
         { $match: pendingReservationFilter },
         { $group: { _id: null, qty: { $sum: '$quantity' } } }
+      ]),
+      /**
+       * Indents, counted the way the Indent History screen counts them.
+       *
+       * An indent is a GROUP of pending lines sharing one indentNumber — the
+       * remainder of a single booking confirmation — not one line. Counting
+       * documents instead, which is what `pendingBackorders` above does, gives
+       * a bigger number for the same thing: a five-SKU indent counts as five.
+       * The two screens then disagree about how many indents exist, and the
+       * dashboard is the one that looks wrong, because Indent History is where
+       * you go to count them by hand.
+       *
+       * `$ifNull: ['$indentNumber', '$_id']` puts each ungrouped legacy row in
+       * a bucket of its own, exactly as groupIndents() does in the browser.
+       */
+      Reservation.aggregate([
+        { $match: pendingReservationFilter },
+        { $group: { _id: { $ifNull: ['$indentNumber', '$_id'] }, qty: { $sum: '$quantity' } } },
+        { $group: { _id: null, count: { $sum: 1 }, qty: { $sum: '$qty' } } }
       ])
     ]);
     const pendingBackorderQty = pendingBackorderAgg[0]?.qty || 0;
+    // Total Indent Count / Total Indent Quantity, for the dashboard tiles.
+    const totalIndentCount = indentAgg[0]?.count || 0;
+    const totalIndentQty = indentAgg[0]?.qty || 0;
 
     // ── Booking-to-Order conversion analytics ──────────────────────────────
     // The funnel mirrors the customer flow:
@@ -415,6 +437,14 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
         activeUsers,
         pendingBackorders,
         pendingBackorderQty,
+        // Indents as the Indent History screen counts them — grouped, not per
+        // line. `pendingBackorders` above stays as it was for anything still
+        // reading it, but the dashboard tiles use these.
+        totalIndentCount,
+        totalIndentQty,
+        // The lines behind those indents, so a tile can say "12 indents across
+        // 30 lines" without a second request.
+        totalIndentLines: pendingBackorders,
         // Booking-to-Order conversion metrics
         totalBooked,
         totalConfirmed,

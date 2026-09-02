@@ -117,6 +117,42 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.APPROVE_COUNT,
     PERMISSIONS.VIEW_REPORTS,
   ],
+  /**
+   * Import Team — maintains the catalogue, and touches nothing else.
+   *
+   * The narrowest of the internal roles by design. It exists for the people who
+   * load and correct product data in bulk: the inventory master, the product
+   * content, the import wizard behind both, and the reads that make them
+   * usable. It holds NO ordering or booking permission at all, which is what
+   * makes "hide sales and booking from this user" a fact about the role rather
+   * than a decision the UI has to remember to take.
+   *
+   * What it deliberately does NOT have:
+   *
+   *  • CREATE_ORDER / VIEW_ALL_BOOKINGS / EDIT_BOOKING_PRE_PO / RAISE_PO —
+   *    every booking write path is refused, and the sales desk is invisible.
+   *  • MANAGE_BOX_NUMBER — Admin-only for everyone (see the note above); a box
+   *    number is a physical picking location quoted on every PO, and the import
+   *    is not the way around that. An import that CREATES a SKU may still set
+   *    its first box, which is a rule about new SKUs, not about this role.
+   *  • ADJUST_STOCK / PERFORM_COUNT / APPROVE_* — correcting a counted balance
+   *    is warehouse and management work. This role loads data; it does not
+   *    decide that the shelf disagrees with the system.
+   *  • CONFIGURE_INVENTORY — thresholds and reason codes reclassify the whole
+   *    catalogue, and stay with the role that owns global settings.
+   *
+   * POST_STOCK_IN is included because the Inventory Master sheet carries a
+   * Quantity column: importing one posts a receipt through the ledger, and a
+   * role that may run that import must hold the permission the movement needs.
+   */
+  'Import Team': [
+    PERMISSIONS.VIEW_INVENTORY,
+    PERMISSIONS.MANAGE_INVENTORY_MASTER,
+    PERMISSIONS.EXPORT_INVENTORY,
+    PERMISSIONS.VIEW_STOCK_LEDGER,
+    PERMISSIONS.POST_STOCK_IN,
+  ],
+
   Customer: [PERMISSIONS.CREATE_ORDER],
 };
 
@@ -126,7 +162,7 @@ const ROLE_PERMISSIONS = {
  * exist to scope CUSTOMERS. Sales is deliberately excluded: its brand
  * visibility is already decided separately by the sales-desk rules.
  */
-export const INVENTORY_ROLES = ['Inventory Manager', 'Warehouse User', 'Management'];
+export const INVENTORY_ROLES = ['Inventory Manager', 'Warehouse User', 'Management', 'Import Team'];
 
 /** Permission list for a user. Unknown/absent role → no permissions. */
 export const permissionsFor = (user) => ROLE_PERMISSIONS[user?.role] || [];

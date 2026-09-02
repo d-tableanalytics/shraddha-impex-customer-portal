@@ -511,6 +511,28 @@ export const inventoryApi = {
     return { applied: r.data.applied || [], errors: r.data.errors || [], pendingMoqSkus: r.data.pendingMoqSkus || [] };
   },
 
+  /**
+   * Answer the mandatory details for the NEW SKUs a staged import will create.
+   *
+   * Sent BEFORE the import is confirmed — the server refuses to confirm while
+   * any of MOQ, Lead Time, Safety Factor or Box Number is unanswered. Partial
+   * answers are saved, so closing the prompt mid-way loses nothing. Returns
+   * { applied, errors, newSkus, ready } — `newSkus` is the whole list with the
+   * answers on it, and `ready` is whether the import may now be confirmed.
+   */
+  setImportNewSkuDetails: async (jobId, entries) => {
+    const r = await api.post(
+      `/inventory/imports/${encodeURIComponent(jobId)}/new-skus`,
+      { entries },
+    );
+    return {
+      applied: r.data.applied || [],
+      errors: r.data.errors || [],
+      newSkus: r.data.newSkus || [],
+      ready: Boolean(r.data.ready),
+    };
+  },
+
   listImports: async ({ importType = "", status = "", page = 1, limit = 25 } = {}) => {
     const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
     if (importType) qs.set("importType", importType);

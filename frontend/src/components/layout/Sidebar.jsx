@@ -18,6 +18,7 @@ import {
   Activity,
   GaugeCircle,
   Upload,
+  Images,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useUIStore } from "../../store/uiStore";
@@ -26,9 +27,10 @@ import { useUserStore } from "../../store/userStore";
 import {
   canUseSalesDesk,
   canUseInventoryMaster,
+  canUseOrdering,
+  homePathFor,
   hasPermission,
   PERMISSIONS,
-  INVENTORY_ROLES,
   canOpenUserManagement,
 } from "../../utils/permissions";
 
@@ -51,13 +53,33 @@ export const Sidebar = () => {
       .filter(Boolean)
       .join(" · ") || "System Account";
 
-  // The three inventory roles work stock, not orders — they hold no
-  // create_order permission, so offering them the ordering flow would only lead
-  // to screens they cannot use. Admin and Sales are unaffected.
-  const worksOrders = !INVENTORY_ROLES.includes(user?.role);
+  // The internal stock roles work stock, not orders — they hold no ordering
+  // permission, so offering them the ordering flow would only lead to screens
+  // they cannot use. Admin, Sales and customers are unaffected.
+  //
+  // Asked as a PERMISSION question rather than "is this role in a list": the
+  // router guards the same screens with the same helper, so the menu and the
+  // URL bar cannot end up disagreeing about who works orders — which they would
+  // the first time a role was added to one list and not the other.
+  const worksOrders = canUseOrdering(user);
+
+  /**
+   * The first menu item is HOME, wherever home is for this role.
+   *
+   * For Import Team that is the inventory dashboard, so the item points there
+   * and the separate "Inventory Dashboard" entry below is suppressed — two rows
+   * leading to the same screen, one of them highlighted and one not, reads as a
+   * bug. Everyone else is unaffected: home is "/" and both items stay.
+   */
+  const homePath = homePathFor(user);
+  const homeIsInventoryDashboard = homePath === "/inventory/dashboard";
 
   const menuItems = [
-    { name: "Dashboard", path: "/", icon: LayoutDashboard },
+    {
+      name: homeIsInventoryDashboard ? "Inventory Dashboard" : "Dashboard",
+      path: homePath,
+      icon: homeIsInventoryDashboard ? GaugeCircle : LayoutDashboard,
+    },
     ...(worksOrders ? [
       {
         name: "Create Booking",
@@ -68,11 +90,18 @@ export const Sidebar = () => {
       { name: "Bulk Upload", path: "/orders/bulk-upload", icon: UploadCloud },
       { name: "Booking History", path: "/orders/history", icon: History },
       { name: "Indent History", path: "/orders/indent-history", icon: PackageX },
-      { name: "Inventory", path: "/inventory", icon: Boxes },
     ] : []),
-    // IMS master — internal stock roles and Admin.
+    // The catalogue, for EVERYONE. It sat inside the ordering block above, so
+    // the internal stock roles — who spend their day in it — were the only
+    // people the menu never offered it to. It is not an ordering screen: it is
+    // the product list, and it is where the product detail panel lives.
+    { name: "Inventory", path: "/inventory", icon: Boxes },
+    // IMS master — internal stock roles and Admin. The inventory dashboard is
+    // omitted when it is already this role's home item above.
     ...(canUseInventoryMaster(user) ? [
-      { name: "Inventory Dashboard", path: "/inventory/dashboard", icon: GaugeCircle },
+      ...(homeIsInventoryDashboard
+        ? []
+        : [{ name: "Inventory Dashboard", path: "/inventory/dashboard", icon: GaugeCircle }]),
       { name: "Inventory Master", path: "/inventory/master", icon: Warehouse },
     ] : []),
     // Stock health — anyone who may see inventory.
@@ -87,6 +116,13 @@ export const Sidebar = () => {
     // upload controls inside are gated per import type.
     ...(canUseInventoryMaster(user) ? [
       { name: "Inventory Import", path: "/inventory/import", icon: Upload },
+    ] : []),
+    // Product content - descriptions, photographs and videos. Sits
+    // with the inventory group because that is where it is consumed, and is
+    // gated on MANAGE_INVENTORY_MASTER because that is the permission the
+    // endpoints behind it require.
+    ...(hasPermission(user, PERMISSIONS.MANAGE_INVENTORY_MASTER) ? [
+      { name: "Product Details", path: "/admin/product-details", icon: Images },
     ] : []),
     // Sales desk: Sales users and Admins (via the '*' wildcard).
     ...(canUseSalesDesk(user) ? [

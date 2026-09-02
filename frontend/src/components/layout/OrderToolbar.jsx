@@ -81,7 +81,11 @@ export const OrderToolbar = () => {
           />
           <input
             type="text"
-            placeholder={isAdmin ? "Search Booking No, PO No, Customer..." : "Search Booking No, PO No..."}
+            // SKU is named because it is now searchable and nothing else on the
+            // screen would tell you so — a booking's SKUs are a click inside
+            // the row, and a search box that does not mention them reads as one
+            // that does not look at them.
+            placeholder={isAdmin ? "Search Booking No, PO No, SKU, Customer..." : "Search Booking No, PO No, SKU..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"

@@ -1,6 +1,7 @@
 import { VALID_SEASONS, VALID_STATUSES } from '../../utils/productFields.js';
 import { PERMISSIONS } from '../../middlewares/rbac.js';
 import { suppliesBoxNo, boxRowKey } from './boxNumber.rules.js';
+import { parseYouTubeUrl } from './productDetail.rules.js';
 
 /**
  * Import template registry (IMS Module M9).
@@ -101,6 +102,21 @@ const SKU = { header: 'SKU Code', field: 'skuCode', type: 'string', required: tr
 const BRAND = { header: 'Brand', field: 'brand', type: 'string', required: true, note: 'Koken, BIX or IMADA.' };
 const NOTE = { header: 'Note', field: 'note', type: 'string', required: false };
 
+/**
+ * The three video columns, generated rather than written out.
+ *
+ * Three because that is what the sheet offers; the number lives here, once, so
+ * the template's columns, its validator and its sample row cannot disagree
+ * about how many there are.
+ */
+const VIDEO_COLUMNS = [1, 2, 3].map((n) => ({
+  header: `Video ${n}`,
+  field: `video${n}`,
+  type: 'string',
+  required: false,
+  note: 'A YouTube link. Blank leaves the existing links alone.',
+}));
+
 const BOX_NO = {
   header: 'Box No', field: 'boxNo', type: 'string', required: false,
   note: 'The box this SKU is picked from. Blank LEAVES THE EXISTING BOX ALONE — '
@@ -129,6 +145,26 @@ const validateBoxNo = (row, context) => {
   // Nothing supplied → nothing to permission-check, whoever is uploading.
   if (!suppliesBoxNo(row)) return [];
   if (context?.canSetBoxNo) return [];
+
+  /**
+   * A row that CREATES the SKU may state its first box, whoever uploads it.
+   *
+   * The permission exists to stop a SKU being MOVED between boxes by anyone but
+   * an administrator — the box number is quoted on every PO and read off by the
+   * warehouse, so it must not drift as an ordinary master-data edit. A SKU that
+   * does not exist yet has no mapping to disturb and nothing to drift from: the
+   * box is part of describing the new part, alongside its MOQ, lead time and
+   * safety factor, all four of which this sheet now REQUIRES before it may
+   * create anything (see newSku.rules.js).
+   *
+   * Without this exemption the two halves of the same flow contradict each
+   * other — the sheet would reject the Inventory Manager's Box No cell and the
+   * new-SKU prompt would then demand the same value from them — and the role
+   * that actually runs master imports could never complete one that creates a
+   * SKU. `isNewSku` is only ever set by templates that can create SKUs, so
+   * nothing else that carries this column is affected.
+   */
+  if (row.isNewSku) return [];
 
   const current = context?.skuToBoxNo?.get(boxRowKey(row.skuCode, row.brand)) ?? null;
   if (current === row.boxNo) return [];
@@ -173,6 +209,16 @@ export const IMPORT_TEMPLATES = {
     // when a new SKU turns up without one.
     resolveBrandFromSku: true,
     brandFromJobForNewSku: true,
+    /**
+     * A SKU this sheet CREATES must state its MOQ, lead time, safety factor and
+     * box number before the import may be confirmed.
+     *
+     * Set on this template alone, because it is the only one that creates SKUs:
+     * every other sheet requires the SKU to exist already, so there is nothing
+     * to ask about. See newSku.rules.js for the fields and what counts as
+     * answered — this flag only says the question is asked.
+     */
+    requiresNewSkuDetails: true,
     // MSIL is never used to FIND the product, only to confirm the row is the
     // SKU the uploader meant. It catches the failure this sheet is most prone
     // to: a column pasted one row out, where every code still exists and every
@@ -287,6 +333,83 @@ export const IMPORT_TEMPLATES = {
       'SKU Code': '14405M-10', Brand: '', 'Daily Avg Consumption (Low)': 0,
       'Daily Avg Consumption (Normal)': 4.5, 'Daily Avg Consumption (Peak)': 0,
       'Lead Time': 45, 'Safety Factor': 1.2,
+    },
+  },
+
+  'product-details': {
+    label: 'Product Details',
+    description:
+      'Product descriptions and video links, by SKU. TEXT ONLY — photographs are '
+      + 'uploaded as files from Admin → Product Details, because a spreadsheet cannot carry them. '
+      + 'A blank Description LEAVES THE EXISTING ONE ALONE, and blank video columns leave the '
+      + 'existing links alone. The SKU must already be in the catalogue.',
+    permissions: [PERMISSIONS.MANAGE_INVENTORY_MASTER],
+    keyFields: ['skuCode'],
+    // Content is only ever attached to a product that exists. A description
+    // filed against a mistyped code would sit in the collection forever,
+    // invisible, because no inventory row would ever ask for it.
+    requireExistingSku: true,
+    resolveBrandFromSku: true,
+    columns: [
+      SKU,
+      {
+        header: 'Product Description', field: 'productDescription', type: 'string', required: false,
+        note: 'Overview, features, specifications and usage. Blank LEAVES THE EXISTING '
+          + 'DESCRIPTION ALONE — it does not clear it.',
+      },
+      ...VIDEO_COLUMNS,
+    ],
+    /**
+     * Every video link is checked here, against the sheet, rather than at
+     * processing time.
+     *
+     * A link that is not a YouTube video cannot be embedded, and finding that
+     * out after 900 rows have been written is finding out too late — the
+     * preview is the last moment the uploader still has the file in front of
+     * them. Each bad column is reported separately and by name, because "row
+     * 412 is wrong" about a row with three link columns is not actionable.
+     */
+    validate: (row) => {
+      const problems = [];
+
+      for (const column of VIDEO_COLUMNS) {
+        const raw = row[column.field];
+        if (raw === null || raw === undefined || String(raw).trim() === '') continue;
+        const parsed = parseYouTubeUrl(raw);
+        if (parsed.problem) {
+          problems.push({
+            category: 'format',
+            column: column.header,
+            message: `${column.header}: ${parsed.problem}.`,
+            value: raw,
+          });
+        }
+      }
+
+      // A row supplying neither text nor a link changes nothing, and is almost
+      // always a column pasted into the wrong place.
+      const touched = Boolean(row.productDescription)
+        || VIDEO_COLUMNS.some((c) => row[c.field] !== null && row[c.field] !== undefined
+          && String(row[c.field]).trim() !== '');
+      if (!touched && problems.length === 0) {
+        problems.push({
+          category: 'required',
+          message: 'No description and no video link — the row would change nothing.',
+        });
+      }
+
+      return problems;
+    },
+    sample: {
+      'SKU Code': '14405M-10',
+      'Product Description':
+        'Overview: 3/8 inch drive socket set.\n'
+        + 'Features: chrome-vanadium steel, mirror finish.\n'
+        + 'Specifications: 10 pieces, 8-19 mm.\n'
+        + 'Usage: hand tools only — not for use with impact drivers.',
+      'Video 1': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      'Video 2': '',
+      'Video 3': '',
     },
   },
 

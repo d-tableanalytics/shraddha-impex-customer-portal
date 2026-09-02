@@ -16,6 +16,7 @@ import notificationRoutes from './modules/notifications/notification.routes.js';
 import roleRoutes from './modules/roles/role.routes.js';
 import salesRoutes from './modules/sales/sales.routes.js';
 import inventoryRoutes from './modules/inventory/inventory.routes.js';
+import productDetailRoutes from './modules/inventory/productDetail.routes.js';
 import apiRoutes from './routes/api.routes.js';
 
 const app = express();
@@ -64,6 +65,12 @@ app.use('/api/v1/roles', roleRoutes);
 app.use('/api/v1/sales', salesRoutes);
 // Inventory Management System (M1: master, locations, configuration).
 app.use('/api/v1/inventory', inventoryRoutes);
+// Product content — descriptions, photographs and user-guide videos. Mounted
+// apart from the inventory router because that router authenticates everything
+// under it, and serving an image must not be authenticated: a browser's <img>
+// carries no Authorization header and the session is not a cookie. The image id
+// is the capability instead — see productDetail.routes.js.
+app.use('/api/v1/product-details', productDetailRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/v1', apiRoutes); // also serve under /api/v1 so frontend api.get('/dashboard/stats') resolves
 

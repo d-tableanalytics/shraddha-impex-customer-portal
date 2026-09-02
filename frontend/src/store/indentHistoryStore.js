@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { reservationsApi } from "../services/reservations";
+import { groupMatches } from "../utils/historySearch";
 
 // Indent statuses come from the Reservation lifecycle, not the Order lifecycle:
 // 'Pending'            → nothing could be fulfilled, the whole line is awaiting stock
@@ -138,16 +139,16 @@ export const useIndentHistoryStore = create((set, get) => ({
     let result = [...allIndents];
 
     if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (r) =>
-          String(r.indentNumber || "").toLowerCase().includes(q) ||
-          String(r.bookingId || "").toLowerCase().includes(q) ||
-          String(r.poNumber || "").toLowerCase().includes(q) ||
-          String(r.customer || "").toLowerCase().includes(q) ||
-          // Searching a SKU should surface the indent that contains it.
-          r.lines.some((l) => String(l.product?.code || "").toLowerCase().includes(q)),
-      );
+      // Searching a SKU surfaces every indent that contains it, wherever in the
+      // group it sits. Shared with Booking History rather than kept here — the
+      // two boxes are the same question and previously gave different answers,
+      // this one understanding SKU codes and that one not. See
+      // utils/historySearch.js; MSIL codes are matched as well now.
+      result = result.filter((r) => groupMatches(
+        [r.indentNumber, r.bookingId, r.poNumber, r.customer],
+        r.lines,
+        searchQuery,
+      ));
     }
 
     if (filters.status !== "all") result = result.filter((r) => r.status === filters.status);
