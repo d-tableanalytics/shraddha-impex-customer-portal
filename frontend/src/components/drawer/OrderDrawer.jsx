@@ -162,8 +162,11 @@ export const OrderDrawer = () => {
   const qtyEntries = qtyHistory?.entries || [];
 
   // The quantity a line is currently showing: the pending edit if it has one,
-  // otherwise what the booking holds.
-  const savedQtyOf = (item) => item.confirmedQty ?? item.orderQuantity ?? 0;
+  // otherwise what the booking holds. This is the line's TOTAL — confirmed
+  // plus indent — because that is what the edit endpoint takes: "make this
+  // line 15" means fifteen units for the customer, however stock splits them.
+  const savedQtyOf = (item) =>
+    (item.confirmedQty ?? item.orderQuantity ?? 0) + (item.pendingQty ?? 0);
   const qtyOf = (item) =>
     draftQty[item.lineId] !== undefined ? draftQty[item.lineId] : savedQtyOf(item);
 
@@ -209,7 +212,7 @@ export const OrderDrawer = () => {
       if (splits.length) {
         toast.success(
           splits
-            .map((s) => `${s.skuCode}: ${s.toQty} confirmed, ${s.indentQty} moved to indent (stock short).`)
+            .map((s) => `${s.skuCode}: set to ${s.toQty} — ${s.confirmed} confirmed, ${s.indentQty} on indent (stock short).`)
             .join(" "),
           { duration: 8000, icon: "⚠️" },
         );

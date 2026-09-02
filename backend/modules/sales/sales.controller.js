@@ -227,18 +227,32 @@ export const getBookingDetail = async (req, res, next) => {
  * topped up rather than duplicated, because one SKU on one booking is one line
  * of demand however many edits produced it.
  */
-const raiseIndentForShortfall = async (row, product, indentQty, session, req) => {
+const setIndentShortfall = async (row, product, indentQty, session, req) => {
   const opts = session ? { session } : {};
   const indentNumber = `PI-${String(row.orderId).replace(/^[A-Z]+-/, '')}`;
+  const openFilter = {
+    customerId: row.user,
+    skuCode: row.skuCode,
+    indentNumber,
+    status: { $in: ['Pending', 'Partially Confirmed'] },
+  };
+
+  // SET, never increment. The desk's quantity is the line's TOTAL, so this
+  // booking's indent for the SKU is exactly the part stock could not cover --
+  // editing twice must not stack two shortfalls (2 confirmed + 18 indented on
+  // a line the desk had just set to 5 is how that looked in production).
+  if (indentQty <= 0) {
+    await Reservation.updateMany(
+      openFilter,
+      { $set: { status: 'Cancelled', expiredAt: new Date() } },
+      opts,
+    );
+    return null;
+  }
 
   const existing = await Reservation.findOneAndUpdate(
-    {
-      customerId: row.user,
-      skuCode: row.skuCode,
-      indentNumber,
-      status: { $in: ['Pending', 'Partially Confirmed'] },
-    },
-    { $inc: { quantity: indentQty } },
+    openFilter,
+    { $set: { quantity: indentQty } },
     { new: true, ...opts },
   );
   if (existing) return existing;
@@ -443,53 +457,63 @@ const runUpdateItems = async (req, session) => {
 
     const oldSku = row.skuCode;
     const oldQty = row.confirmedQty || 0;
+    const oldPending = row.pendingQty || 0;
+    // The quantity the desk types is the line's TOTAL -- confirmed plus
+    // indent. That is what the drawers display and what a person means by
+    // "make this line 15": fifteen units for the customer, however stock
+    // splits them, never fifteen on top of an indent nobody remembers.
+    const oldTotal = oldQty + oldPending;
 
-    // What this line will actually hold from stock. Normally the requested
-    // qty; when stock cannot cover an increase, the covered part — the rest
-    // moves to an indent (see the split below).
+    // What this line will actually hold from stock once the edit lands.
     let fulfilledQty = qty;
 
     if (oldSku === skuCode) {
-      if (oldQty === qty) continue; // untouched
+      if (qty === oldTotal) continue; // untouched
       if (isConsumed(row)) {
         // Post-PO the units have left inventory; there is no reservation to
-        // split, so a shortfall here stays a hard refusal.
-        const { ok } = await adjustConsumedQty(product, oldQty, qty, session, ledgerCtx);
+        // split, so the confirmed part absorbs the whole change and a
+        // shortfall stays a hard refusal. The indent, if any, is untouched.
+        const targetConfirmed = Math.max(0, qty - oldPending);
+        const { ok } = await adjustConsumedQty(product, oldQty, targetConfirmed, session, ledgerCtx);
         if (!ok) {
           throw Object.assign(
-            new Error(`Not enough stock for ${skuCode}. Available: ${Math.max(0, product.availableForSale)}, additional needed: ${qty - oldQty}.`),
+            new Error(`Not enough stock for ${skuCode}. Available: ${Math.max(0, product.availableForSale)}, additional needed: ${targetConfirmed - oldQty}.`),
             { status: 409 },
           );
         }
-        changes.push({ type: 'quantity', skuCode, fromQty: oldQty, toQty: qty });
+        fulfilledQty = targetConfirmed;
+        row.bookedQty = qty;
+        changes.push({ type: 'quantity', skuCode, fromQty: oldTotal, toQty: qty });
       } else {
-        let { ok } = await adjustReservedQty(product, oldQty, qty, session, ledgerCtx);
-        if (!ok) {
-          // Mirror confirmBooking rather than refuse: take what stock covers
-          // and move the remainder to an indent, so raising a quantity behaves
-          // the same whether it happens at booking time or on a later edit.
-          const available = Math.max(0, product.availableForSale);
-          fulfilledQty = oldQty + available;
-          const indentQty = qty - fulfilledQty;
-          if (available > 0) {
-            ({ ok } = await adjustReservedQty(product, oldQty, fulfilledQty, session, ledgerCtx));
-            if (!ok) {
-              // Stock moved between the read and the take — refuse rather than
-              // guess again inside one request.
-              throw Object.assign(
-                new Error(`Not enough stock for ${skuCode}. Available: ${Math.max(0, product.availableForSale)}, additional needed: ${qty - oldQty}.`),
-                { status: 409 },
-              );
-            }
+        // Confirm as much of the new total as stock allows; the remainder IS
+        // the indent (set, not added -- see setIndentShortfall).
+        const available = Math.max(0, product.availableForSale);
+        fulfilledQty = Math.min(qty, oldQty + available);
+        const indentQty = qty - fulfilledQty;
+
+        if (fulfilledQty !== oldQty) {
+          const { ok } = await adjustReservedQty(product, oldQty, fulfilledQty, session, ledgerCtx);
+          if (!ok) {
+            // Stock moved between the read and the take -- refuse rather than
+            // guess again inside one request.
+            throw Object.assign(
+              new Error(`Not enough stock for ${skuCode}. Available: ${Math.max(0, product.availableForSale)}, requested: ${qty}.`),
+              { status: 409 },
+            );
           }
-          await raiseIndentForShortfall(row, product, indentQty, session, req);
-          // The customer now asks for `qty` in total; the indent carries what
-          // stock could not. bookedQty is that ask, pendingQty the open rest.
-          row.bookedQty = qty;
-          row.pendingQty = (row.pendingQty || 0) + indentQty;
-          changes.push({ type: 'quantity-split', skuCode, fromQty: oldQty, toQty: fulfilledQty, indentQty });
+        }
+
+        await setIndentShortfall(row, product, indentQty, session, req);
+        row.bookedQty = qty;
+        row.pendingQty = indentQty;
+        if (indentQty > 0) {
+          changes.push({
+            type: 'quantity-split', skuCode,
+            fromQty: oldTotal, toQty: qty,
+            confirmed: fulfilledQty, indentQty,
+          });
         } else {
-          changes.push({ type: 'quantity', skuCode, fromQty: oldQty, toQty: qty });
+          changes.push({ type: 'quantity', skuCode, fromQty: oldTotal, toQty: qty });
         }
       }
     } else {
@@ -555,7 +579,7 @@ export const updateBookingItems = async (req, res, next) => {
         changes.map((c) =>
           c.type === 'sku' ? `${c.fromSku} → ${c.toSku} (qty ${c.fromQty} → ${c.toQty})`
             : c.type === 'quantity' ? `${c.skuCode} qty ${c.fromQty} → ${c.toQty}`
-              : c.type === 'quantity-split' ? `${c.skuCode} qty ${c.fromQty} → ${c.toQty} (+${c.indentQty} to indent)`
+              : c.type === 'quantity-split' ? `${c.skuCode} qty ${c.fromQty} → ${c.toQty} (${c.confirmed} confirmed, ${c.indentQty} on indent)`
                 : c.type === 'added' ? `added ${c.skuCode} x${c.toQty}`
                   : `removed ${c.skuCode} x${c.fromQty}`,
         ).join('; '),
@@ -602,7 +626,7 @@ export const updateBookingItems = async (req, res, next) => {
           notifyUser(owner, {
             title: 'Quantity moved to indent',
             message: splits
-              .map((s) => `${s.skuCode}: ${s.toQty} confirmed, ${s.indentQty} added to indent (stock short).`)
+              .map((s) => `${s.skuCode}: quantity set to ${s.toQty} — ${s.confirmed} confirmed, ${s.indentQty} on indent (stock short).`)
               .join(' '),
             type: 'reservation',
           }).catch((e) => console.error('[updateBookingItems] split notification failed:', e.message));

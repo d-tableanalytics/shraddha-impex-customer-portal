@@ -103,11 +103,16 @@ export const buildChangeSummary = async (rows, orderId) => {
   const lines = rows.map((r) => {
     const booked = r.confirmedQty || 0;
     const indent = indentBySku.get(r.skuCode) || 0;
+    // The line's TOTAL as it stands: confirmed plus what is still open on the
+    // indent. Computed, not read from bookedQty — the snapshot goes stale the
+    // moment stock auto-books part of the indent, and a Booked column that
+    // disagrees with Confirmed + Indent is the first thing a customer notices.
+    const total = booked + indent;
     const base = {
       skuCode: r.skuCode,
       msilCode: r.msilCode || null,
       fromSku: null,
-      onPo: r.bookedQty || 0,
+      onPo: total,
       booked,
       indent,
     };
@@ -119,12 +124,19 @@ export const buildChangeSummary = async (rows, orderId) => {
       // where that line's audit entry did not survive — no customer line is
       // ever written with bookedQty 0.
       const deskAdded = (r.bookedQty || 0) === 0 && booked > 0;
-      return { ...base, change: deskAdded ? booked : 0, type: deskAdded ? 'added' : 'unchanged' };
+      return { ...base, change: deskAdded ? total : 0, type: deskAdded ? 'added' : 'unchanged' };
     }
 
-    if (o.addedByDesk) return { ...base, onPo: 0, change: booked, type: 'added' };
+    if (o.addedByDesk) return { ...base, change: total, type: 'added' };
 
-    const change = booked - o.qty;
+    // Change is TOTAL against TOTAL: the desk's quantity means "this many
+    // units for the customer", so raising 5 to 15 is +10 whether stock covered
+    // it or the indent did. Measuring on the confirmed part alone is what once
+    // reported "No change" on an edit that moved 15 units to indent.
+    // (The baseline is the first audit entry's fromQty; entries written before
+    // the totals rework recorded the confirmed part there, so a booking edited
+    // under both schemes can over-report — new edits are exact.)
+    const change = total - o.qty;
     // A re-code is a change even when the quantity is untouched, so it is typed
     // in its own right rather than falling through to "no change".
     if (o.fromSku && o.fromSku !== r.skuCode) {
@@ -184,48 +196,9 @@ export const buildBookingJourney = async ({ orderId, rows = null }) => {
 
   const summary = await buildChangeSummary(orderRows, orderId);
 
-  // Booking-stage quantity: what the line held once the confirmation-time
-  // stock check had run. Recovered as booked − change, which holds for every
-  // change type the replay produces (removed: 0 − (−q) = q; added: q − q = 0).
-  const stageQty = (l) => Math.max(0, l.booked - l.change);
-
-  const confirmed = summary.lines
-    // A desk-added line did not exist at confirmation time (onPo 0), so it has
-    // no place in the "as confirmed" table.
-    .filter((l) => (l.onPo || 0) > 0)
-    .map((l) => ({
-      // The code it was BOOKED under — a later re-code must not rewrite history.
-      skuCode: l.fromSku || l.skuCode,
-      msilCode: l.msilCode,
-      booked: l.onPo,
-      confirmed: Math.min(stageQty(l), l.onPo),
-      indent: Math.max(0, l.onPo - stageQty(l)),
-    }));
-
   const indentLines = summary.lines
     .filter((l) => (l.indent || 0) > 0)
     .map((l) => ({ skuCode: l.skuCode, msilCode: l.msilCode, quantity: l.indent }));
-
-  const final = summary.lines
-    .filter((l) => l.type !== 'removed')
-    .map((l) => ({
-      skuCode: l.skuCode,
-      msilCode: l.msilCode,
-      qty: l.booked,
-      change: l.change,
-      type: l.type,
-      label: changeLabel(l),
-      indent: l.indent,
-    }));
-  // A removed line still belongs in the final table — as zero, labelled so.
-  for (const l of summary.lines) {
-    if (l.type === 'removed') {
-      final.push({
-        skuCode: l.skuCode, msilCode: l.msilCode,
-        qty: 0, change: l.change, type: 'removed', label: changeLabel(l), indent: l.indent,
-      });
-    }
-  }
 
   const first = orderRows[0];
   const po = String(first.poNumber ?? '').trim();
@@ -243,9 +216,7 @@ export const buildBookingJourney = async ({ orderId, rows = null }) => {
         }
       : null,
     summary,
-    confirmed,
     indentLines,
-    final,
   };
 };
 
@@ -260,13 +231,11 @@ export const indentOnlyJourney = ({ indentId, lines = [] }) => ({
   indentId,
   po: null,
   summary: null,
-  confirmed: [],
   indentLines: lines.map((l) => ({
     skuCode: l.skuCode,
     msilCode: l.msilCode || null,
     quantity: Number(l.quantity) || 0,
   })),
-  final: [],
 });
 
 // ── Rendering ──────────────────────────────────────────────────────────────
@@ -417,8 +386,12 @@ export const journeyTablesHtml = (journey, { audience = 'customer' } = {}) => {
        </p>`
     : '';
 
+  // Once the PO exists the transaction IS a purchase order — the section is
+  // headed as one, so the mail does not keep calling it a booking after the
+  // conversion mail told the customer the name changed.
   return `
-    ${sectionHeading('Booking Details',
+    ${sectionHeading(
+      journey.po ? 'Purchase Order Details' : 'Booking Details',
       journey.bookingDate ? `As booked on ${fmtD(journey.bookingDate)}.` : null)}
     ${poHtml}
     ${tableHtml}
