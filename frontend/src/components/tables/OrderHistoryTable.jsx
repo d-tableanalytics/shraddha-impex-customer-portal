@@ -1,4 +1,4 @@
-import { ChevronUp, ChevronDown, Eye, FileDown, PackageX, FileSpreadsheet } from "lucide-react";
+import { ChevronUp, ChevronDown, Eye, FileDown, PackageX, FileSpreadsheet, MapPin, Phone } from "lucide-react";
 import toast from "react-hot-toast";
 import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { useCartStore } from "../../store/cartStore";
@@ -166,8 +166,41 @@ export const OrderHistoryTable = () => {
                     </div>
                   </td>
                   {isAdmin && (
-                    <td className="px-5 py-4 font-bold text-slate-700 truncate max-w-[200px]" title={order.customer}>
-                      {order.customer}
+                    /* Who the customer IS, from User Management — the master
+                       name, then the company when it differs, then the
+                       registered location and phone. Stacked in one cell rather
+                       than spread over three columns: the table already carries
+                       six, and a booking list that scrolls sideways is worse
+                       than a two-line cell. */
+                    <td className="px-5 py-4 max-w-[260px]">
+                      <div className="font-bold text-slate-700 truncate" title={order.customer}>
+                        {order.customer}
+                      </div>
+                      {order.customerCompany && order.customerCompany !== order.customer && (
+                        <div className="text-[11px] text-slate-500 truncate" title={order.customerCompany}>
+                          {order.customerCompany}
+                        </div>
+                      )}
+                      {(order.customerLocation || order.customerPhone) && (
+                        <div
+                          className="text-[11px] text-slate-400 truncate flex items-center gap-1.5"
+                          title={[order.customerLocation, order.customerPhone].filter(Boolean).join(' · ')}
+                        >
+                          {order.customerLocation && (
+                            <span className="inline-flex items-center gap-1 min-w-0">
+                              <MapPin size={10} className="shrink-0" />
+                              <span className="truncate">{order.customerLocation}</span>
+                            </span>
+                          )}
+                          {order.customerLocation && order.customerPhone && <span>·</span>}
+                          {order.customerPhone && (
+                            <span className="inline-flex items-center gap-1 shrink-0">
+                              <Phone size={10} />
+                              {order.customerPhone}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                   )}
                   <td className="px-5 py-4 font-medium text-slate-600">

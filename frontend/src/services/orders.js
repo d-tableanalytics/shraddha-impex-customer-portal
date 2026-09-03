@@ -36,11 +36,36 @@ export const mapOrder = (order) => {
 
   const totalQuantity = order.requestedQty || items.reduce((sum, item) => sum + (item.orderQuantity || item.quantity || 0), 0);
   
+  /**
+   * The customer's CURRENT master details, from User Management.
+   *
+   * Attached by the server on every booking response, read live from the user
+   * record rather than from the booking — so a detail an admin fills in after a
+   * booking was placed still shows on it. `...order` would carry it anyway;
+   * naming it here is what tells the next reader it exists and where it comes
+   * from.
+   *
+   * Distinct from `order.location` / `order.phoneNumber`, which are the
+   * BOOKING's own snapshot and may differ on purpose once a PO is raised.
+   */
+  const customerProfile = order.customerProfile || null;
+
   return {
     ...order,
     id: order._id,
     orderNumber: order.orderId || order.orderNumber || order._id,
-    customer: order.company || order.customer || 'Unknown',
+    customerProfile,
+    // The name to show. The Customer Master name is the legal entity we trade
+    // with, so it leads; `company` is what the booking itself was stamped with
+    // and is the fallback for accounts registered before the master details.
+    customer: customerProfile?.customerName || order.company || order.customer || 'Unknown',
+    // Kept separately so a screen can show both when they differ, rather than
+    // silently picking one.
+    customerCompany: customerProfile?.company || order.company || null,
+    // Contact pair for display. The profile is the customer's registered pair;
+    // the booking's own snapshot is the fallback and is what a raised PO used.
+    customerPhone: customerProfile?.phone || order.phoneNumber || null,
+    customerLocation: customerProfile?.location || order.location || null,
     date: order.createdAt || order.date || new Date().toISOString(),
     workflowStage: order.status, 
     items,

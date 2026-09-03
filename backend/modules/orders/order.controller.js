@@ -10,7 +10,7 @@ import { allowedBrandModels, canAccessBrand, brandFilter } from '../../utils/bra
 import { isBookingLocked, canOverrideLock } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { withBoxNoVisibility } from '../../utils/boxNoVisibility.js';
-import { fillCustomerContact } from '../../utils/customerContact.js';
+import { attachCustomerDetails } from '../../utils/customerContact.js';
 import { findProductBySku, consumeStock, releaseStock } from '../../utils/stockLedger.js';
 import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
@@ -98,7 +98,7 @@ export const getOrders = async (req, res, next) => {
     const orders = await Order.find(query).sort({ createdAt: -1 });
     // Older rows predate the phone/location stamp; fill them from the
     // customer's profile so the pick list always has a contact to print.
-    await fillCustomerContact(orders);
+    await attachCustomerDetails(orders);
     // The box number rides on every order row. It is shown on the line items to
     // Sales and Admin only, so it is removed from the payload here rather than
     // merely hidden by the client — this endpoint serves a customer their own
@@ -124,7 +124,7 @@ export const getOrderById = async (req, res, next) => {
         return res.status(404).json({ success: false, message: 'Order not found' });
       }
     }
-    await fillCustomerContact([order]);
+    await attachCustomerDetails([order]);
     res.status(200).json({ success: true, data: withBoxNoVisibility(order, req.user) });
   } catch (error) {
     next(error);

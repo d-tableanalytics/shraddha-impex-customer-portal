@@ -29,8 +29,14 @@ import { Button } from '../ui/Button';
  * a rejection is surfaced rather than swallowed.
  */
 
-/** The four, in the order the server lists them. */
+/** The six, in the order the server lists them. */
 const FIELDS = [
+  // A dropdown, not a text box: the brand decides which catalogue the SKU is
+  // created in, and a typo would file a real part under a brand nobody looks at.
+  { field: 'brand', label: 'Brand', hint: 'Catalogue', type: 'brand' },
+  // Zero is a REAL answer here — a new part with none on the shelf yet — which
+  // is why it carries min="0" while the three planning figures below do not.
+  { field: 'availableStock', label: 'Available Stock', placeholder: 'e.g. 25', hint: 'Units', type: 'number', step: '1', min: '0' },
   { field: 'moq', label: 'MOQ', placeholder: 'e.g. 10', hint: 'Units', type: 'number', step: '1', min: '1' },
   // No `min` on the two decimals: the rule is "greater than zero", which a
   // min attribute cannot express, and min="0" would advertise a value the
@@ -50,10 +56,21 @@ const FIELDS = [
 const problemWith = (field, raw) => {
   const value = String(raw ?? '').trim();
   if (!value) return 'Required';
-  if (field === 'boxNo') return null;
+  // Free text — the server checks the brand against the real list and against
+  // what this uploader may write to.
+  if (field === 'boxNo' || field === 'brand') return null;
 
   const n = Number(value.replace(/,/g, ''));
   if (!Number.isFinite(n)) return 'Not a number';
+
+  // Opening stock: a whole number of units, and zero is allowed. Negative is
+  // not — on this sheet a negative quantity is a deduction, and a SKU being
+  // created has nothing to deduct from.
+  if (field === 'availableStock') {
+    if (!Number.isInteger(n)) return 'Whole numbers only';
+    return n < 0 ? 'Cannot be negative' : null;
+  }
+
   if (field === 'moq' && !Number.isInteger(n)) return 'Whole numbers only';
   if (n <= 0) return field === 'moq' ? 'Must be 1 or more' : 'Must be more than 0';
   return null;
@@ -71,7 +88,7 @@ export const isNewSkuAnswered = (entry) =>
   FIELDS.every((f) => !problemWith(f.field, entry?.[f.field]));
 
 export const NewSkuDetailsModal = ({
-  isOpen, jobId, skus = [], saving = false, onSave, onClose,
+  isOpen, jobId, skus = [], brands = [], saving = false, onSave, onClose,
 }) => {
   /**
    * Keyed by SKU, seeded from what the job already holds.
@@ -87,6 +104,12 @@ export const NewSkuDetailsModal = ({
       const next = {};
       for (const s of skus) {
         const stored = {
+          // Prefilled by the server where the upload already knew them: brand
+          // from the Brand chosen on the upload form, stock from the sheet's
+          // Quantity column. Null means nobody has said, so the field is blank
+          // and has to be filled in.
+          brand: s.brand ?? '',
+          availableStock: s.availableStock ?? '',
           moq: s.moq ?? '',
           leadTime: s.leadTime ?? '',
           safetyFactor: s.safetyFactor ?? '',
@@ -157,10 +180,13 @@ export const NewSkuDetailsModal = ({
           <PackagePlus size={16} className="text-primary-600 shrink-0 mt-0.5" />
           <p className="text-xs text-primary-900 leading-relaxed">
             These SKUs are <strong>not in the Inventory Master yet</strong> and this file will
-            create them. Every one needs an <strong>MOQ</strong>, <strong>Lead Time</strong>,
-            <strong> Safety Factor</strong> and <strong>Box Number</strong> before the import can
-            run — without them the SKU has no reorder point and no picking location.
-            SKUs already in the master are unaffected and import as usual.
+            create them. Each one needs a <strong>Brand</strong>, its
+            <strong> Available Stock</strong>, and an <strong>MOQ</strong>,
+            <strong> Lead Time</strong>, <strong>Safety Factor</strong> and
+            <strong> Box Number</strong> before the import can run — without them the SKU has no
+            reorder point and no picking location. Brand and stock are filled in already where the
+            upload form or the sheet supplied them. SKUs already in the master are unaffected and
+            import as usual.
           </p>
         </div>
 
@@ -168,9 +194,11 @@ export const NewSkuDetailsModal = ({
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-white z-10">
               <tr className="text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
+                {/* Brand and Available Stock used to sit here as read-only
+                    columns. They are answers now, so they are inputs below —
+                    showing them twice would beg the question of which one
+                    counts. */}
                 <th className="py-2 pr-3">SKU</th>
-                <th className="py-2 pr-3">Brand</th>
-                <th className="py-2 pr-3 text-right">Qty</th>
                 {FIELDS.map((f) => (
                   <th key={f.field} className="py-2 pr-3 w-32">{f.label} *</th>
                 ))}
@@ -194,11 +222,6 @@ export const NewSkuDetailsModal = ({
                         <span className="block text-[10px] text-slate-300">Row {s.rowNumber}</span>
                       )}
                     </td>
-                    <td className="py-2 pr-3 text-xs font-semibold text-slate-600">{s.brand}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums text-slate-600">
-                      {Number(s.quantity || 0).toLocaleString()}
-                    </td>
-
                     {FIELDS.map((f) => {
                       // Shown only once something has been typed and then
                       // emptied or mistyped — an untouched row is incomplete,
@@ -208,21 +231,45 @@ export const NewSkuDetailsModal = ({
                         : null;
                       return (
                         <td key={f.field} className="py-2 pr-3">
-                          <input
-                            type={f.type}
-                            step={f.step}
-                            min={f.min}
-                            value={row[f.field] ?? ''}
-                            onChange={setValue(s.skuCode, f.field)}
-                            placeholder={f.placeholder}
-                            aria-label={`${f.label} for ${s.skuCode}`}
-                            aria-invalid={Boolean(problem)}
-                            className={`w-full px-2 py-1.5 text-sm border rounded-lg outline-none focus:ring-1 ${
-                              problem
-                                ? 'border-error-400 focus:border-error-500 focus:ring-error-500'
-                                : 'border-slate-300 focus:border-primary-500 focus:ring-primary-500'
-                            }`}
-                          />
+                          {f.type === 'brand' ? (
+                            <select
+                              value={row[f.field] ?? ''}
+                              onChange={setValue(s.skuCode, f.field)}
+                              aria-label={`Brand for ${s.skuCode}`}
+                              aria-invalid={Boolean(problem)}
+                              className={`w-full px-2 py-1.5 text-sm border rounded-lg outline-none focus:ring-1 ${
+                                problem
+                                  ? 'border-error-400 focus:border-error-500 focus:ring-error-500'
+                                  : 'border-slate-300 focus:border-primary-500 focus:ring-primary-500'
+                              }`}
+                            >
+                              <option value="">Choose…</option>
+                              {brands.map((b) => <option key={b} value={b}>{b}</option>)}
+                              {/* A brand the server prefilled that this user's
+                                  list does not contain would otherwise render
+                                  as an empty select and be silently changed on
+                                  save. */}
+                              {row[f.field] && !brands.includes(row[f.field]) && (
+                                <option value={row[f.field]}>{row[f.field]}</option>
+                              )}
+                            </select>
+                          ) : (
+                            <input
+                              type={f.type}
+                              step={f.step}
+                              min={f.min}
+                              value={row[f.field] ?? ''}
+                              onChange={setValue(s.skuCode, f.field)}
+                              placeholder={f.placeholder}
+                              aria-label={`${f.label} for ${s.skuCode}`}
+                              aria-invalid={Boolean(problem)}
+                              className={`w-full px-2 py-1.5 text-sm border rounded-lg outline-none focus:ring-1 ${
+                                problem
+                                  ? 'border-error-400 focus:border-error-500 focus:ring-error-500'
+                                  : 'border-slate-300 focus:border-primary-500 focus:ring-primary-500'
+                              }`}
+                            />
+                          )}
                           {problem
                             ? <span className="text-[10px] font-semibold text-error-600">{problem}</span>
                             : <span className="text-[10px] text-slate-400">{f.hint}</span>}

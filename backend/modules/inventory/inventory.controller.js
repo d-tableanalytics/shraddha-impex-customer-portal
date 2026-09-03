@@ -7,6 +7,9 @@ import { recordAudit } from '../../utils/auditLog.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
 import { prefixMatch } from '../../utils/searchQuery.js';
 import { recomputeHealthForSkus } from './health.service.js';
+import {
+  checkSkuAvailability, createSku, renameSku, deleteSku, skuReferences,
+} from './sku.service.js';
 
 /**
  * Inventory master reads and planning-parameter maintenance (Module M1).
@@ -74,6 +77,11 @@ const balancesFor = async (docs) => {
 // touch (BR-03) — passing req.body wholesale to the model is what let an admin
 // write the four stock counters into an inconsistent state before.
 const PLANNING_FIELDS = [
+  // Identity-adjacent but NOT the business key: nothing stores the MSIL code as
+  // a foreign key, so unlike skuCode it can simply be edited. It is checked for
+  // uniqueness below, because the Fresh Inventory sheet finds a product BY MSIL
+  // code and one code pointing at two SKUs imports nothing.
+  'msilCode',
   'description',
   'uom',
   'itemParameter',
@@ -636,6 +644,25 @@ export const updatePlanning = async (req, res, next) => {
       }
     }
 
+    // An MSIL code may be cleared, but it may not be pointed at a second SKU.
+    if ('msilCode' in updates) {
+      const msil = String(updates.msilCode ?? '').trim();
+      updates.msilCode = msil === '' ? null : msil;
+      if (updates.msilCode) {
+        const escaped = updates.msilCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const clash = await Product.findOne(
+          { msilCode: { $regex: `^${escaped}$`, $options: 'i' }, _id: { $ne: doc._id } },
+          'skuCode brand',
+        ).lean();
+        if (clash) {
+          errors.push(
+            `MSIL code ${updates.msilCode} already belongs to ${clash.skuCode} (${clash.brand}). `
+            + 'Two SKUs sharing one MSIL code cannot be told apart by the Fresh Inventory import.',
+          );
+        }
+      }
+    }
+
     if ('category' in updates) {
       updates.category = Array.isArray(updates.category)
         ? updates.category.map((c) => String(c).trim()).filter(Boolean)
@@ -896,3 +923,215 @@ export const bulkUpdatePlanning = async (req, res, next) => {
 };
 
 export default { listItems, getItem, updatePlanning, bulkUpdatePlanning, listCategories };
+
+/* ── SKU lifecycle (M1) ─────────────────────────────────────────────────────
+ *
+ * Adding a catalogue entry and removing one. EDITING is updatePlanning() above
+ * — it already validates every field, honours the box-number permission,
+ * guards retirement against live stock and recomputes the band, and a second
+ * edit path would be a second copy of all four to keep in step.
+ *
+ * The rules themselves live in sku.service.js; these are the HTTP shell.
+ */
+
+const skuFail = (error, res, next) => {
+  if (error?.status) {
+    return res.status(error.status).json({
+      success: false,
+      message: error.message,
+      code: error.code,
+      ...(error.existing ? { existing: error.existing } : {}),
+      ...(error.references ? { references: error.references } : {}),
+    });
+  }
+  return next(error);
+};
+
+/**
+ * GET /api/v1/inventory/items/available?skuCode=&brand=&msilCode=
+ *
+ * The duplicate check, on its own endpoint so the Add form can ask BEFORE the
+ * user has filled in the rest. Asking the same question the save asks — same
+ * function, not a second implementation — is what stops the form saying a code
+ * is free and the save then refusing it.
+ */
+export const checkSkuAvailable = async (req, res, next) => {
+  try {
+    const skuCode = asString(req.query.skuCode);
+    if (!skuCode) {
+      return res.status(400).json({ success: false, message: 'Give a skuCode to check.' });
+    }
+    const brand = asString(req.query.brand) ?? null;
+    const result = await checkSkuAvailability({
+      skuCode, brand, msilCode: asString(req.query.msilCode) ?? null,
+    });
+    res.status(200).json({ success: true, ...result });
+  } catch (error) { skuFail(error, res, next); }
+};
+
+/**
+ * POST /api/v1/inventory/items
+ *
+ * Create one SKU. Refuses a duplicate — case-insensitively, because `14405m-10`
+ * and `14405M-10` are the same part to everyone who will ever type either.
+ */
+export const createItem = async (req, res, next) => {
+  try {
+    const { product, brand, warnings } = await createSku({
+      payload: req.body ?? {},
+      actor: req.user,
+      allowedBrandList: allowedBrands(req.user),
+    });
+
+    await recordAudit(
+      req.user,
+      'Inventory Master Updated',
+      `SKU ${product.skuCode} created under ${brand}.`,
+      req,
+      { meta: { skuCode: product.skuCode, brand, created: true } },
+    );
+
+    // A new SKU has planning inputs, so it has a band from the moment it
+    // exists — without this it would sit Unknown until the next rebuild and
+    // read as a data problem rather than a new row.
+    await recomputeHealthForSkus([product.skuCode], { brand });
+
+    const fresh = await Product.findById(product._id).lean();
+    res.status(201).json({
+      success: true,
+      warnings,
+      data: shapeItem(fresh, {
+        showMsil: msilAppliesTo(req.user),
+        balance: await balanceFor(fresh),
+      }),
+    });
+  } catch (error) { skuFail(error, res, next); }
+};
+
+/**
+ * GET /api/v1/inventory/items/:sku/references?brand=
+ *
+ * What would break if this SKU were deleted. Read by the confirmation dialog,
+ * so the person clicking Delete is told what it costs BEFORE they click it
+ * rather than by the refusal afterwards.
+ */
+export const getItemReferences = async (req, res, next) => {
+  try {
+    const brands = allowedBrands(req.user);
+    const product = await Product.findOne(
+      { skuCode: req.params.sku, brand: { $in: brands } },
+      'skuCode brand status',
+    ).lean();
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
+
+    const refs = await skuReferences({ skuCode: product.skuCode, brand: product.brand });
+    res.status(200).json({ success: true, skuCode: product.skuCode, brand: product.brand, ...refs });
+  } catch (error) { skuFail(error, res, next); }
+};
+
+/**
+ * DELETE /api/v1/inventory/items/:sku?brand=
+ *
+ * Removes a SKU nothing has ever referenced. Anything with history is refused
+ * and the caller is pointed at Discontinued, which is what retiring a SKU has
+ * always meant here — see the note at the top of sku.service.js.
+ */
+export const deleteItem = async (req, res, next) => {
+  try {
+    const brands = allowedBrands(req.user);
+    // The brand is required rather than guessed: the same code can exist under
+    // two brands, and deleting "whichever one we found first" is not a thing
+    // this endpoint should ever do.
+    const brand = asString(req.query.brand) ?? asString(req.body?.brand);
+    if (!brand) {
+      return res.status(400).json({
+        success: false,
+        message: 'Give the brand of the SKU to delete — a code can exist under more than one.',
+      });
+    }
+
+    const { product, removed } = await deleteSku({
+      skuCode: req.params.sku,
+      brand,
+      actor: req.user,
+      allowedBrandList: brands,
+    });
+
+    await recordAudit(
+      req.user,
+      'Inventory Master Updated',
+      `SKU ${product.skuCode} (${product.brand}) DELETED from the catalogue. `
+      + `Nothing referenced it. Also removed: ${removed.health} health row(s), `
+      + `${removed.balances} balance row(s), ${removed.alertsClosed} alert(s) closed, `
+      + `${removed.productDetail} content row(s), ${removed.images} image file(s).`,
+      req,
+      { meta: { skuCode: product.skuCode, brand: product.brand, deleted: true, removed } },
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `${product.skuCode} was removed from the catalogue.`,
+      removed,
+    });
+  } catch (error) { skuFail(error, res, next); }
+};
+
+/**
+ * PATCH /api/v1/inventory/items/:sku/code
+ * Body: { brand, newSkuCode }
+ *
+ * Change a SKU's CODE — the one field updatePlanning() will not touch, because
+ * it is the business key rather than a description of the part.
+ *
+ * Refused for a SKU anything has transacted against. The stock ledger is
+ * append-only and stores the code as text, so a rename cannot be carried into
+ * it; see the note on renameSku(). What this is for is fixing a code that was
+ * mistyped when the SKU was created or imported.
+ */
+export const renameItemCode = async (req, res, next) => {
+  try {
+    const brand = asString(req.body?.brand);
+    if (!brand) {
+      return res.status(400).json({
+        success: false,
+        message: 'Give the brand of the SKU to rename — a code can exist under more than one.',
+      });
+    }
+
+    const result = await renameSku({
+      skuCode: req.params.sku,
+      brand,
+      newSkuCode: req.body?.newSkuCode,
+      actor: req.user,
+      allowedBrandList: allowedBrands(req.user),
+    });
+
+    await recordAudit(
+      req.user,
+      'Inventory Master Updated',
+      `SKU code changed from ${result.from} to ${result.to} under ${result.brand}. `
+      + `Carried across: ${result.carried.health} health row(s), ${result.carried.balances} `
+      + `balance row(s), ${result.carried.productDetail} content row(s); `
+      + `${result.carried.alertsClosed} alert(s) closed. Nothing had transacted against it.`,
+      req,
+      { meta: { from: result.from, to: result.to, brand: result.brand, carried: result.carried } },
+    );
+
+    // The band is keyed on the code, so the projection is rebuilt under the new
+    // one — without this the SKU would read Unknown until the next full rebuild.
+    await recomputeHealthForSkus([result.to], { brand: result.brand });
+
+    const fresh = await Product.findOne({ skuCode: result.to, brand: result.brand }).lean();
+    res.status(200).json({
+      success: true,
+      message: `${result.from} is now ${result.to}.`,
+      from: result.from,
+      to: result.to,
+      carried: result.carried,
+      data: shapeItem(fresh, {
+        showMsil: msilAppliesTo(req.user),
+        balance: await balanceFor(fresh),
+      }),
+    });
+  } catch (error) { skuFail(error, res, next); }
+};

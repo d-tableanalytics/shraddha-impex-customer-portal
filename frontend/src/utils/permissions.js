@@ -34,6 +34,9 @@ export const PERMISSIONS = {
   PERFORM_COUNT: "perform_count",
   APPROVE_COUNT: "approve_count",
   TRANSFER_STOCK: "transfer_stock",
+  // Admin-only. Its own permission because deleting a catalogue entry is
+  // not master-data maintenance - see the note in rbac.js.
+  DELETE_SKU: "delete_sku",
 };
 
 const ROLE_PERMISSIONS = {

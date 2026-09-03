@@ -1,5 +1,8 @@
 import express from 'express';
-import { listItems, listItemCodes, lookupItems, getItem, updatePlanning, bulkUpdatePlanning, listCategories } from './inventory.controller.js';
+import {
+  listItems, listItemCodes, lookupItems, getItem, updatePlanning, bulkUpdatePlanning,
+  listCategories, checkSkuAvailable, createItem, getItemReferences, deleteItem, renameItemCode,
+} from './inventory.controller.js';
 import { postAdjustment, getAdjustmentPreview, getReasonCodes } from './adjustment.controller.js';
 import { recalculate as recalculateConsumption } from './consumption.controller.js';
 import { listLocations, createLocation, updateLocation, setDefaultLocation } from './location.controller.js';
@@ -74,7 +77,28 @@ router.get('/items/codes', authorize(PERMISSIONS.VIEW_INVENTORY), listItemCodes)
 // Read-only: check a list of SKU codes against the catalogue. Static path, so
 // it sits with the others before '/items/:sku'.
 router.post('/items/lookup', authorize(PERMISSIONS.VIEW_INVENTORY), lookupItems);
+// ── SKU lifecycle (M1) ────────────────────────────────────────────────────
+// Static paths BEFORE '/items/:sku', or 'available' is read as a SKU code.
+//
+// Creating and editing sit on MANAGE_INVENTORY_MASTER, the permission that has
+// always governed the master. DELETING has its own, and it is Admin-only: a SKU
+// code is a business key that orders and movements refer to by name, so
+// removing one is not master-data maintenance. The service refuses outright to
+// delete a SKU anything has ever referenced, so what this permission actually
+// governs is undoing a row created by mistake.
+router.get('/items/available', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), checkSkuAvailable);
+router.post('/items', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), createItem);
+
 router.get('/items/:sku', authorize(PERMISSIONS.VIEW_INVENTORY), getItem);
+// What would break if this SKU went. Read by the confirmation dialog, so the
+// cost is stated before the click rather than by the refusal after it.
+router.get('/items/:sku/references', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), getItemReferences);
+router.delete('/items/:sku', authorize(PERMISSIONS.DELETE_SKU), deleteItem);
+// Renaming the CODE. On MANAGE_INVENTORY_MASTER rather than DELETE_SKU because
+// the service already restricts it to SKUs nothing has transacted against, so
+// what it can actually reach is a typo on a row created minutes ago. A SKU with
+// history keeps its code and is refused with an explanation.
+router.patch('/items/:sku/code', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), renameItemCode);
 
 // Planning-parameter maintenance (M1). These are the ONLY write paths into the
 // product master outside the M9 import — the portal, not the database, is where

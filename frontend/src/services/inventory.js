@@ -73,6 +73,71 @@ export const inventoryApi = {
   },
 
   /**
+   * Is this SKU code free?
+   *
+   * Asked by the Add form as the code is typed, so a duplicate is caught before
+   * the rest of the form is filled in. It calls the SAME check the save calls,
+   * so the form cannot say a code is available and then have the save refuse it.
+   *
+   * Returns { exists, sameBrand, otherBrands, msilClash } — `otherBrands` is
+   * not a duplicate, it is a warning: a code under two brands cannot be
+   * resolved by a sheet that names no brand.
+   */
+  checkSkuAvailable: async ({ skuCode, brand = "", msilCode = "" }) => {
+    const qs = new URLSearchParams({ skuCode });
+    if (brand) qs.set("brand", brand);
+    if (msilCode) qs.set("msilCode", msilCode);
+    const response = await api.get(`/inventory/items/available?${qs.toString()}`);
+    return response.data;
+  },
+
+  /**
+   * Change a SKU's CODE.
+   *
+   * Its own call rather than a field on updatePlanning, because it is the
+   * business key rather than a description: it is refused for a SKU anything
+   * has transacted against, and on success the item's identity changes, which
+   * every caller has to react to.
+   */
+  renameSkuCode: async (skuCode, brand, newSkuCode) => {
+    const response = await api.patch(
+      `/inventory/items/${encodeURIComponent(skuCode)}/code`,
+      { brand, newSkuCode },
+    );
+    return response.data;
+  },
+
+  /** Create one SKU. Rejects a duplicate with 409 and names the existing row. */
+  createItem: async (payload) => {
+    const response = await api.post("/inventory/items", payload);
+    return { item: response.data.data, warnings: response.data.warnings || [] };
+  },
+
+  /**
+   * What would break if this SKU were deleted.
+   *
+   * Read before showing the confirmation, so the dialog states the cost rather
+   * than the refusal doing it afterwards.
+   */
+  skuReferences: async (skuCode, brand) => {
+    const response = await api.get(
+      `/inventory/items/${encodeURIComponent(skuCode)}/references?brand=${encodeURIComponent(brand)}`,
+    );
+    return response.data;
+  },
+
+  /**
+   * Delete a SKU. Admin only, and the server refuses anything with history —
+   * the brand is required because one code can exist under two.
+   */
+  deleteItem: async (skuCode, brand) => {
+    const response = await api.delete(
+      `/inventory/items/${encodeURIComponent(skuCode)}?brand=${encodeURIComponent(brand)}`,
+    );
+    return response.data;
+  },
+
+  /**
    * Apply one set of planning values to many SKUs (M1).
    *
    * Returns `blocked` and `skipped` alongside the counts — a bulk edit that

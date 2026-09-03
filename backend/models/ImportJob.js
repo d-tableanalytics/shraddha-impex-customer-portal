@@ -162,13 +162,29 @@ const importJobSchema = new mongoose.Schema(
     newSkus: {
       type: [{
         skuCode: { type: String },
-        brand: { type: String },
         description: { type: String, default: null },
         msilCode: { type: String, default: null },
-        quantity: { type: Number, default: 0 },
         // The row that introduced the SKU, so the prompt can point at it.
         rowNumber: { type: Number, default: null },
+
         // Null means "not answered yet" — the state confirm refuses.
+        //
+        // `brand` and `availableStock` are prefilled where the upload already
+        // knows them: brand from the Brand chosen on the upload form, stock
+        // from the sheet's Quantity column. Prefilled is not the same as
+        // answered only in that the user can change them — both still have to
+        // be present before the import may run.
+        brand: { type: String, default: null },
+        /**
+         * The opening stock the SKU is created with.
+         *
+         * Defaults to NULL, not zero, and the distinction is the whole point: a
+         * sheet with no Quantity for this row leaves it unanswered so the prompt
+         * asks, whereas a deliberate zero is a real answer meaning "the part
+         * exists, the stock has not arrived". A default of 0 would make those
+         * two indistinguishable and the prompt would never ask.
+         */
+        availableStock: { type: Number, default: null },
         moq: { type: Number, default: null },
         leadTime: { type: Number, default: null },
         safetyFactor: { type: Number, default: null },

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Boxes, Search, AlertCircle, X, Save, Loader2, Layers, PackagePlus, Upload } from 'lucide-react';
+import {
+  Boxes, Search, AlertCircle, X, Save, Loader2, Layers, PackagePlus, Upload, Trash2,
+  Pencil, Check,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 
@@ -14,12 +17,17 @@ import { BulkPlanningEditor } from '../../components/inventory/BulkPlanningEdito
 import { UpdateStockModal } from '../../components/inventory/UpdateStockModal';
 import { ExportButton } from '../../components/inventory/ExportButton';
 import { SkuLookupModal } from '../../components/inventory/SkuLookupModal';
+import { AddSkuModal } from '../../components/inventory/AddSkuModal';
+import { DeleteSkuModal } from '../../components/inventory/DeleteSkuModal';
 import { inventoryApi } from '../../services/inventory';
 import { bandLabel } from '../../utils/inventoryFormat';
 import { useInventoryStore } from '../../store/inventoryStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
-import { canUseInventoryMaster, canEditPlanning, canEditBoxNo, canAdjustStock } from '../../utils/permissions';
+import {
+  canUseInventoryMaster, canEditPlanning, canEditBoxNo, canAdjustStock,
+  hasPermission, PERMISSIONS,
+} from '../../utils/permissions';
 import { onStockUpdated } from '../../services/socketService';
 
 /**
@@ -64,10 +72,21 @@ const Balance = ({ label, value, accent }) => (
  * move only through the stock ledger (BR-03), and the server rejects them here
  * regardless of what the UI offers.
  */
-const DetailPanel = ({ item, onClose, canEdit, canEditBox, onSave, saving }) => {
+const DetailPanel = ({
+  item, onClose, canEdit, canEditBox, canDelete, onDelete,
+  onRename, renamingSaving, onSave, saving,
+}) => {
   const [form, setForm] = useState(null);
+  // Renaming the code is its own small mode in the header, separate from the
+  // form's Save — the two have different rules and different failure modes.
+  const [renaming, setRenaming] = useState(false);
+  const [newCode, setNewCode] = useState('');
 
   useEffect(() => {
+    // A different SKU is a different code — without this, opening another row
+    // while renaming would offer the previous one's code for the new row.
+    setRenaming(false);
+    setNewCode(item?.skuCode ?? '');
     if (!item) { setForm(null); return; }
     setForm({
       description: item.description || '',
@@ -124,8 +143,54 @@ const DetailPanel = ({ item, onClose, canEdit, canEditBox, onSave, saving }) => 
           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
             {item.brand}
           </p>
-          <h3 className="text-lg font-black text-slate-900 truncate">{item.skuCode}</h3>
-          {item.msilCode && (
+          {/* The SKU CODE is the business key, so it is edited here on its own
+              rather than as another field in the form below — it is refused for
+              a SKU anything has transacted against, and on success the item's
+              identity changes, which the page has to follow. */}
+          {renaming ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                value={newCode}
+                onChange={(e) => setNewCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') onRename(newCode);
+                  if (e.key === 'Escape') { setRenaming(false); setNewCode(item.skuCode); }
+                }}
+                autoFocus
+                aria-label="New SKU code"
+                className="min-w-0 flex-1 px-2 py-1 text-base font-mono font-bold bg-white border border-primary-400 rounded-lg outline-none focus:ring-1 focus:ring-primary-500"
+              />
+              <button
+                onClick={() => onRename(newCode)}
+                disabled={renamingSaving || !newCode.trim() || newCode.trim() === item.skuCode}
+                className="p-1.5 rounded-lg text-success-600 hover:bg-success-50 disabled:opacity-40 disabled:pointer-events-none"
+                title="Save the new code"
+              >
+                {renamingSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+              </button>
+              <button
+                onClick={() => { setRenaming(false); setNewCode(item.skuCode); }}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
+                title="Cancel"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          ) : (
+            <h3 className="text-lg font-black text-slate-900 truncate flex items-center gap-1.5">
+              <span className="truncate">{item.skuCode}</span>
+              {canEdit && (
+                <button
+                  onClick={() => { setNewCode(item.skuCode); setRenaming(true); }}
+                  className="p-1 rounded-lg text-slate-300 hover:text-primary-600 hover:bg-primary-50 transition-colors shrink-0"
+                  title="Change the SKU code"
+                >
+                  <Pencil size={14} />
+                </button>
+              )}
+            </h3>
+          )}
+          {item.msilCode && !renaming && (
             <p className="text-xs font-semibold text-slate-500">MSIL {item.msilCode}</p>
           )}
         </div>
@@ -254,13 +319,25 @@ const DetailPanel = ({ item, onClose, canEdit, canEditBox, onSave, saving }) => 
         </div>
       </div>
 
-      {canEdit && (
-        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={handleSave} loading={saving}>
-            {!saving && <Save size={15} className="mr-2" />}
-            Save Changes
-          </Button>
+      {(canEdit || canDelete) && (
+        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex items-center gap-2">
+          {/* Left, away from Save, and only for the permission that governs it.
+              The dialog behind it checks what uses the SKU before offering to
+              remove anything. */}
+          {canDelete && (
+            <Button variant="danger" size="sm" onClick={() => onDelete(item)}>
+              <Trash2 size={15} className="mr-2" />Delete SKU
+            </Button>
+          )}
+          <div className="ml-auto flex gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+            {canEdit && (
+              <Button size="sm" onClick={handleSave} loading={saving}>
+                {!saving && <Save size={15} className="mr-2" />}
+                Save Changes
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </motion.aside>
@@ -295,6 +372,11 @@ export const InventoryMaster = () => {
   // exist under more than one brand.
   const [adjusting, setAdjusting] = useState(null);
   const [lookupOpen, setLookupOpen] = useState(false);
+  // The two ends of a SKU's life. Editing is the detail panel, which
+  // already existed; these are creating one and removing one.
+  const [addOpen, setAddOpen] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [renamingCode, setRenamingCode] = useState(false);
 
   const togglePick = (skuCode) => setPicked((prev) => {
     const next = new Set(prev);
@@ -368,6 +450,9 @@ export const InventoryMaster = () => {
   // inputs but only an Admin may move a SKU's box. Enforced server-side too.
   const canEditBox = canEditBoxNo(user);
   const canAdjust = canAdjustStock(user);
+  // Admin only, and narrower than editing on purpose: a SKU code is a
+  // business key other records name, so removing one is not maintenance.
+  const canDelete = hasPermission(user, PERMISSIONS.DELETE_SKU);
   const brands = allowedBrands(user);
   const missingInputs = items.filter((i) => !i.hasPlanningInputs).length;
 
@@ -379,12 +464,42 @@ export const InventoryMaster = () => {
     else toast.error(res.error);
   };
 
+  /**
+   * Change the SKU code.
+   *
+   * The item's IDENTITY changes, so this is not a field save: the panel is
+   * keyed on the code, and so is the list row behind it. On success the panel
+   * is reopened under the new code and the list refetched, otherwise the screen
+   * would keep showing — and saving against — a code that no longer exists.
+   */
+  const handleRename = async (nextCode) => {
+    const from = selected.skuCode;
+    setRenamingCode(true);
+    try {
+      const res = await inventoryApi.renameSkuCode(from, selected.brand, nextCode);
+      toast.success(res.message || `${from} is now ${res.to}.`);
+      await fetchItems();
+      await openItem(res.to);
+    } catch (err) {
+      // The refusal explains what holds the code — it is long on purpose and
+      // worth reading, so it stays up longer than a normal toast.
+      toast.error(err.response?.data?.message || 'The SKU code could not be changed.', { duration: 9000 });
+    } finally {
+      setRenamingCode(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Inventory Master"
         actions={(
           <div className="flex items-center gap-2">
+          {canEditPlanning(user) && (
+            <Button size="sm" onClick={() => setAddOpen(true)}>
+              <PackagePlus size={15} className="mr-2" />Add SKU
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setLookupOpen(true)}>
             <Upload size={15} className="mr-2" />Import
           </Button>
@@ -701,6 +816,10 @@ export const InventoryMaster = () => {
                 onClose={closeItem}
                 canEdit={canEdit}
                 canEditBox={canEditBox}
+                canDelete={canDelete}
+                onDelete={(item) => setDeleting({ skuCode: item.skuCode, brand: item.brand })}
+                onRename={handleRename}
+                renamingSaving={renamingCode}
                 onSave={handleSave}
                 saving={saving}
               />
@@ -731,6 +850,26 @@ export const InventoryMaster = () => {
         // throw away the context the warning panel is describing.
         onDone={() => fetchItems()}
       />
+
+      {addOpen && (
+        <AddSkuModal
+          brands={brands}
+          canSetBoxNo={canEditBox}
+          onClose={() => setAddOpen(false)}
+          // Straight into the panel: the point of adding a SKU is usually to
+          // finish describing it, and a toast that vanishes is not a next step.
+          onCreated={(item) => { fetchItems(); openItem(item.skuCode); }}
+        />
+      )}
+
+      {deleting && (
+        <DeleteSkuModal
+          skuCode={deleting.skuCode}
+          brand={deleting.brand}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => { setDeleting(null); closeItem(); fetchItems(); }}
+        />
+      )}
 
       <SkuLookupModal
         open={lookupOpen}

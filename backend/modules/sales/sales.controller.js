@@ -15,7 +15,7 @@ import {
   adjustReservedQty, adjustConsumedQty,
 } from '../../utils/stockLedger.js';
 import { recordAudit } from '../../utils/auditLog.js';
-import { fillCustomerContact } from '../../utils/customerContact.js';
+import { attachCustomerDetails } from '../../utils/customerContact.js';
 import {
   QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
 } from '../../utils/bookingJourney.js';
@@ -175,7 +175,7 @@ export const getBookings = async (req, res, next) => {
 
     // One lookup for every row on the screen, not one per booking.
     const boxNumbers = await currentBoxNumbers(rows);
-    const all = await fillCustomerContact(
+    const all = await attachCustomerDetails(
       [...byBooking.values()].map((b) => shapeBooking(b, boxNumbers)),
     );
 
@@ -210,7 +210,7 @@ export const getBookingDetail = async (req, res, next) => {
     }
     res.status(200).json({
       success: true,
-      data: (await fillCustomerContact([shapeBooking(rows, await currentBoxNumbers(rows))]))[0],
+      data: (await attachCustomerDetails([shapeBooking(rows, await currentBoxNumbers(rows))]))[0],
     });
   } catch (error) {
     next(error);
@@ -636,7 +636,7 @@ export const updateBookingItems = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: (await fillCustomerContact([shapeBooking(updated, await currentBoxNumbers(updated))]))[0],
+      data: (await attachCustomerDetails([shapeBooking(updated, await currentBoxNumbers(updated))]))[0],
       changes,
     });
   } catch (error) {
@@ -816,7 +816,7 @@ export const raisePo = async (req, res, next) => {
 
     io.emit('po-generated', { orderId, poNumber });
 
-    res.status(200).json({ success: true, data: (await fillCustomerContact([shapeBooking(updated)]))[0] });
+    res.status(200).json({ success: true, data: (await attachCustomerDetails([shapeBooking(updated)]))[0] });
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ success: false, message: error.message });

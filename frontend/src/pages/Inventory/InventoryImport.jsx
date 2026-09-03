@@ -811,6 +811,9 @@ export const InventoryImport = () => {
           isOpen={newSkuOpen}
           jobId={job?.jobId}
           skus={newSkus}
+          // The same list the upload form offers. Brand is asked per SKU now,
+          // because one file can carry new parts for more than one brand.
+          brands={brands}
           saving={savingNewSkus}
           onSave={saveNewSkuDetails}
           onClose={() => setNewSkuOpen(false)}

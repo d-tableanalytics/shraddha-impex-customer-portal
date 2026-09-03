@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { inventoryApi } from "../services/inventory";
+import { describeRequestFailure } from "../services/api";
 
 /**
  * Import / export state (IMS Module M9).
@@ -132,7 +133,9 @@ export const useImportStore = create((set, get) => ({
       set((s) => ({ job: { ...s.job, newSkus: res.newSkus }, savingNewSkus: false }));
       return { ok: true, ...res };
     } catch (err) {
-      const message = err.response?.data?.message || "The new SKU details could not be saved";
+      // Distinguishes "the server said no" from "nothing came back", because
+      // the second may mean the answers WERE saved and only the reply was lost.
+      const message = describeRequestFailure(err, "The new SKU details could not be saved");
       set({ savingNewSkus: false });
       return { ok: false, message };
     }

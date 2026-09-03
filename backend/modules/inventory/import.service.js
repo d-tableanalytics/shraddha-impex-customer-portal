@@ -283,19 +283,24 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
       // Not an error when the sheet may create SKUs — it just means this row is
       // a new one, and a new one has no brand to resolve from, so it must say.
       if (template.brandFromJobForNewSku) {
-        // New SKU: take the Brand selected for the whole upload. Without one
-        // there is nothing to create the product under, and guessing would file
-        // it against the wrong brand silently.
-        if (context.jobBrand) {
-          data.brand = context.jobBrand;
-        } else {
-          errors.push({
-            category: 'required', column: 'SKU Code',
-            message: `${data.skuCode} is not in the catalogue yet, so it will be created — `
-              + 'choose a Brand on the upload form first.',
-            value: data.skuCode,
-          });
-        }
+        /**
+         * A NEW SKU. Its brand comes from the upload form when one was chosen,
+         * and OTHERWISE IS LEFT UNSET FOR THE PROMPT TO ASK.
+         *
+         * This used to reject the row — "choose a Brand on the upload form
+         * first" — and that was the wrong shape of answer twice over. A
+         * rejected row creates nothing, so the new-SKU prompt never saw it and
+         * the file imported everything except the part the user was adding,
+         * quietly. And a brand is a per-SKU fact rather than a per-file one: a
+         * sheet can carry new parts for two brands at once, which one dropdown
+         * on the upload form cannot express.
+         *
+         * So the row stays VALID with no brand, and the brand is collected
+         * alongside the SKU's other mandatory details before the import runs.
+         * Nothing is created without one: confirmJob() refuses while any new
+         * SKU is unanswered, and `brand` is one of the answers.
+         */
+        if (context.jobBrand) data.brand = context.jobBrand;
       } else if (template.brandRequiredForNewSku) {
         errors.push({
           category: 'required', column: 'Brand',
@@ -593,13 +598,30 @@ export const createImportJob = async ({
       // never going to exist.
       if (result.valid && template.requiresNewSkuDetails && result.data?.isNewSku
           && !newSkus.has(result.data.skuCode)) {
+        // Every field the upload already knows is PREFILLED rather than left
+        // blank, so the prompt is usually a confirmation rather than a form.
+        // What it does not know stays null, which is what makes it get asked.
+        const sheetQuantity = result.data.quantity;
         newSkus.set(result.data.skuCode, {
           skuCode: result.data.skuCode,
-          brand: result.data.brand,
           description: result.data.description || null,
           msilCode: result.data.msilCode || null,
-          quantity: Number(result.data.quantity) || 0,
           rowNumber: row.rowNumber,
+          // From the Brand chosen on the upload form, when one was.
+          brand: result.data.brand || null,
+          /**
+           * From the sheet's Quantity column, when it carries one.
+           *
+           * `null` — not zero — when the cell is blank, because the two mean
+           * different things: a blank cell is "nobody has said", which the
+           * prompt must ask about, and a zero is "the part exists, the stock
+           * has not arrived", which is an answer. A negative figure is a
+           * DEDUCTION on this sheet and cannot be an opening stock, so it is
+           * left unanswered for the prompt to correct rather than carried in.
+           */
+          availableStock: (sheetQuantity === null || sheetQuantity === undefined || sheetQuantity < 0)
+            ? null
+            : Number(sheetQuantity),
           moq: null,
           leadTime: null,
           safetyFactor: null,
@@ -798,6 +820,12 @@ const applyBoxNumbers = async ({ rows, landed, job, chunkIndex, actor, req }) =>
   );
 };
 
+/**
+ * Answers that describe the SKU but are not columns on the product document.
+ * See the note where this is used in processMaster().
+ */
+const NON_PRODUCT_NEW_SKU_FIELDS = new Set(['boxNo', 'brand', 'availableStock']);
+
 /** Products are the master itself — written directly, with M1's own normalisers. */
 const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
   const successes = [];
@@ -812,13 +840,41 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
    */
   const newSkuDetails = new Map((job.newSkus || []).map((s) => [s.skuCode, s]));
 
-  // The Box Number given for a new SKU is written onto the row, so it goes
-  // through applyBoxNumbers() below like the sheet's own column and lands with
-  // the same audit entry rather than a second, quieter one.
+  /**
+   * The answers are written ONTO THE ROW before anything below reads it.
+   *
+   * Everything downstream — the master upsert, applyBoxNumbers(), the ledger
+   * posting in postQuantities() — already knows how to read a row's brand, box
+   * number and quantity. Overlaying the prompt's answers here means none of
+   * them needs a second code path for "a SKU being created", and the box number
+   * in particular lands through the same writer, with the same audit entry,
+   * rather than a second quieter one.
+   *
+   * The BRAND is the important one: the row is staged with no brand when the
+   * upload form did not name one, and this is where the prompt's answer becomes
+   * the row's. Without it the upsert would have nothing to file the product
+   * under.
+   */
   for (const row of rows) {
     if (!row.data?.isNewSku) continue;
-    const boxNo = newSkuDetails.get(row.data.skuCode)?.boxNo;
-    if (boxNo) row.data.boxNo = boxNo;
+    const answered = newSkuDetails.get(row.data.skuCode);
+    if (!answered) continue;
+
+    if (answered.brand) row.data.brand = answered.brand;
+    if (answered.boxNo) row.data.boxNo = answered.boxNo;
+    /**
+     * The ANSWER is the opening stock, and it wins.
+     *
+     * That is not a contradiction of "use the Excel value when it has one": the
+     * prompt is PREFILLED from the sheet, so leaving it alone imports exactly
+     * what the file said. What it also allows is correcting an obviously wrong
+     * figure at the point of confirming it, without going back to the
+     * spreadsheet — and the value the user last looked at and approved is the
+     * one that should land.
+     */
+    if (answered.availableStock !== null && answered.availableStock !== undefined) {
+      row.data.quantity = answered.availableStock;
+    }
   }
 
   for (const row of rows) {
@@ -873,7 +929,15 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
     const onInsert = {};
     if (details) {
       for (const field of NEW_SKU_FIELD_NAMES) {
-        if (field === 'boxNo') continue;
+        // Three of the six answers are NOT product fields and must not be
+        // written as though they were:
+        //   boxNo         — applyBoxNumbers() is its sole writer, because it
+        //                   has to read the previous value to record the change
+        //   brand         — the discriminator stamps it on write; setting it
+        //                   here would fight the model for the same path
+        //   availableStock— stock, not master data. It goes through the ledger
+        //                   in postQuantities() like every other quantity
+        if (NON_PRODUCT_NEW_SKU_FIELDS.has(field)) continue;
         const value = details[field];
         if (value !== null && value !== undefined && !(field in set)) onInsert[field] = value;
       }
@@ -1570,6 +1634,27 @@ export const setNewSkuDetails = async ({ jobId, entries, actor, req }) => {
       errors.push(`${skuCode}: ${Object.values(problems).join('; ')}.`);
       continue;
     }
+
+    /**
+     * The brand has to be a REAL brand this uploader may write to.
+     *
+     * newSku.rules.js only knows the answer is non-empty — it is a leaf and has
+     * no business knowing the brand list or who may see which. Checking it here
+     * is what lets confirmJob() treat "brand is filled in" as sufficient: a bad
+     * one can never have been stored.
+     */
+    const canonical = ALL_BRANDS.find(
+      (b) => b.toLowerCase() === String(values.brand).toLowerCase(),
+    );
+    if (!canonical) {
+      errors.push(`${skuCode}: "${values.brand}" is not a brand. Expected ${ALL_BRANDS.join(', ')}.`);
+      continue;
+    }
+    if (!allowedBrands(actor).includes(canonical)) {
+      errors.push(`${skuCode}: you do not have access to ${canonical}.`);
+      continue;
+    }
+    values.brand = canonical;
 
     Object.assign(target, values);
     applied.push({ skuCode, ...values });

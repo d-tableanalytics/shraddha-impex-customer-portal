@@ -436,6 +436,47 @@ export const OrderDrawer = () => {
                 </div>
               )}
 
+              {/* The customer's registered master details, from User
+                  Management. Read live, so anything an admin fills in there
+                  appears on past bookings too.
+
+                  Kept SEPARATE from the delivery pair below, which is the
+                  booking's own snapshot and may deliberately differ once a PO
+                  quotes a different address. Showing one in place of the other
+                  is how a desk ships to the wrong place. */}
+              {selectedOrder.customerProfile && (
+                selectedOrder.customerProfile.location
+                || selectedOrder.customerProfile.phone
+                || selectedOrder.customerProfile.gstNumber
+                || selectedOrder.customerProfile.shopNumber
+                || selectedOrder.customerProfile.vendorNumber
+              ) && (
+                <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+                  <div className="w-8 h-8 rounded-full bg-sky-50 flex items-center justify-center shrink-0">
+                    <User size={16} className="text-sky-600" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">
+                      Customer master details
+                    </p>
+                    <dl className="mt-1 space-y-0.5 text-xs">
+                      {[
+                        ['Location', selectedOrder.customerProfile.location],
+                        ['Phone', selectedOrder.customerProfile.phone],
+                        ['Shop No.', selectedOrder.customerProfile.shopNumber],
+                        ['Vendor No.', selectedOrder.customerProfile.vendorNumber],
+                        ['GST No.', selectedOrder.customerProfile.gstNumber],
+                      ].filter(([, v]) => v).map(([label, value]) => (
+                        <div key={label} className="flex gap-2">
+                          <dt className="text-slate-400 font-semibold w-20 shrink-0">{label}</dt>
+                          <dd className="text-slate-700 font-semibold break-words min-w-0">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                </div>
+              )}
+
               {/* Delivery location and its phone number — the pair the pick
                   list prints, shown here so it can be checked before printing. */}
               {(selectedOrder.location || selectedOrder.phoneNumber) && (

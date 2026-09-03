@@ -39,6 +39,38 @@ api.interceptors.request.use(
   }
 );
 
+/**
+ * Turn a failed request into something a person can act on.
+ *
+ * THE TWO FAILURES LOOK IDENTICAL TO A CATCH BLOCK AND ARE NOTHING ALIKE:
+ *
+ *   • The server answered and said no. It always sends a `message` — the global
+ *     error handler guarantees one — so that message is the whole story and is
+ *     what should be shown.
+ *
+ *   • No answer arrived at all: the API was restarting, the network dropped, or
+ *     the browser cancelled it. `err.response` is undefined, so reading
+ *     `err.response?.data?.message` yields nothing and every caller written as
+ *     `?? "Something went wrong"` reports its own generic sentence.
+ *
+ * That second case is the one worth naming, because the advice differs: the
+ * request may well have been PROCESSED before the connection died, so the right
+ * move is to reload and check rather than to assume nothing happened. A caller
+ * that cannot tell the two apart sends people looking for a bug in the wrong
+ * place — which is exactly what a generic "could not be saved" did.
+ */
+export const describeRequestFailure = (err, fallback = "The request failed") => {
+  if (err?.response) {
+    return err.response.data?.message
+      || `The server refused the request (${err.response.status} ${err.response.statusText || ""}).`.trim();
+  }
+  if (err?.code === "ECONNABORTED") {
+    return "The server took too long to answer. It may still have processed the request — reload and check before trying again.";
+  }
+  return `${fallback} — the server did not respond. It may be restarting, or the connection dropped. `
+    + "The request may still have gone through, so reload and check before trying again.";
+};
+
 // Add a response interceptor to handle token expiry
 api.interceptors.response.use(
   (response) => response,

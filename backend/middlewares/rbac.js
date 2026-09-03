@@ -40,6 +40,17 @@ export const PERMISSIONS = {
   PERFORM_COUNT: 'perform_count',                       // (M7) enter counts
   APPROVE_COUNT: 'approve_count',                       // (M7) approve variances and post
   TRANSFER_STOCK: 'transfer_stock',                     // (M7) inter-location transfers
+  /**
+   * (M1) Remove a SKU from the catalogue entirely.
+   *
+   * Its own permission, and Admin-only, for the same reason MANAGE_BOX_NUMBER
+   * is: an Inventory Manager maintains what a SKU says, and deleting one is not
+   * maintenance — it is the removal of a business key that orders, movements
+   * and counts refer to by name. The service refuses outright to delete a SKU
+   * anything has ever referenced, so this permission governs only the removal
+   * of catalogue entries created in error.
+   */
+  DELETE_SKU: 'delete_sku',
 };
 
 /**
