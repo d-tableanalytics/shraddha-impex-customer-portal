@@ -71,7 +71,16 @@ export const canonicalEmployeeRecordSchema = z
     lastName: trimmed(80),
 
     // ---- contact --------------------------------------------------------
-    email: emailSchema,
+    /**
+     * The portal login to create or link, when this person is to have one.
+     *
+     * OPTIONAL, because `Employee.userId` is. A source that leaves it out is
+     * saying "this employee has no login", which is a legitimate record: they
+     * take part in everything the HRMS does not gate behind authentication.
+     * It is not a way to skip a login by accident either - the dependency
+     * check still refuses two rows that claim the SAME address.
+     */
+    email: emailSchema.optional().nullable(),
     personalEmail: emailSchema.optional().nullable(),
     phone: optionalText(20),
     phone2: optionalText(20),

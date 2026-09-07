@@ -284,3 +284,67 @@ test('consent purposes cover selfie and location separately (AD-15)', () => {
   assert.ok(CONSENT_PURPOSE_LIST.includes('attendance_selfie'));
   assert.ok(CONSENT_PURPOSE_LIST.includes('attendance_location'));
 });
+
+// ---------------------------------------------------------------------------
+// The shared/ portability contract (README rule 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * `shared/` is imported by the Express app AND bundled into the SPA by Vite, so
+ * README rule 1 requires it to "run unchanged in Node and in a browser bundle".
+ *
+ * This test exists because that rule was broken and nothing caught it:
+ * `constants/attendance.js` read `process.env.HRMS_ATTENDANCE_TIME_ZONE`, three
+ * Attendance screens import that module, and `/hrms/attendance` died in the
+ * browser with "process is not defined". Every test still passed, because the
+ * Node test environment HAS a `process` - which is exactly why the rule needs
+ * enforcing by a scan rather than by the suite happening to exercise it.
+ *
+ * Comments are stripped before scanning, so a file may still DISCUSS
+ * `process.env` (this is how the attendance constant documents why it must not
+ * use one) without tripping the check.
+ */
+test('shared/ contains no Node-only or bundler-only globals (README rule 1)', async () => {
+  const { readdir, readFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+
+  const sharedRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'shared');
+
+  const files = [];
+  const walk = async (dir) => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.name.endsWith('.js')) files.push(full);
+    }
+  };
+  await walk(sharedRoot);
+
+  assert.ok(files.length > 0, 'the scan must actually find files');
+
+  // Block comments then line comments. Crude, but these files contain no
+  // regex or string literal that looks like a comment, and a false NEGATIVE
+  // here is impossible - only a false positive would be, which stripping avoids.
+  const stripComments = (src) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  const banned = [
+    [/\bprocess\s*\./, 'process.* (Node-only; undefined in the browser)'],
+    [/\b__dirname\b/, '__dirname (Node-only)'],
+    [/\bimport\.meta\.env\b/, 'import.meta.env (Vite-only; undefined in Node)'],
+    [/\brequire\s*\(/, 'require() (CommonJS; this tree is ESM)'],
+  ];
+
+  const violations = [];
+  for (const file of files) {
+    const code = stripComments(await readFile(file, 'utf8'));
+    for (const [pattern, why] of banned) {
+      if (pattern.test(code)) {
+        violations.push(`${path.relative(sharedRoot, file)} uses ${why}`);
+      }
+    }
+  }
+
+  assert.deepEqual(violations, [], `shared/ must stay portable:\n  ${violations.join('\n  ')}`);
+});

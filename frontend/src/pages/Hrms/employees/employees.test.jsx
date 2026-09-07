@@ -50,8 +50,10 @@ const PRIYA = {
   dateOfBirth: null,
   reportingManagerId: "652f000000000000000000a2",
   reportingManagerName: "Rahul Verma",
-  departmentId: null,
-  locationId: null,
+  departmentId: "652f0000000000000000d001",
+  departmentName: "Engineering",
+  locationId: "652f0000000000000000c001",
+  locationName: "Bangalore",
   fatherName: "Suresh Sharma",
   motherName: null,
   permanentAddress: null,
@@ -85,6 +87,16 @@ const RAHUL = {
   bankAccountNumber: null,
 };
 
+/** The Org Structure catalogues. Live rows only, as the API returns. */
+const DEPARTMENTS = [
+  { id: "652f0000000000000000d001", code: "ENG", name: "Engineering", employeeCount: 1 },
+  { id: "652f0000000000000000d002", code: "ADM", name: "Admin", employeeCount: 0 },
+];
+const LOCATIONS = [
+  { id: "652f0000000000000000c001", code: "BLR", name: "Bangalore", employeeCount: 1 },
+  { id: "652f0000000000000000c002", code: "AMD", name: "Ahmedabad", employeeCount: 0 },
+];
+
 /** Every request the transport saw, so a test can assert on params. */
 let calls = [];
 
@@ -108,6 +120,8 @@ function installTransport(overrides = {}) {
     if (overrides[key]) return overrides[key](config);
 
     if (key === "GET /hrms/employees/custom-fields") return envelope([]);
+    if (key === "GET /hrms/org/departments") return envelope(DEPARTMENTS);
+    if (key === "GET /hrms/org/locations") return envelope(LOCATIONS);
     if (key === "GET /hrms/employees") {
       // The manager picker asks for active employees only.
       if (params?.pageSize === 200) return listEnvelope([RAHUL]);
@@ -272,15 +286,112 @@ describe("search and filters", () => {
     await waitFor(() => expect(lastListParams()).not.toHaveProperty("status"));
   });
 
-  it("shows Department and Location disabled, because Org Structure is not built", async () => {
+  it("populates Department and Location from the live catalogues", async () => {
+    // These were inert until Org Structure shipped. They are now the real
+    // thing, and the catalogue rows arrive from /org/departments.
     signIn([R.HR_ADMIN]);
     at("/hrms/employees", <EmployeesPage />);
     await screen.findByText("Priya Sharma");
 
-    // Present but inert, rather than hidden: the directory is honest about the
-    // filters the reference has, and about the ones this build cannot answer.
-    expect(screen.getByRole("button", { name: /Department/ }).disabled).toBe(true);
-    expect(screen.getByRole("button", { name: /Location/ }).disabled).toBe(true);
+    const dept = screen.getByRole("button", { name: /Department/ });
+    expect(dept.disabled).toBeFalsy();
+
+    await userEvent.click(dept);
+    expect(await screen.findByRole("button", { name: "ENG · Engineering" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "ADM · Admin" })).toBeTruthy();
+  });
+
+  it("filters by department, resetting to page 1", async () => {
+    signIn([R.HR_ADMIN]);
+    at("/hrms/employees", <EmployeesPage />);
+    await screen.findByText("Priya Sharma");
+
+    await userEvent.click(screen.getByRole("button", { name: /Department/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "ENG · Engineering" }));
+
+    await waitFor(() => expect(lastListParams()?.departmentId).toBe(DEPARTMENTS[0].id));
+    expect(lastListParams()?.page).toBe(1);
+  });
+
+  it("filters by location", async () => {
+    signIn([R.HR_ADMIN]);
+    at("/hrms/employees", <EmployeesPage />);
+    await screen.findByText("Priya Sharma");
+
+    await userEvent.click(screen.getByRole("button", { name: /Location/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "BLR · Bangalore" }));
+
+    await waitFor(() => expect(lastListParams()?.locationId).toBe(LOCATIONS[0].id));
+  });
+
+  it("sends both filters together, which the backend ANDs", async () => {
+    signIn([R.HR_ADMIN]);
+    at("/hrms/employees", <EmployeesPage />);
+    await screen.findByText("Priya Sharma");
+
+    await userEvent.click(screen.getByRole("button", { name: /Department/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "ENG · Engineering" }));
+    await waitFor(() => expect(lastListParams()?.departmentId).toBeTruthy());
+
+    await userEvent.click(screen.getByRole("button", { name: /Location/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "BLR · Bangalore" }));
+
+    await waitFor(() => {
+      const params = lastListParams();
+      expect(params.departmentId).toBe(DEPARTMENTS[0].id);
+      expect(params.locationId).toBe(LOCATIONS[0].id);
+    });
+  });
+
+  it("Clear drops both reference filters from the query", async () => {
+    signIn([R.HR_ADMIN]);
+    at("/hrms/employees", <EmployeesPage />);
+    await screen.findByText("Priya Sharma");
+
+    await userEvent.click(screen.getByRole("button", { name: /Department/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "ENG · Engineering" }));
+    await waitFor(() => expect(lastListParams()?.departmentId).toBeTruthy());
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+    await waitFor(() => {
+      const params = lastListParams();
+      expect(params).not.toHaveProperty("departmentId");
+      expect(params).not.toHaveProperty("locationId");
+    });
+  });
+
+  it("keeps paging and sorting working alongside the reference filters", async () => {
+    signIn([R.HR_ADMIN]);
+    at("/hrms/employees", <EmployeesPage />);
+    await screen.findByText("Priya Sharma");
+
+    await userEvent.click(screen.getByRole("button", { name: /Department/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "ENG · Engineering" }));
+    await waitFor(() => expect(lastListParams()?.departmentId).toBeTruthy());
+
+    await userEvent.click(screen.getByRole("columnheader", { name: /Employee/ }));
+
+    await waitFor(() => {
+      const params = lastListParams();
+      // The filter survives a sort, and the sort does not lose the page size.
+      expect(params.departmentId).toBe(DEPARTMENTS[0].id);
+      expect(params.sortBy).toBe("firstName");
+      expect(params.pageSize).toBe(25);
+      expect(params.page).toBe(1);
+    });
+  });
+
+  it("a catalogue that fails to load leaves the directory usable", async () => {
+    // The employee list does not depend on Org Structure; an outage there must
+    // not take the directory down with it.
+    signIn([R.HR_ADMIN]);
+    installTransport({
+      "GET /hrms/org/departments": () => Promise.reject({ response: { status: 500, data: {} } }),
+    });
+    at("/hrms/employees", <EmployeesPage />);
+
+    expect(await screen.findByText("Priya Sharma")).toBeTruthy();
   });
 });
 
@@ -398,6 +509,57 @@ describe("employee profile", () => {
     expect(screen.getByText("priya@shraddha.test")).toBeTruthy();
     expect(screen.getByText("Suresh Sharma")).toBeTruthy();
     expect(screen.getByText("Rahul Verma")).toBeTruthy();
+  });
+
+  it("shows the department and location by NAME, not by id", async () => {
+    await open([R.HR_ADMIN]);
+
+    expect(screen.getByText("Engineering")).toBeTruthy();
+    expect(screen.getByText("Bangalore")).toBeTruthy();
+    // The raw ObjectIds must not reach the page.
+    expect(document.body.textContent).not.toMatch(/652f0000000000000000[dc]00/);
+  });
+
+  it("resolves the names without a second round trip for the catalogue", async () => {
+    // The reference loads the whole department list into the profile just to
+    // map one id to one string. The server already resolved it.
+    await open([R.HR_ADMIN]);
+
+    expect(calls.some((c) => c.url === "/hrms/org/departments")).toBe(false);
+    expect(calls.some((c) => c.url === "/hrms/org/locations")).toBe(false);
+  });
+
+  it("renders an em dash when the employee has no department or location", async () => {
+    signIn([R.HR_ADMIN]);
+    installTransport({
+      [`GET /hrms/employees/${PRIYA.id}`]: () =>
+        envelope({
+          ...PRIYA,
+          departmentId: null,
+          departmentName: null,
+          locationId: null,
+          locationName: null,
+        }),
+    });
+    at(`/hrms/employees/${PRIYA.id}`, <EmployeeProfilePage />);
+    await screen.findAllByText("Priya Sharma");
+
+    const row = screen.getByText("Department").closest("div");
+    expect(within(row).getByText("—")).toBeTruthy();
+  });
+
+  it("still shows the name of a department that has since been retired", async () => {
+    // The employee is genuinely still assigned to it. A blank where a name used
+    // to be reads as a bug rather than as history.
+    signIn([R.HR_ADMIN]);
+    installTransport({
+      [`GET /hrms/employees/${PRIYA.id}`]: () =>
+        envelope({ ...PRIYA, departmentName: "Legacy Ops" }),
+    });
+    at(`/hrms/employees/${PRIYA.id}`, <EmployeeProfilePage />);
+    await screen.findAllByText("Priya Sharma");
+
+    expect(screen.getByText("Legacy Ops")).toBeTruthy();
   });
 
   it("shows sensitive fields as present, never as values", async () => {
@@ -549,6 +711,107 @@ describe("edit employee", () => {
 
     expect(screen.queryByText(/job details are read-only/i)).toBeNull();
     expect(screen.getByDisplayValue("Accounts Executive").disabled).toBe(false);
+  });
+
+  it("loads the department and location pickers from the live catalogues", async () => {
+    await open([R.HR_ADMIN]);
+
+    // The current values are shown, and the alternatives are selectable.
+    expect(screen.getByRole("button", { name: "ENG · Engineering" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "BLR · Bangalore" })).toBeTruthy();
+  });
+
+  it("changes the department and PATCHes only the id", async () => {
+    await open([R.HR_ADMIN]);
+
+    await userEvent.click(screen.getByRole("button", { name: "ENG · Engineering" }));
+    await userEvent.click(await screen.findByRole("button", { name: "ADM · Admin" }));
+    await userEvent.click(screen.getAllByRole("button", { name: /Save changes/i })[0]);
+
+    await waitFor(() => expect(calls.some((c) => c.method === "patch")).toBe(true));
+    const patched = calls.find((c) => c.method === "patch");
+
+    expect(patched.data).toEqual({ departmentId: DEPARTMENTS[1].id });
+    // The display name is never submitted - the server resolves it.
+    expect(patched.data).not.toHaveProperty("departmentName");
+  });
+
+  it("assigns a location on a record that had none", async () => {
+    signIn([R.HR_ADMIN]);
+    installTransport({
+      [`GET /hrms/employees/${PRIYA.id}`]: () =>
+        envelope({ ...PRIYA, locationId: null, locationName: null }),
+    });
+    at(`/hrms/employees/${PRIYA.id}/edit`, <EmployeeEditPage />);
+    await screen.findByDisplayValue("Priya");
+
+    await userEvent.click(screen.getByRole("button", { name: /No location/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "AMD · Ahmedabad" }));
+    await userEvent.click(screen.getAllByRole("button", { name: /Save changes/i })[0]);
+
+    await waitFor(() => expect(calls.some((c) => c.method === "patch")).toBe(true));
+    expect(calls.find((c) => c.method === "patch").data).toEqual({
+      locationId: LOCATIONS[1].id,
+    });
+  });
+
+  it("clears an optional reference by sending null, not by omitting it", async () => {
+    // The update schema is `.partial()`, so an omitted key means "unchanged".
+    // Clearing has to be explicit or the value would survive.
+    await open([R.HR_ADMIN]);
+
+    const dept = screen.getByRole("button", { name: "ENG · Engineering" });
+    await userEvent.click(within(dept.parentElement).getByRole("button", { name: /Clear selection/i }));
+    await userEvent.click(screen.getAllByRole("button", { name: /Save changes/i })[0]);
+
+    await waitFor(() => expect(calls.some((c) => c.method === "patch")).toBe(true));
+    expect(calls.find((c) => c.method === "patch").data).toEqual({ departmentId: null });
+  });
+
+  it("keeps a retired department visible rather than silently dropping it", async () => {
+    // The catalogue lists live rows only. Without putting the current value
+    // back, the picker would read as "nothing selected" for a department the
+    // employee genuinely has - and the next save would look like a deliberate
+    // clearing of a field nobody touched.
+    signIn([R.HR_ADMIN]);
+    installTransport({
+      [`GET /hrms/employees/${PRIYA.id}`]: () =>
+        envelope({
+          ...PRIYA,
+          departmentId: "652f0000000000000000dead",
+          departmentName: "Legacy Ops",
+        }),
+    });
+    at(`/hrms/employees/${PRIYA.id}/edit`, <EmployeeEditPage />);
+    await screen.findByDisplayValue("Priya");
+
+    expect(screen.getByRole("button", { name: /Legacy Ops \(retired\)/ })).toBeTruthy();
+  });
+
+  it("a retired reference is not resubmitted when something else is edited", async () => {
+    signIn([R.HR_ADMIN]);
+    installTransport({
+      [`GET /hrms/employees/${PRIYA.id}`]: () =>
+        envelope({
+          ...PRIYA,
+          departmentId: "652f0000000000000000dead",
+          departmentName: "Legacy Ops",
+        }),
+    });
+    at(`/hrms/employees/${PRIYA.id}/edit`, <EmployeeEditPage />);
+    await screen.findByDisplayValue("Priya");
+
+    const designation = screen.getByDisplayValue("Accounts Executive");
+    await userEvent.clear(designation);
+    await userEvent.type(designation, "Senior Accounts Executive");
+    await userEvent.click(screen.getAllByRole("button", { name: /Save changes/i })[0]);
+
+    await waitFor(() => expect(calls.some((c) => c.method === "patch")).toBe(true));
+    const patched = calls.find((c) => c.method === "patch");
+
+    // Only the dirty field. Resending the retired id would be rejected by the
+    // server, which validates references against LIVE rows only.
+    expect(patched.data).toEqual({ designation: "Senior Accounts Executive" });
   });
 
   it("reports a rejected save instead of navigating away", async () => {

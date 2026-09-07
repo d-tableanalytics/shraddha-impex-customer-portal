@@ -26,12 +26,19 @@ import { useHrmsPermissions } from "../../hooks/useHrmsPermissions";
  * since the route list is already public in the bundle.
  *
  * @param {string} [module]  additionally require this HRMS module
+ * @param {Array<{module:string,action:string,scope:string}>} [anyOf]
+ *   ANY-OF permission specs that grant entry, for a module whose sidebar gate
+ *   is wider than its own key. Reports is the case: `reports:payroll`,
+ *   `reports:hiring`, `reports:assets` and `reports:team` all admit a user, so
+ *   gating on `reports` alone would show four roles a nav item that bounces
+ *   them. `module` is still required and still decides whether the module is
+ *   BUILT — `anyOf` replaces only the permission half of that check.
  */
-export function HrmsProtectedRoute({ module }) {
+export function HrmsProtectedRoute({ module, anyOf = null }) {
   const load = useHrmsStore((s) => s.load);
   const loaded = useHrmsStore((s) => s.loaded);
   const loading = useHrmsStore((s) => s.loading);
-  const { hasAccess, usesModule } = useHrmsPermissions();
+  const { hasAccess, usesModule, can, implementedModules } = useHrmsPermissions();
   const location = useLocation();
 
   useEffect(() => {
@@ -57,7 +64,16 @@ export function HrmsProtectedRoute({ module }) {
 
   // `usesModule`, not `seesModule`: a module the actor is entitled to but that
   // is not built yet must not render a blank page either.
-  if (module && !usesModule(module)) {
+  //
+  // With `anyOf`, the two halves are checked separately — built is still
+  // `implementedModules`, but permitted is the wider ANY-OF, so this matches
+  // whatever `visibleHrmsNavItems` used to decide the nav entry.
+  const permitted = anyOf
+    ? anyOf.some((r) => can(r.module, r.action, r.scope))
+    : usesModule(module);
+  const built = !anyOf || implementedModules.includes(module);
+
+  if (module && !(permitted && built)) {
     return <Navigate to="/hrms/dashboard" replace />;
   }
 

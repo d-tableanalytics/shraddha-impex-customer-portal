@@ -24,7 +24,54 @@ import { HRMS_MODULES as M } from '../../shared/permissions/constants.js';
  * navigates to - listing `settings` here would put a nav link in front of a
  * page nobody has built.
  */
-export const IMPLEMENTED_HRMS_MODULES = Object.freeze([M.DASHBOARD, M.EMPLOYEES]);
+export const IMPLEMENTED_HRMS_MODULES = Object.freeze([
+  M.DASHBOARD,
+  M.EMPLOYEES,
+  M.ORG_STRUCTURE,
+  M.LEAVE,
+  // Punches, history, corrections, consent and selfies all have screens and
+  // endpoints behind them. Added in the same commit that ships them, per the
+  // note above.
+  M.ATTENDANCE,
+  M.EXPENSES,
+  M.EXITS,
+  M.ASSETS,
+  M.DOCUMENTS,
+  M.HELPDESK,
+  // Pay groups, components, structures, compensation, statutory configuration,
+  // the run lifecycle and payslips all have screens and endpoints behind them.
+  M.PAYROLL,
+  M.PAYROLL_STRUCTURE,
+  // Requisitions, postings, candidates, the pipeline, interviews and offers
+  // all have screens and endpoints behind them.
+  M.HIRING,
+  // Templates, checklists with per-task assignment, and the offer letter a new
+  // hire signs in the portal.
+  M.ONBOARDING,
+  // Goals, review cycles and calibration, the review queue, continuous
+  // feedback and 1:1s all have screens and endpoints behind them.
+  M.PERFORMANCE,
+  // Announcements, polls, peer recognition and the eNPS pulse all have screens
+  // and endpoints behind them.
+  M.ENGAGE,
+  // Headcount plans with derived actuals and budget, and the hiring plan
+  // calendar, both have screens and endpoints behind them.
+  M.PLANNING,
+  // The report catalogue, the three built-in reports and CSV export all have
+  // a screen and endpoints behind them. The four `reports:*` SUBMODULE keys
+  // stay planned: the reference grants them, gates on them, and then declares
+  // no report that requires any of them.
+  M.REPORTS,
+  // The notification centre: a page, a header bell, and twenty-one producer
+  // events raised by eleven other modules.
+  M.INBOX,
+  // The audit trail's read side: filters, paging and a redacted detail view.
+  M.AUDIT_LOGS,
+  // Company profile and branding, the role matrix, SSO and integrations.
+  // `settings:integrations` stays a submodule KEY rather than a nav entry -
+  // it gates the integration tabs, it is not a module of its own.
+  M.SETTINGS,
+]);
 
 /**
  * Modules whose permissions exist but whose implementation does not.

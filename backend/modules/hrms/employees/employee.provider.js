@@ -18,14 +18,20 @@ import {
 import User from '../../../models/User.js';
 import { hashPassword } from '../../../utils/password.js';
 import { sanitiseCustomFields } from '../../../utils/hrms/crypto/index.js';
+import { SENSITIVE_EMPLOYEE_FIELD_LIST } from '../../../shared/security/sensitive-fields.js';
 import { rebuildAllManagerChains, assertNoCycle } from './managerChain.js';
+import { buildSensitiveUpdate } from './sensitiveUpdate.js';
 import { HrmsValidationError } from '../hrms.errors.js';
+import {
+  assertRolesAssignable,
+  CUSTOMER_ROLE,
+} from '../../../shared/permissions/assignment.js';
 import crypto from 'node:crypto';
 
 const idStr = (v) => (v === null || v === undefined ? null : String(v));
 const isObjectId = (v) => mongoose.isValidObjectId(v);
 
-const toRef = (row, user) => ({
+const toRef = (row) => ({
   id: idStr(row._id),
   employeeCode: row.employeeCode,
   displayName: `${row.firstName ?? ''} ${row.lastName ?? ''}`.trim(),
@@ -88,6 +94,83 @@ export const employeeReferenceProvider = {
 // Import persistence port (AD-11)
 // ---------------------------------------------------------------------------
 
+/** Code -> id, de-duplicated, for a reference provider that answers `byCodes`. */
+async function codesToIds(provider, codes = []) {
+  const wanted = [...new Set(codes.filter(Boolean))];
+  if (wanted.length === 0) return new Map();
+  const refs = await provider.byCodes(wanted);
+  return new Map([...refs].map(([code, ref]) => [code, ref.id]));
+}
+
+/**
+ * The login for an employee the import is creating, or `null` when they get
+ * none.
+ *
+ * Returns the existing account when one already holds this address, a new
+ * suspended account when the record supplies an address nobody holds, and
+ * `null` when it supplies no address at all. Refuses rather than guessing
+ * whenever reuse would break an invariant - see the call site for which two and
+ * why.
+ *
+ * No address means no login, deliberately. `Employee.userId` is optional, and
+ * an employee without one takes part in everything the HRMS does not gate
+ * behind authentication; the alternative - inventing an address so that every
+ * record has an account - would put fiction in the User collection.
+ */
+async function linkOrCreateUser(record) {
+  if (!record.email) return null;
+
+  const existingUser = await User.findOne({ email: record.email })
+    .select('_id email role roles')
+    .lean();
+
+  if (existingUser) {
+    // The uniqueness check covers soft-deleted employees too: the unique index
+    // on userId does not exclude them, so a soft-deleted holder would still
+    // reject the write - just later, and less legibly.
+    const holder = await Employee.findOne({ userId: existingUser._id })
+      .select('employeeCode')
+      .lean();
+    if (holder && holder.employeeCode !== record.employeeCode) {
+      throw new HrmsValidationError(
+        `${record.employeeCode}: that login already belongs to employee ${holder.employeeCode}. ` +
+          'One account resolves to exactly one employee, so it cannot be linked to a second.',
+      );
+    }
+
+    if (existingUser.role === CUSTOMER_ROLE) {
+      throw new HrmsValidationError(
+        `${record.employeeCode}: that login is a ${CUSTOMER_ROLE} account. ` +
+          'AD-4 makes Customer and Employee mutually exclusive, so it cannot become an employee login ' +
+          'until its portal role is corrected.',
+      );
+    }
+
+    // Grant HRMS access without disturbing the portal role the account already
+    // holds - a salesperson who is also an employee keeps role='Sales'.
+    const roles = [...new Set([...(existingUser.roles ?? []), 'hrms_employee'])];
+    if (roles.length !== (existingUser.roles ?? []).length) {
+      assertRolesAssignable(existingUser.role, roles);
+      await User.updateOne({ _id: existingUser._id }, { $set: { roles } });
+    }
+    return existingUser;
+  }
+
+  // Created suspended with an unguessable password: an import must never mint
+  // an account someone can sign into before HR has deliberately invited them.
+  const [user] = await User.create([
+    {
+      email: record.email,
+      password: await hashPassword(crypto.randomBytes(24).toString('base64url')),
+      user: `${record.firstName} ${record.lastName}`,
+      role: 'Management',
+      roles: ['hrms_employee'],
+      status: 'Inactive',
+    },
+  ]);
+  return user;
+}
+
 /**
  * Implements the port the Phase 0 import pipeline writes through.
  *
@@ -113,13 +196,11 @@ export const employeePersistencePort = {
    * then and would be a silent bug now.
    */
   async resolveDepartmentCodes(codes = []) {
-    const refs = await departmentReferenceProvider.byCodes(codes);
-    return new Map([...refs].map(([code, ref]) => [code, ref.id]));
+    return codesToIds(departmentReferenceProvider, codes);
   },
 
   async resolveLocationCodes(codes = []) {
-    const refs = await locationReferenceProvider.byCodes(codes);
-    return new Map([...refs].map(([code, ref]) => [code, ref.id]));
+    return codesToIds(locationReferenceProvider, codes);
   },
 
   /**
@@ -137,11 +218,37 @@ export const employeePersistencePort = {
     let updated = 0;
     const byCode = new Map();
 
+    // Org references arrive as CODES, which is the only thing an external
+    // source can know. Resolved once for the whole batch rather than per row:
+    // the pipeline has already refused any code that does not resolve, so a
+    // miss here can only mean the row carried none.
+    const [departments, locations] = await Promise.all([
+      codesToIds(departmentReferenceProvider, records.map((r) => r.departmentCode)),
+      codesToIds(locationReferenceProvider, records.map((r) => r.locationCode)),
+    ]);
+
     for (const record of records) {
       const { clean, extracted } = sanitiseCustomFields(record.customFieldValues);
-      const sensitive = { ...extracted };
-      for (const key of Object.keys(record)) {
-        if (key.endsWith('Number') || key === 'bankIfsc') sensitive[key] ??= record[key];
+
+      // Sensitive values reach here from two directions: named fields on the
+      // record, and reserved keys the sanitiser pulled out of the custom-field
+      // blob. Both are encrypted through the same builder the employee service
+      // uses, so an imported PAN is stored exactly as a typed one is.
+      const sensitiveInput = { ...extracted };
+      for (const field of SENSITIVE_EMPLOYEE_FIELD_LIST) {
+        if (record[field] !== undefined && record[field] !== null && record[field] !== '') {
+          sensitiveInput[field] ??= record[field];
+        }
+      }
+
+      // Written only when the row supplies one. A source that omits the column
+      // must not blank the department an administrator has since set.
+      const orgRefs = {};
+      if (record.departmentCode && departments.has(record.departmentCode)) {
+        orgRefs.departmentId = departments.get(record.departmentCode);
+      }
+      if (record.locationCode && locations.has(record.locationCode)) {
+        orgRefs.locationId = locations.get(record.locationCode);
       }
 
       const existing = await Employee.findOne({ employeeCode: record.employeeCode })
@@ -149,10 +256,15 @@ export const employeePersistencePort = {
         .lean();
 
       if (existing) {
+        const sensitive = await buildSensitiveUpdate(sensitiveInput, {
+          employeeId: existing._id,
+        });
         await Employee.updateOne(
           { _id: existing._id },
           {
             $set: {
+              ...orgRefs,
+              ...sensitive,
               firstName: record.firstName,
               lastName: record.lastName,
               personalEmail: record.personalEmail ?? null,
@@ -178,23 +290,35 @@ export const employeePersistencePort = {
         continue;
       }
 
-      // A new employee needs a login. Created suspended with an unguessable
-      // password: an import must never mint an account someone can sign into
-      // before HR has deliberately invited them.
-      const [user] = await User.create([
-        {
-          email: record.email,
-          password: await hashPassword(crypto.randomBytes(24).toString('base64url')),
-          user: `${record.firstName} ${record.lastName}`,
-          role: 'Management',
-          roles: ['hrms_employee'],
-          status: 'Inactive',
-        },
-      ]);
+      // A new employee usually needs a login - but the address may already have
+      // one, and the record may name no address at all.
+      //
+      // This used to call User.create unconditionally, which raised a
+      // duplicate-key error PART WAY THROUGH a migration: some employees
+      // written, the rest not. Reusing the account instead is both the correct
+      // outcome (staff being migrated usually already sign in) and the only way
+      // an import can link a person to the login they already have.
+      //
+      // Reuse never bends an invariant. Two are checked here rather than left
+      // to the index, so the failure names the account instead of surfacing as
+      // E11000 half-way through:
+      //
+      //   1. one User resolves to exactly one Employee - self-scope, payroll,
+      //      attendance, leave, documents, expenses, performance, audit
+      //      identity and RBAC all read the employee behind the login, so a
+      //      second Employee on one account would make that ambiguous
+      //   2. AD-4 - a Customer account may never hold an HRMS role, so it can
+      //      never be an employee's login
+      const user = await linkOrCreateUser(record);
 
       const [employee] = await Employee.create([
         {
-          userId: user._id,
+          ...orgRefs,
+          ...(await buildSensitiveUpdate(sensitiveInput)),
+          // null when the record supplies no address. The partial unique index
+          // excludes nulls, so any number of employees may be in this state
+          // while two can still never share one account.
+          userId: user?._id ?? null,
           employeeCode: record.employeeCode,
           firstName: record.firstName,
           lastName: record.lastName,

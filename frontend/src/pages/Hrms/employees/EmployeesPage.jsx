@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 
 import { HrmsPageLayout } from "../../../components/hrms/HrmsPageLayout";
@@ -9,7 +9,13 @@ import { HrmsStatusBadge } from "../../../components/hrms/HrmsStatusBadge";
 import { PermissionGate } from "../../../components/hrms/PermissionGate";
 import { Button } from "../../../components/ui/Button";
 import { EmployeeFormDrawer } from "./EmployeeFormDrawer";
-import { employeesApi, HrmsApiError } from "../../../services/hrms";
+import {
+  employeesApi,
+  departmentsApi,
+  locationsApi,
+  orgOptionLabel,
+  HrmsApiError,
+} from "../../../services/hrms";
 import { EMPLOYEE_STATUSES, PAGE_SIZE_DEFAULT } from "@shared/constants/hrms.js";
 import {
   HRMS_MODULES as M,
@@ -47,7 +53,21 @@ const initialsOf = (name) =>
 export function EmployeesPage() {
   const navigate = useNavigate();
 
-  const [filters, setFilters] = useState({ search: "", status: undefined });
+  /**
+   * Filters are seeded from the URL so a deep link lands pre-filtered.
+   *
+   * Org Structure's Departments tab links here as
+   * `/hrms/employees?departmentId=<id>`, exactly as the reference does
+   * (`DepartmentsTab.tsx:35`), and without this that link would open an
+   * unfiltered directory - the feature would look like it had done nothing.
+   */
+  const [searchParams] = useSearchParams();
+  const [filters, setFilters] = useState(() => ({
+    search: searchParams.get("search") ?? "",
+    status: searchParams.get("status") ?? undefined,
+    departmentId: searchParams.get("departmentId") ?? undefined,
+    locationId: searchParams.get("locationId") ?? undefined,
+  }));
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState({ sortBy: undefined, sortDir: "asc" });
 
@@ -65,6 +85,8 @@ export function EmployeesPage() {
         pageSize: PAGE_SIZE_DEFAULT,
         search: filters.search || undefined,
         status: filters.status,
+        departmentId: filters.departmentId,
+        locationId: filters.locationId,
         ...sort,
       });
       setResult(res);
@@ -73,13 +95,38 @@ export function EmployeesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, filters.search, filters.status, sort]);
+  }, [page, filters.search, filters.status, filters.departmentId, filters.locationId, sort]);
 
   useEffect(() => {
     // Debounced, so typing in the search box does not fire a request per key.
     const t = setTimeout(load, filters.search ? 300 : 0);
     return () => clearTimeout(t);
   }, [load, filters.search]);
+
+  /**
+   * The Org Structure catalogues, for the two filters and the add drawer.
+   *
+   * Loaded once: they are small, unpaginated and change rarely, and every HRMS
+   * role can read them (`org-structure:view:self` is in the baseline). A
+   * failure leaves the filters empty rather than breaking the directory - the
+   * employee list does not depend on them.
+   */
+  const [departments, setDepartments] = useState([]);
+  const [locations, setLocations] = useState([]);
+
+  useEffect(() => {
+    departmentsApi.list().then(setDepartments).catch(() => setDepartments([]));
+    locationsApi.list().then(setLocations).catch(() => setLocations([]));
+  }, []);
+
+  const departmentOptions = useMemo(
+    () => departments.map((d) => ({ value: d.id, label: orgOptionLabel(d) })),
+    [departments],
+  );
+  const locationOptions = useMemo(
+    () => locations.map((l) => ({ value: l.id, label: orgOptionLabel(l) })),
+    [locations],
+  );
 
   /** Active employees, for the "reporting manager" picker in the add drawer. */
   const [managerOptions, setManagerOptions] = useState([]);
@@ -165,15 +212,13 @@ export function EmployeesPage() {
             {
               key: "departmentId",
               placeholder: "Department",
-              options: [],
-              disabled: true,
+              options: departmentOptions,
               width: "w-48",
             },
             {
               key: "locationId",
               placeholder: "Location",
-              options: [],
-              disabled: true,
+              options: locationOptions,
               width: "w-48",
             },
           ]}
@@ -184,7 +229,12 @@ export function EmployeesPage() {
           }}
           onReset={() => {
             setPage(1);
-            setFilters({ search: "", status: undefined });
+            setFilters({
+              search: "",
+              status: undefined,
+              departmentId: undefined,
+              locationId: undefined,
+            });
           }}
         />
 
@@ -207,7 +257,7 @@ export function EmployeesPage() {
           onRowClick={(row) => navigate(`/hrms/employees/${row.id}`)}
           emptyTitle="No employees yet"
           emptyDescription={
-            filters.search || filters.status
+            filters.search || filters.status || filters.departmentId || filters.locationId
               ? "No employee matches these filters."
               : "Add the first employee to get started."
           }
@@ -222,6 +272,8 @@ export function EmployeesPage() {
           load();
         }}
         managerOptions={managerOptions}
+        departments={departments}
+        locations={locations}
       />
     </HrmsPageLayout>
   );

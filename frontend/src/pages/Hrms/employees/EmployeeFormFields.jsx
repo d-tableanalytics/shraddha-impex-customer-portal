@@ -1,9 +1,11 @@
+import { useMemo } from "react";
 import { useFormContext, useFieldArray, useWatch } from "react-hook-form";
 import { Plus, Trash2, ArrowLeftRight } from "lucide-react";
 
 import { Input } from "../../../components/ui/Input";
 import { Button } from "../../../components/ui/Button";
 import { SearchableSelect } from "../../../components/hrms/SearchableSelect";
+import { optionsWithCurrent } from "../../../services/hrms";
 import { MAX_EMERGENCY_CONTACTS } from "@shared/schemas/employee.js";
 import { EMPLOYMENT_TYPES, EMPLOYEE_STATUSES } from "@shared/constants/hrms.js";
 
@@ -83,6 +85,9 @@ export function EmployeeFormFields({
   customFields = [],
   managerOptions = [],
   identity = null,
+  departments = [],
+  locations = [],
+  current = null,
 }) {
   const { register, control, setValue, getValues } = useFormContext();
 
@@ -93,6 +98,23 @@ export function EmployeeFormFields({
   const showNotice = status === "notice";
 
   const isEdit = mode === "edit";
+
+  /**
+   * Live catalogue rows, plus whatever the record already holds.
+   *
+   * `optionsWithCurrent` puts back a department or location that has since been
+   * retired. Without it the picker would show "nothing selected" for a value
+   * the employee genuinely has, and the next save would read as a deliberate
+   * clearing of a field nobody touched.
+   */
+  const departmentOptions = useMemo(
+    () => optionsWithCurrent(departments, current?.departmentId, current?.departmentName),
+    [departments, current?.departmentId, current?.departmentName],
+  );
+  const locationOptions = useMemo(
+    () => optionsWithCurrent(locations, current?.locationId, current?.locationName),
+    [locations, current?.locationId, current?.locationName],
+  );
 
   return (
     <div>
@@ -207,26 +229,26 @@ export function EmployeeFormFields({
         </Field>
 
         {/*
-          Department and Location are part of Org Structure, which is not built.
-          Shown disabled with an explanation rather than hidden: the fields exist
-          on the record, and the server refuses a value it cannot validate.
+          Department and Location, populated from Org Structure. Both optional
+          on the record and both clearable, matching the reference's
+          `allowClear` Selects.
         */}
         <Field name="departmentId" label="Department">
-          <SearchableSelect
-            value={null}
-            options={[]}
-            onChange={() => {}}
-            disabled
-            placeholder="Available once Org Structure is built"
+          <ReferenceSelect
+            name="departmentId"
+            options={departmentOptions}
+            disabled={!canEditJobDetails}
+            placeholder="No department"
+            emptyText="No departments yet"
           />
         </Field>
         <Field name="locationId" label="Location">
-          <SearchableSelect
-            value={null}
-            options={[]}
-            onChange={() => {}}
-            disabled
-            placeholder="Available once Org Structure is built"
+          <ReferenceSelect
+            name="locationId"
+            options={locationOptions}
+            disabled={!canEditJobDetails}
+            placeholder="No location"
+            emptyText="No locations yet"
           />
         </Field>
       </Section>
@@ -270,6 +292,30 @@ function SelectField({ name, options, disabled }) {
         </option>
       ))}
     </select>
+  );
+}
+
+/**
+ * A picker bound to one form field, for an optional Org Structure reference.
+ *
+ * Clearing it writes null rather than undefined: the update schema is
+ * `.partial()`, so undefined would mean "not submitted" and the value would
+ * survive a deliberate clearing.
+ */
+function ReferenceSelect({ name, options, disabled, placeholder, emptyText }) {
+  const { control, setValue } = useFormContext();
+  const value = useWatch({ control, name });
+
+  return (
+    <SearchableSelect
+      value={value ?? null}
+      onChange={(v) => setValue(name, v ?? null, { shouldDirty: true })}
+      options={options}
+      disabled={disabled}
+      placeholder={placeholder}
+      searchPlaceholder="Search by code or name…"
+      emptyText={emptyText}
+    />
   );
 }
 

@@ -61,7 +61,14 @@ const nullifyBlanks = (obj) =>
     Object.entries(obj).map(([k, v]) => [k, v === "" ? null : v]),
   );
 
-export function EmployeeFormDrawer({ open, onClose, onCreated, managerOptions = [] }) {
+export function EmployeeFormDrawer({
+  open,
+  onClose,
+  onCreated,
+  managerOptions = [],
+  departments = [],
+  locations = [],
+}) {
   const [customFields, setCustomFields] = useState([]);
   const [created, setCreated] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -114,6 +121,8 @@ export function EmployeeFormDrawer({ open, onClose, onCreated, managerOptions = 
               canEditJobDetails
               customFields={customFields}
               managerOptions={managerOptions}
+              departments={departments}
+              locations={locations}
             />
 
             <div className="flex justify-end gap-3 mt-8 pt-5 border-t border-slate-100">

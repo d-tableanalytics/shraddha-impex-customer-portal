@@ -14,3 +14,26 @@ backend/backups/
 
 # Frontend build output (built in CI, rsynced to the server — never committed)
 frontend/dist/
+
+# Client data drops — REAL employee PII (names, DOB, PAN, Aadhaar, bank
+# accounts, IFSC). These arrive as spreadsheets for a one-off import and must
+# never reach a remote. The importer reads them from disk; nothing about the
+# running system depends on them being in the repository.
+#
+# Scoped to this directory ON PURPOSE rather than a blanket *.xlsx: docs/ and
+# test-sheets/ already track spreadsheets the inventory tests read, and a
+# global rule would silently ignore future additions there.
+imports/
+
+# Import reports are generated FROM that data. They are written to be free of
+# sensitive values, but they name real employees and their codes, so they stay
+# local too.
+documentation/import-reports/
+
+# Locally written upload artefacts. STORAGE_DRIVER=local puts company logos and
+# HRMS documents here; a test run leaves thousands of them behind (2,930 files
+# / 5.9 MB at the time of writing). Production uses S3, and the server keeps its
+# own directory, so nothing here belongs in the repository.
+#
+# The directory itself is NOT deleted — only untracked.
+backend/uploads/

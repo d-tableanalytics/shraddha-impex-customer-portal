@@ -51,6 +51,10 @@ const SELF_BASELINE = Object.freeze([
   p(M.HELPDESK, A.VIEW, S.SELF),
 
   p(M.DOCUMENTS, A.VIEW, S.SELF),
+  // Uploading to one's OWN repository, and acknowledging a policy. The
+  // reference authorises both with `documents:view:self` - a read grant
+  // permitting a write; every other self-service flow here uses SUBMIT.
+  p(M.DOCUMENTS, A.SUBMIT, S.SELF),
   p(M.PERFORMANCE, A.VIEW, S.SELF),
   p(M.PERFORMANCE, A.SUBMIT, S.SELF),
   p(M.EMPLOYEES, A.VIEW, S.SELF),
@@ -64,6 +68,15 @@ const SELF_BASELINE = Object.freeze([
   p(M.PAYROLL, A.VIEW, S.SELF),
   p(M.ONBOARDING, A.VIEW, S.SELF),
   p(M.EXITS, A.SUBMIT, S.SELF),
+
+  // Assets: an employee sees the kit issued to them and may request more.
+  // CLAUDE.md's own matrix reads "Assets (assign/manage) - Employee: Request
+  // only", and the reference gates its request endpoints on an assets self
+  // grant. Writing uses SUBMIT rather than VIEW, as every other self-service
+  // flow here does - the reference authorises creating a request with a read
+  // permission.
+  p(M.ASSETS, A.VIEW, S.SELF),
+  p(M.ASSETS, A.SUBMIT, S.SELF),
   p(M.EXITS, A.VIEW, S.SELF),
   p(M.ENGAGE, A.VIEW, S.SELF),
 ]);
@@ -104,6 +117,7 @@ export const HRMS_PERMISSION_MATRIX = Object.freeze({
     p(M.ASSETS, A.ASSIGN, S.ORG),
     p(M.ENGAGE, A.EDIT, S.ORG),
     p(M.DOCUMENTS, A.VIEW, S.ORG),
+    p(M.DOCUMENTS, A.EDIT, S.ORG),
     p(M.HELPDESK, A.VIEW, S.ORG),
     p(M.HELPDESK, A.RESOLVE, S.ORG),
     p(M.REPORTS, A.VIEW, S.ORG),
@@ -147,6 +161,7 @@ export const HRMS_PERMISSION_MATRIX = Object.freeze({
     p(M.ASSETS, A.ASSIGN, S.ORG),
     p(M.ENGAGE, A.EDIT, S.ORG),
     p(M.DOCUMENTS, A.VIEW, S.ORG),
+    p(M.DOCUMENTS, A.EDIT, S.ORG),
     p(M.HELPDESK, A.VIEW, S.ORG),
     p(M.HELPDESK_HR, A.RESOLVE, S.ORG),
     p(M.REPORTS, A.VIEW, S.ORG),

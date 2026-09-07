@@ -17,6 +17,7 @@ import roleRoutes from './modules/roles/role.routes.js';
 import salesRoutes from './modules/sales/sales.routes.js';
 import inventoryRoutes from './modules/inventory/inventory.routes.js';
 import hrmsRoutes from './modules/hrms/hrms.routes.js';
+import { captureBiometricRawBody } from './modules/hrms/attendance/rawBody.js';
 import apiRoutes from './routes/api.routes.js';
 
 const app = express();
@@ -42,7 +43,12 @@ app.use(cors({
   credentials: true 
 }));
 app.use(compression());
-app.use(express.json({ limit: '10mb' }));
+// `verify` keeps the RAW bytes of the biometric webhook's body, and only that
+// route's. Its HMAC signature is computed over the exact bytes the device sent,
+// and this parser consumes the stream before any router runs — so without this
+// hook there would be nothing left to verify against. See
+// modules/hrms/attendance/rawBody.js. Every other request is unaffected.
+app.use(express.json({ limit: '10mb', verify: captureBiometricRawBody }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 

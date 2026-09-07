@@ -41,8 +41,8 @@ import {
   SENSITIVE_EMPLOYEE_FIELDS as F,
   SENSITIVE_EMPLOYEE_FIELD_LIST,
 } from '../shared/security/sensitive-fields.js';
-import { HRMS_ROLES as R, HRMS_MODULES as M } from '../shared/permissions/constants.js';
-import { buildTestApp, stubProtect, withServer, get, post, put } from './helpers/http.js';
+import { HRMS_ROLES as R } from '../shared/permissions/constants.js';
+import { buildTestApp, stubProtect, withServer, get, post } from './helpers/http.js';
 
 const src = (rel) => readFile(new URL(rel, import.meta.url), 'utf8');
 const oid = () => new mongoose.Types.ObjectId().toString();
@@ -63,7 +63,21 @@ test('email is NOT the employee identity', () => {
   // The login lives on User; the employee record carries only a personal email.
   assert.equal(Employee.schema.path('email'), undefined);
   assert.ok(Employee.schema.path('personalEmail'));
-  assert.ok(Employee.schema.path('userId').options.unique, 'one login, one employee');
+  // `userId` is OPTIONAL - an employee need not be a portal user - but one
+  // account still resolves to exactly one employee. That is expressed as a
+  // partial unique index rather than `unique: true`, because `default: null`
+  // makes the path present on every document and a plain unique index would
+  // allow only ONE employee without a login.
+  assert.equal(Employee.schema.path('userId').isRequired, undefined);
+  const unique = Employee.schema
+    .indexes()
+    .find(([spec, opts]) => spec.userId === 1 && opts?.unique);
+  assert.ok(unique, 'one login, one employee');
+  assert.deepEqual(
+    unique[1].partialFilterExpression,
+    { userId: { $type: 'objectId' } },
+    'the constraint must ignore employees who have no login',
+  );
 });
 
 test('AD-1: the employee carries no tenant id', async () => {
@@ -609,14 +623,44 @@ test('every HRMS endpoint nests its payload under `data`', async () => {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-    // Each res.json({...}) call, up to the first closing brace of its object.
-    for (const call of code.match(/res(?:\.status\([0-9]+\))?\.json\(\{[^}]*/g) ?? []) {
-      // Only a spread in PROPERTY position breaks the envelope — one directly
-      // after `{` or `,`. A spread inside a value, such as
-      // `data: [...history].sort(...)`, is just building the payload and is
-      // perfectly fine.
-      if (/[{,]\s*\.\.\./.test(call)) {
-        offenders.push(`${name}: ${call.replace(/\s+/g, ' ').trim()}`);
+    // Walk each res.json({ ... }) call, tracking brace and bracket depth, and
+    // flag a spread only at the TOP level of the envelope object.
+    //
+    // Depth matters. `data: { ...result, state }` and `data: [...rows]` are
+    // both building the payload UNDER `data` and are perfectly fine; only
+    // `{ success: true, ...result }` breaks the envelope. An earlier version of
+    // this scan matched any `{ ...` and flagged the first correct nested spread
+    // another module happened to write.
+    const calls = [...code.matchAll(/res(?:\.status\([0-9]+\))?\.json\(/g)];
+    for (const match of calls) {
+      let i = match.index + match[0].length;
+      if (code[i] !== '{') continue; // not an object literal
+
+      let depth = 0;
+      let expectingKey = true; // true right after `{` or `,` at depth 1
+      for (; i < code.length; i += 1) {
+        const ch = code[i];
+        if (ch === '{' || ch === '[' || ch === '(') {
+          depth += 1;
+          expectingKey = depth === 1 && ch === '{';
+          continue;
+        }
+        if (ch === '}' || ch === ']' || ch === ')') {
+          depth -= 1;
+          expectingKey = false;
+          if (depth === 0) break;
+          continue;
+        }
+        if (ch === ',' && depth === 1) {
+          expectingKey = true;
+          continue;
+        }
+        if (/\s/.test(ch)) continue;
+
+        if (expectingKey && code.startsWith('...', i)) {
+          offenders.push(`${name}: ${code.slice(match.index, i + 20).replace(/\s+/g, ' ')}`);
+        }
+        expectingKey = false;
       }
     }
   }

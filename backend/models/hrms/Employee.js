@@ -73,13 +73,32 @@ const employeeSchema = new Schema(
       index: true,
     },
 
-    /** The login this employee signs in with. One user, one employee. */
+    /**
+     * The login this employee signs in with - when they have one.
+     *
+     * OPTIONAL, because an employee is not always a portal user. The case that
+     * forced it is real: two people sharing one email address, with no second
+     * address to give the other. Inventing an address, or hanging a second
+     * employee off one account, would both be worse than a record that simply
+     * cannot sign in.
+     *
+     * What has NOT changed is that one account resolves to exactly ONE
+     * employee. Self-scope, payroll, attendance, leave, documents, expenses,
+     * performance, audit identity and RBAC all read "the employee behind this
+     * login", and that has to be a single answer. The uniqueness is enforced by
+     * the partial index below rather than by `unique: true`, which cannot
+     * express it once the path is optional.
+     *
+     * An employee with no login is a full participant in every part of the HRMS
+     * that does not require authentication - they appear in the directory and
+     * the org chart, hold compensation, leave balances, attendance, assets,
+     * documents, expenses, reviews and an exit record. The single thing they
+     * cannot do is authenticate as themselves.
+     */
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
-      unique: true,
-      index: true,
+      default: null,
     },
 
     firstName: { type: String, required: true, trim: true, maxlength: 80 },
@@ -216,6 +235,31 @@ employeeSchema.plugin(sensitiveFields);
 // ---------------------------------------------------------------------------
 // Indexes (AD-13: every list is server-paginated and filtered)
 // ---------------------------------------------------------------------------
+
+/**
+ * One account, one employee - enforced in the database, not only in a service.
+ *
+ * `unique: true` on the path cannot express this now that the path is optional.
+ * `default: null` makes `userId` PRESENT on every document, so a plain unique
+ * index would allow exactly ONE employee without a login, and `sparse` would
+ * not help either: it excludes documents where the path is MISSING, not where
+ * it is null. A partial index on `$type: 'objectId'` excludes null and missing
+ * alike, so any number of employees may have no login while two can never share
+ * one. It is the same reasoning the sensitive-field blind indexes use.
+ *
+ * A partial index CANNOT serve the lookup, though: MongoDB will not prove that
+ * `{ userId: <oid> }` implies `{ userId: { $type: 'objectId' } }`, so it plans a
+ * collection scan (measured - 400 docs examined, 0 keys). `byUserId` runs on
+ * every authenticated HRMS request, so the lookup gets its own compound index
+ * below, matching the query it actually serves.
+ */
+employeeSchema.index(
+  { userId: 1 },
+  { unique: true, partialFilterExpression: { userId: { $type: 'objectId' } } },
+);
+
+// "The employee behind this login", on every authenticated request.
+employeeSchema.index({ userId: 1, deletedAt: 1 });
 
 // The directory's default ordering, matching the reference: status then name.
 employeeSchema.index({ deletedAt: 1, status: 1, firstName: 1 });

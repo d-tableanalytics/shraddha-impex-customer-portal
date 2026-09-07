@@ -12,6 +12,12 @@ import { Badge } from "../ui/Badge";
  * Covers the statuses the shared employee and workflow enums define. Anything
  * unrecognised renders neutral with its raw value, so a new status is visible
  * rather than invisible.
+ *
+ * `variant` must be one Badge implements: primary | success | warning | danger
+ * | neutral. The red one is `danger` — only its Tailwind PALETTE is called
+ * `error` (`bg-error-50`), and writing `variant: "error"` here silently renders
+ * a colourless pill, because Badge looks the name up and clsx drops the
+ * `undefined`. That is what happened to `rejected` and `suspended`.
  */
 const STATUS_MAP = {
   // employment
@@ -20,13 +26,13 @@ const STATUS_MAP = {
   probation: { label: "Probation", variant: "warning" },
   notice: { label: "Notice period", variant: "warning" },
   exited: { label: "Exited", variant: "neutral" },
-  suspended: { label: "Suspended", variant: "error" },
+  suspended: { label: "Suspended", variant: "danger" },
   inactive: { label: "Inactive", variant: "neutral" },
 
   // approval workflows
   pending: { label: "Pending", variant: "warning" },
   approved: { label: "Approved", variant: "success" },
-  rejected: { label: "Rejected", variant: "error" },
+  rejected: { label: "Rejected", variant: "danger" },
   cancelled: { label: "Cancelled", variant: "neutral" },
   draft: { label: "Draft", variant: "neutral" },
   submitted: { label: "Submitted", variant: "primary" },

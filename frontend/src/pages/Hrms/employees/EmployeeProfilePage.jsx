@@ -161,7 +161,12 @@ export function EmployeeProfilePage() {
               </Button>
             </PermissionGate>
 
-            {roleKeys.includes("hrms_super_admin") && (
+            {/*
+              Only offered when there is a password to reset. An employee need
+              not be a portal user, and the server refuses this for one who is
+              not - so showing the button would be an action that can only fail.
+            */}
+            {roleKeys.includes("hrms_super_admin") && employee.userId && (
               <Button variant="secondary" onClick={resetPassword}>
                 <KeyRound size={14} className="mr-1.5" />
                 Reset password
@@ -190,10 +195,30 @@ export function EmployeeProfilePage() {
               {employee.employmentType?.replace(/_/g, " ")}
             </Row>
             <Row label="Date of joining">{employee.dateOfJoining}</Row>
+            {/*
+              Names come from the API, already resolved. The reference loads the
+              whole department catalogue into the profile and does
+              `departments.data?.find(d => d.id === data.departmentId)` - a
+              round trip per profile view for one string, and a display name the
+              browser supplies rather than one the server vouches for.
+
+              `Row` renders an em dash for null, so an unassigned employee and
+              one whose department was retired both read correctly.
+            */}
+            <Row label="Department">{employee.departmentName}</Row>
+            <Row label="Location">{employee.locationName}</Row>
             <Row label="Reporting manager">{employee.reportingManagerName}</Row>
           </Section>
 
           <Section title="Contact">
+            {/*
+              Stated rather than left to a blank email field: "no portal login"
+              is a fact about this employee, not a missing value somebody should
+              go and fill in.
+            */}
+            <Row label="Portal login">
+              {employee.userId ? employee.email : "No portal login"}
+            </Row>
             <Row label="Work email">{employee.email}</Row>
             <Row label="Personal email">{employee.personalEmail}</Row>
             <Row label="Phone 1">{employee.phone}</Row>

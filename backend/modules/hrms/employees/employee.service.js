@@ -11,6 +11,8 @@ import mongoose from 'mongoose';
 
 import Employee from '../../../models/hrms/Employee.js';
 import EmployeeCustomField from '../../../models/hrms/EmployeeCustomField.js';
+import Department from '../../../models/hrms/Department.js';
+import Location from '../../../models/hrms/Location.js';
 import User from '../../../models/User.js';
 import { hashPassword } from '../../../utils/password.js';
 import { isDuplicateKeyError, isTransactionUnsupported } from '../../../utils/mongoSession.js';
@@ -24,17 +26,13 @@ import {
   HRMS_ROLE_LIST,
 } from '../../../shared/permissions/constants.js';
 import {
-  encryptField,
   decryptField,
-  blindIndex,
   maskSensitiveValue,
   sanitiseCustomFields,
 } from '../../../utils/hrms/crypto/index.js';
-import {
-  SENSITIVE_EMPLOYEE_FIELD_LIST,
-  BLIND_INDEXED_FIELDS,
-} from '../../../shared/security/sensitive-fields.js';
-import { encPath, idxPath } from '../../../models/hrms/plugins/sensitiveFields.js';
+import { SENSITIVE_EMPLOYEE_FIELD_LIST } from '../../../shared/security/sensitive-fields.js';
+import { encPath } from '../../../models/hrms/plugins/sensitiveFields.js';
+import { buildSensitiveUpdate } from './sensitiveUpdate.js';
 import { describe as describeReferences, resolveDepartment, resolveLocation } from '../references/reference.service.js';
 import {
   assertNoCycle,
@@ -95,7 +93,7 @@ async function withTransaction(fn) {
  * file, `null` when it is not. Never the value, never the ciphertext, never the
  * blind index. Revealing one is a separate, audited call.
  */
-export function toEmployeeDto(row, { user, manager } = {}) {
+export function toEmployeeDto(row, { user, manager, department, location } = {}) {
   const sensitive = Object.fromEntries(
     SENSITIVE_EMPLOYEE_FIELD_LIST.map((f) => [f, row[encPath(f)] ? true : null]),
   );
@@ -124,7 +122,21 @@ export function toEmployeeDto(row, { user, manager } = {}) {
     noticeMonths: row.noticeMonths ?? null,
     noticeEndDate: toDay(row.noticeEndDate),
     departmentId: idStr(row.departmentId),
+    /**
+     * Resolved SERVER-side, and deliberately not left to the browser.
+     *
+     * The reference's profile loads the whole department catalogue and does
+     * `departments.data?.find(d => d.id === data.departmentId)` to get a name -
+     * one extra round trip per profile view, and a display name the client
+     * supplies rather than one the server vouches for.
+     *
+     * A retired department still resolves here. An employee assigned to one
+     * before it was retired is still assigned to it, and rendering a blank
+     * where a name used to be reads as a bug rather than as history.
+     */
+    departmentName: department?.name ?? null,
     locationId: idStr(row.locationId),
+    locationName: location?.name ?? null,
     reportingManagerId: idStr(row.reportingManagerId),
     reportingManagerName: manager
       ? `${manager.firstName ?? ''} ${manager.lastName ?? ''}`.trim()
@@ -147,23 +159,41 @@ async function hydrate(rows) {
   const list = Array.isArray(rows) ? rows : [rows];
   const userIds = list.map((r) => r.userId).filter(Boolean);
   const managerIds = list.map((r) => r.reportingManagerId).filter(Boolean);
+  const departmentIds = list.map((r) => r.departmentId).filter(Boolean);
+  const locationIds = list.map((r) => r.locationId).filter(Boolean);
 
-  const [users, managers] = await Promise.all([
+  // Four batched lookups for a whole page, not four per row. The catalogue
+  // queries carry no `deletedAt` filter on purpose: this resolves names for
+  // DISPLAY, and an employee assigned to a since-retired department still needs
+  // that department's name. Validation is a different question, and
+  // `assertReferencesResolve` answers it through the providers, which are
+  // strictly live.
+  const [users, managers, departments, locations] = await Promise.all([
     userIds.length
       ? User.find({ _id: { $in: userIds } }).select('email user').lean()
       : [],
     managerIds.length
       ? Employee.find({ _id: { $in: managerIds } }).select('firstName lastName').lean()
       : [],
+    departmentIds.length
+      ? Department.find({ _id: { $in: departmentIds } }).select('name').lean()
+      : [],
+    locationIds.length
+      ? Location.find({ _id: { $in: locationIds } }).select('name').lean()
+      : [],
   ]);
 
   const userById = new Map(users.map((u) => [idStr(u._id), u]));
   const managerById = new Map(managers.map((m) => [idStr(m._id), m]));
+  const departmentById = new Map(departments.map((d) => [idStr(d._id), d]));
+  const locationById = new Map(locations.map((l) => [idStr(l._id), l]));
 
   return list.map((row) =>
     toEmployeeDto(row, {
       user: userById.get(idStr(row.userId)),
       manager: managerById.get(idStr(row.reportingManagerId)),
+      department: departmentById.get(idStr(row.departmentId)),
+      location: locationById.get(idStr(row.locationId)),
     }),
   );
 }
@@ -271,57 +301,6 @@ async function assertManagerExists(reportingManagerId) {
   if (!mgr) throw new HrmsValidationError('reportingManagerId does not exist.');
 }
 
-// ---------------------------------------------------------------------------
-// Sensitive fields
-// ---------------------------------------------------------------------------
-
-/**
- * Turn submitted sensitive values into their stored form.
- *
- * Runs BEFORE any write. Returns the `$set` fragment — ciphertext envelope plus
- * blind index — so the caller never handles a plaintext value again.
- *
- * A blind index is required for uniqueness: the ciphertext differs on every
- * write (random IV), so an equality query could never find a duplicate PAN.
- */
-async function buildSensitiveUpdate(dto, { employeeId = null } = {}) {
-  const $set = {};
-
-  for (const field of SENSITIVE_EMPLOYEE_FIELD_LIST) {
-    if (!(field in dto)) continue;
-    const value = dto[field];
-
-    if (value === null || value === '') {
-      $set[encPath(field)] = null;
-      if (BLIND_INDEXED_FIELDS.includes(field)) $set[idxPath(field)] = null;
-      continue;
-    }
-
-    $set[encPath(field)] = await encryptField(value);
-
-    if (BLIND_INDEXED_FIELDS.includes(field)) {
-      const index = blindIndex(value);
-      const clash = await Employee.findOne({
-        [idxPath(field)]: index,
-        deletedAt: null,
-        ...(employeeId ? { _id: { $ne: employeeId } } : {}),
-      })
-        .select('employeeCode')
-        .lean();
-      if (clash) {
-        // Names the field, never the value — the whole point of the index is
-        // that the value is not readable from it.
-        throw new HrmsConflictError(
-          `Another employee (${clash.employeeCode}) already has this ${field}.`,
-          { code: 'SENSITIVE_VALUE_DUPLICATE' },
-        );
-      }
-      $set[idxPath(field)] = index;
-    }
-  }
-
-  return $set;
-}
 
 // ---------------------------------------------------------------------------
 // Read
@@ -664,8 +643,9 @@ export async function updateEmployee(id, dto, actor) {
       { new: true, runValidators: true, ...opts },
     ).lean();
 
-    // Keep the login's display name in step with the employee's name.
-    if (dto.firstName !== undefined || dto.lastName !== undefined || dto.displayName) {
+    // Keep the login's display name in step with the employee's name. An
+    // employee with no login has no display name to keep in step.
+    if (existing.userId && (dto.firstName !== undefined || dto.lastName !== undefined || dto.displayName)) {
       const displayName =
         dto.displayName ??
         `${dto.firstName ?? existing.firstName} ${dto.lastName ?? existing.lastName}`.trim();
@@ -675,7 +655,7 @@ export async function updateEmployee(id, dto, actor) {
     // Flipping to `inactive` — post-exit, formalities complete — suspends the
     // login. Any other status change leaves the account alone, so HR can
     // suspend and restore access independently of employment status.
-    if (dto.status === 'inactive' && existing.status !== 'inactive') {
+    if (existing.userId && dto.status === 'inactive' && existing.status !== 'inactive') {
       await User.updateOne(
         { _id: existing.userId },
         { $set: { status: 'Suspended', refreshTokenHash: null } },
@@ -736,11 +716,15 @@ export async function deactivateEmployee(id, actor) {
       { $set: { deletedAt: new Date(), status: 'exited', updatedById: actor.userId } },
       opts,
     );
-    await User.updateOne(
-      { _id: existing.userId },
-      { $set: { status: 'Suspended', refreshTokenHash: null } },
-      opts,
-    );
+    // Nothing to suspend when there is no login. The employee record is still
+    // marked exited, which is what every other module reads.
+    if (existing.userId) {
+      await User.updateOne(
+        { _id: existing.userId },
+        { $set: { status: 'Suspended', refreshTokenHash: null } },
+        opts,
+      );
+    }
   });
 
   return { id: idStr(id), employeeCode: existing.employeeCode };
@@ -756,6 +740,11 @@ export async function getEmployeeRoles(id, actor) {
   }
   const emp = await Employee.findOne({ _id: id, deletedAt: null }).select('userId').lean();
   if (!emp) throw new HrmsNotFoundError('Employee');
+
+  // Roles live on the account, so an employee with no login holds none. That is
+  // an empty list, not an error: the screen shows "no roles" rather than
+  // failing to load.
+  if (!emp.userId) return { roleKeys: [] };
 
   const user = await User.findById(emp.userId).select('roles role').lean();
   return { roleKeys: (user?.roles ?? []).filter(isHrmsRoleKey) };
@@ -773,6 +762,15 @@ export async function assignEmployeeRoles(id, roleKeys, actor) {
 
   const emp = await Employee.findOne({ _id: id, deletedAt: null }).select('userId').lean();
   if (!emp) throw new HrmsNotFoundError('Employee');
+
+  // A role is a grant on an ACCOUNT. Granting one to an employee who cannot
+  // sign in would write nothing and report success, so it is refused with the
+  // reason rather than silently ignored.
+  if (!emp.userId) {
+    throw new HrmsValidationError(
+      'This employee has no portal login, so there is nothing to grant a role to. Give them a login first.',
+    );
+  }
 
   const user = await User.findById(emp.userId).select('role roles').lean();
   if (!user) throw new HrmsNotFoundError('Employee login');
@@ -801,6 +799,14 @@ export async function resetEmployeePassword(id, actor) {
 
   const emp = await Employee.findOne({ _id: id, deletedAt: null }).select('userId').lean();
   if (!emp) throw new HrmsNotFoundError('Employee');
+
+  // Without this the update would match nothing and an administrator would be
+  // handed a password for an account that does not exist.
+  if (!emp.userId) {
+    throw new HrmsValidationError(
+      'This employee has no portal login, so there is no password to reset.',
+    );
+  }
 
   const tempPassword = crypto.randomBytes(9).toString('base64url');
   await User.updateOne(

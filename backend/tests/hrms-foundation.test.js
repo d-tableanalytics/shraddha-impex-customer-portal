@@ -179,23 +179,59 @@ test('the portal permission model is untouched by Phase 1', async () => {
 test('/status reports only modules that actually exist', async () => {
   await withServer(hrmsAppFor(HR_ADMIN), async (url) => {
     const { body } = await get(url, `${HRMS_API_PREFIX}/status`);
-    // Dashboard from Phase 1, employees from the Employee Master phase.
-    assert.deepEqual(body.data.implementedModules, [M.DASHBOARD, M.EMPLOYEES]);
-    // HR admin holds far more than these, but only built modules surface.
-    assert.deepEqual(body.data.availableModules, [M.DASHBOARD, M.EMPLOYEES]);
+    // Asserted as a CONTAINS rather than an exact list. Modules are registered
+    // by whichever piece of work ships them, and pinning the exact array turns
+    // every new module into an unrelated edit to this line — which says nothing
+    // about the invariant being protected.
+    const reported = body.data.implementedModules;
+    for (const built of [M.DASHBOARD, M.EMPLOYEES, M.ORG_STRUCTURE, M.LEAVE]) {
+      assert.ok(reported.includes(built), `${built} has a screen and should be reported`);
+      assert.ok(body.data.availableModules.includes(built), `${built} is available to HR`);
+    }
+    // Whatever is reported must be a real module key, not a typo.
+    const known = new Set(Object.values(M));
+    for (const module of reported) assert.ok(known.has(module), `${module} is not a module key`);
+    // The placeholder has moved with every module that shipped. Every top-level
+    // module now has a screen, so it points at a SUB-PERMISSION instead —
+    // `employees:compensation` gates a field inside Employee Master and will
+    // never be a module a user navigates to, which makes it a stable anchor.
+    // The invariant is unchanged: a key without a screen must never be reported
+    // as available.
     assert.equal(
-      body.data.implementedModules.includes(M.PAYROLL),
+      body.data.implementedModules.includes(M.EMPLOYEES_COMPENSATION),
       false,
       'an unbuilt module must never be reported as available',
     );
+    // AD-5: Operations and Projects/Timesheets are out of scope, and the
+    // module keys do not exist at all - so asserting `includes(M.OPERATIONS)`
+    // would compare against undefined and pass whatever happened. The real
+    // invariant is that no such key ever enters the vocabulary.
+    for (const module of body.data.implementedModules) {
+      assert.doesNotMatch(module, /operation|project|timesheet/i, module);
+    }
   });
 });
 
 test('implemented and planned modules are disjoint and cover the matrix', () => {
-  assert.deepEqual(IMPLEMENTED_HRMS_MODULES, [M.DASHBOARD, M.EMPLOYEES]);
+  for (const built of [M.DASHBOARD, M.EMPLOYEES, M.ORG_STRUCTURE, M.LEAVE]) {
+    assert.ok(IMPLEMENTED_HRMS_MODULES.includes(built), built);
+  }
   assert.equal(isModuleImplemented(M.DASHBOARD), true);
   assert.equal(isModuleImplemented(M.EMPLOYEES), true);
-  assert.equal(isModuleImplemented(M.PAYROLL), false, 'payroll is not built yet');
+  assert.equal(isModuleImplemented(M.ORG_STRUCTURE), true);
+  assert.equal(isModuleImplemented(M.LEAVE), true);
+  // Inbox landed, and with it the last of the top-level modules. The assertion
+  // still guards the same thing — that `isModuleImplemented` tells the truth in
+  // both directions.
+  assert.equal(isModuleImplemented(M.PAYROLL), true, 'payroll is built');
+  assert.equal(isModuleImplemented(M.PERFORMANCE), true, 'performance is built');
+  assert.equal(isModuleImplemented(M.PLANNING), true, 'planning is built');
+  assert.equal(isModuleImplemented(M.INBOX), true, 'inbox is built');
+  assert.equal(
+    isModuleImplemented(M.EMPLOYEES_COMPENSATION),
+    false,
+    'employees:compensation is a field-level grant, not a module with a screen',
+  );
   for (const m of IMPLEMENTED_HRMS_MODULES) {
     assert.equal(PLANNED_HRMS_MODULES.includes(m), false, `${m} cannot be both`);
   }

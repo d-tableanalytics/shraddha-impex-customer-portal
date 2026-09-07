@@ -133,15 +133,21 @@ export async function checkDependencies(valid, { persistence = getEmployeePersis
   }
 
   // Duplicate emails - the login is unique.
+  //
+  // Rows with NO email are skipped rather than grouped together: an absent
+  // login is not a shared one, and several employees may legitimately have
+  // none. Without the guard they would all collide on `undefined` and only the
+  // first would import.
   const emails = new Map();
   for (const { row, record } of valid) {
+    if (!record.email) continue;
     const prior = emails.get(record.email);
     if (prior) {
       errors.push({
         row,
         employeeCode: record.employeeCode,
         field: 'email',
-        message: `Duplicate email; row ${prior} uses it too.`,
+        message: `Duplicate email; row ${prior} uses it too. One account resolves to exactly one employee, so at most one row may claim an address.`,
       });
     } else {
       emails.set(record.email, row);

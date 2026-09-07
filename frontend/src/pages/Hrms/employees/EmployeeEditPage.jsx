@@ -10,6 +10,8 @@ import { EmployeeFormFields } from "./EmployeeFormFields";
 import {
   employeesApi,
   employeeCustomFieldsApi,
+  departmentsApi,
+  locationsApi,
   HrmsApiError,
 } from "../../../services/hrms";
 import { useHrmsPermissions } from "../../../hooks/useHrmsPermissions";
@@ -43,6 +45,8 @@ export function EmployeeEditPage() {
   const [employee, setEmployee] = useState(null);
   const [customFields, setCustomFields] = useState([]);
   const [managerOptions, setManagerOptions] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -56,14 +60,18 @@ export function EmployeeEditPage() {
     setLoading(true);
     setError(null);
     try {
-      const [emp, fields, managers] = await Promise.all([
+      const [emp, fields, managers, depts, locs] = await Promise.all([
         employeesApi.get(id),
         employeeCustomFieldsApi.list().catch(() => []),
         employeesApi.list({ status: "active", pageSize: 200 }).catch(() => ({ data: [] })),
+        departmentsApi.list().catch(() => []),
+        locationsApi.list().catch(() => []),
       ]);
 
       setEmployee(emp);
       setCustomFields(fields);
+      setDepartments(depts);
+      setLocations(locs);
       setManagerOptions(
         (managers.data ?? [])
           .filter((e) => e.id !== id)
@@ -197,6 +205,9 @@ export function EmployeeEditPage() {
               customFields={customFields}
               managerOptions={managerOptions}
               identity={{ email: employee.email, employeeCode: employee.employeeCode }}
+              departments={departments}
+              locations={locations}
+              current={employee}
             />
 
             <div className="flex justify-end gap-3 mt-8 pt-5 border-t border-slate-100">

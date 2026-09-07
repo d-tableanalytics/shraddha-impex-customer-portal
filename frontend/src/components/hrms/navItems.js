@@ -55,6 +55,24 @@ import { HRMS_ROUTE_PREFIX } from "@shared/constants/hrms.js";
 
 const req = (module, action, scope) => ({ module, action, scope });
 
+/**
+ * What admits somebody to Reports.
+ *
+ * Wider than the `reports` key alone, because four role-specific submodule
+ * grants also open the module — and the reference's own route guard carries the
+ * identical five. Exported so `routes/index.jsx` gates on exactly this list:
+ * gating the route on `reports` while the sidebar gates on the five would show
+ * a payroll admin, a recruiter, an IT admin and a manager a nav item that
+ * bounces them to the dashboard.
+ */
+export const REPORTS_ENTRY_GRANTS = Object.freeze([
+  req(M.REPORTS, A.VIEW, S.ORG),
+  req(M.REPORTS_PAYROLL, A.VIEW, S.ORG),
+  req(M.REPORTS_HIRING, A.VIEW, S.ORG),
+  req(M.REPORTS_ASSETS, A.VIEW, S.ORG),
+  req(M.REPORTS_TEAM, A.VIEW, S.TEAM),
+]);
+
 export const HRMS_NAV_GROUPS = Object.freeze({
   CORE: "core",
   MY_WORK: "my-work",
@@ -208,7 +226,16 @@ export const HRMS_NAV_ITEMS = Object.freeze([
     icon: UserPlus,
     group: HRMS_NAV_GROUPS.PEOPLE_ORG,
     module: M.ONBOARDING,
-    requires: [req(M.ONBOARDING, A.VIEW, S.TEAM)],
+    // Three ways in, following the Exits precedent above: EVERY employee gets
+    // the "My onboarding" portal — which is the module's DEFAULT tab and the
+    // grant that matters most here — a manager sees their reports' checklists,
+    // and HR sees everything. Gating on team alone hid a built page from the
+    // very people it is for, which the header calls a bug.
+    requires: [
+      req(M.ONBOARDING, A.VIEW, S.SELF),
+      req(M.ONBOARDING, A.VIEW, S.TEAM),
+      req(M.ONBOARDING, A.VIEW, S.ORG),
+    ],
   },
   {
     key: "hrms-exits",
@@ -217,9 +244,12 @@ export const HRMS_NAV_ITEMS = Object.freeze([
     icon: LogOut,
     group: HRMS_NAV_GROUPS.PEOPLE_ORG,
     module: M.EXITS,
-    // Three ways in, matching the reference: a manager approves, HR edits, and
-    // IT sees them for asset clearance.
+    // Four ways in, matching the reference: EVERY employee gets the My Exit
+    // tab (initiate, track, withdraw) — which is why self scope is here and is
+    // the grant that matters most; a manager approves; HR edits; and IT sees
+    // them for asset clearance.
     requires: [
+      req(M.EXITS, A.VIEW, S.SELF),
       req(M.EXITS, A.VIEW, S.TEAM),
       req(M.EXITS, A.APPROVE, S.TEAM),
       req(M.EXITS, A.EDIT, S.ORG),
@@ -232,7 +262,11 @@ export const HRMS_NAV_ITEMS = Object.freeze([
     icon: Laptop,
     group: HRMS_NAV_GROUPS.PEOPLE_ORG,
     module: M.ASSETS,
-    requires: [req(M.ASSETS, A.VIEW, S.ORG)],
+    // EVERY employee gets My Assets (what is issued to them) and Requests, as
+    // they do in the reference — which is why self scope is here and is the
+    // grant that matters most. IT and HR additionally get the inventory and the
+    // category catalogue, behind org scope.
+    requires: [req(M.ASSETS, A.VIEW, S.SELF), req(M.ASSETS, A.VIEW, S.ORG)],
   },
   {
     key: "hrms-hiring",
@@ -263,14 +297,8 @@ export const HRMS_NAV_ITEMS = Object.freeze([
     module: M.REPORTS,
     // Role-specific report sub-modules also grant entry, matching the
     // reference: a recruiter who sees the nav item must not be bounced when
-    // they click it.
-    requires: [
-      req(M.REPORTS, A.VIEW, S.ORG),
-      req(M.REPORTS_PAYROLL, A.VIEW, S.ORG),
-      req(M.REPORTS_HIRING, A.VIEW, S.ORG),
-      req(M.REPORTS_ASSETS, A.VIEW, S.ORG),
-      req(M.REPORTS_TEAM, A.VIEW, S.TEAM),
-    ],
+    // they click it. The ROUTE reads the same list, so the two cannot drift.
+    requires: REPORTS_ENTRY_GRANTS,
   },
   {
     key: "hrms-audit",
