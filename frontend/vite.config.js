@@ -13,12 +13,36 @@ import { fileURLToPath, URL } from 'node:url'
 // frontend/node_modules when bundling. See backend/shared/README.md.
 const shared = fileURLToPath(new URL('../backend/shared', import.meta.url))
 
+/**
+ * `zod` is the ONE bare specifier the shared module imports, and it cannot
+ * resolve itself.
+ *
+ * Node resolves a bare specifier by walking `node_modules` upward from the
+ * IMPORTING FILE, so `backend/shared/schemas/*.js` looks in
+ * `backend/node_modules` - never in `frontend/node_modules`, which is a
+ * sibling rather than an ancestor. On a developer machine that works by
+ * accident, because `backend/node_modules` is there from working on the API.
+ * The CI frontend job installs only `frontend/`, so the same import fails:
+ *
+ *   [vite]: Rolldown failed to resolve import "zod" from
+ *   "backend/shared/schemas/employee.js"
+ *
+ * Pointing it at the frontend's own copy - `zod` is a declared dependency
+ * here - makes the build self-contained. It also means the bundle carries
+ * exactly ONE zod: without this the shared schemas were compiled against
+ * backend's copy and the frontend's own code against frontend's, which is the
+ * same "loaded twice under two identities" problem the test alias below
+ * exists to prevent.
+ */
+const zod = fileURLToPath(new URL('./node_modules/zod', import.meta.url))
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
       '@shared': shared,
+      zod,
     },
   },
   server: {
