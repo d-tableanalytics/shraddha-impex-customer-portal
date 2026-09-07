@@ -19,5 +19,9 @@ const auditLogSchema = new mongoose.Schema({
 
 auditLogSchema.index({ user: 1, createdAt: -1 });
 auditLogSchema.index({ action: 1 });
+// The retention sweep (AD-16) queries `createdAt < cutoff` with an `action`
+// exclusion. Without this the sweep would collection-scan what is expected to
+// become the largest collection in the system - roughly a million rows a year.
+auditLogSchema.index({ createdAt: 1, action: 1 });
 
 export default mongoose.model('AuditLog', auditLogSchema);

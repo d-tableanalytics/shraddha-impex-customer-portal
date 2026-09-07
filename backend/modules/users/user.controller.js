@@ -1,6 +1,11 @@
 import User from '../../models/User.js';
 import ArchivedUser from '../../models/ArchivedUser.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
+import { RoleAssignmentError } from '../../shared/permissions/assignment.js';
+import { isHrmsRoleKey } from '../../shared/permissions/constants.js';
+// AD-4, asked of the LIVE role model rather than the literal name 'Customer'.
+import { assertHrmsRolesAssignable } from '../../utils/hrmsRoleGuard.js';
+import { hashPassword } from '../../utils/password.js';
 import {
   assignableRoleNames,
   resolveUserPermissions,
@@ -52,6 +57,30 @@ export const CUSTOMER_MASTER_FIELDS = [
 const canManageAllUsers = (actor) => hasPermission(actor, PERMISSIONS.MANAGE_USERS);
 
 const isCustomerAccount = (account) => (account?.role || 'Customer') === 'Customer';
+
+/**
+ * AD-4: an account fenced into the customer portal may hold no HRMS role.
+ *
+ * The portal-role endpoints below can create that violation from the other
+ * direction - demoting an employee to a portal-only role while they still hold
+ * `hrms_*` keys. `assertHrmsRolesAssignable` is the single rule; this wraps it
+ * for the HTTP layer. Responds 409 (a conflicting state) rather than 400, and
+ * returns true when it has already answered.
+ *
+ * It asks the LIVE role model, not the literal name `Customer`: a Super Admin
+ * can mark any role they invent as `portalOnly`, and an account on one is as
+ * fenced as a Customer is.
+ */
+const denyIfRoleCombinationInvalid = (res, role, roles) => {
+  try {
+    assertHrmsRolesAssignable(role, roles ?? []);
+    return false;
+  } catch (err) {
+    if (!(err instanceof RoleAssignmentError)) throw err;
+    res.status(409).json({ success: false, message: err.message, code: err.code });
+    return true;
+  }
+};
 
 /**
  * Refuse when the actor may not act on this account. Returns true when it has
@@ -117,6 +146,7 @@ export const createUser = async (req, res, next) => {
     // requested, before anything is written — otherwise the obvious escalation
     // is to POST /users with role: 'Admin'.
     if (denyIfOutOfScope(req, res, { role: requestedRole }, 'create')) return;
+    if (denyIfRoleCombinationInvalid(res, requestedRole, req.body.roles)) return;
 
     // Master details are mandatory for a NEW customer, and only meaningful for
     // one — staff accounts carry no GST or shop number.
@@ -155,7 +185,9 @@ export const createUser = async (req, res, next) => {
 
     const newUser = await User.create({
       email,
-      password,
+      // AD-10: a password is only ever stored as a bcrypt hash. This used to
+      // write the plaintext straight through.
+      password: await hashPassword(password),
       user: user || null,
       company: company || null,
       role: requestedRole,
@@ -197,6 +229,10 @@ export const updateUser = async (req, res, next) => {
         message: 'You can only manage customer accounts, so this account must stay a Customer.',
       });
     }
+
+    // AD-4, same reasoning as updateUserRole: a role change must not leave the
+    // account holding HRMS roles it may no longer have.
+    if ('role' in req.body && denyIfRoleCombinationInvalid(res, req.body.role, target.roles)) return;
 
     const updates = {};
     for (const key of ALLOWED_UPDATES) {
@@ -309,16 +345,22 @@ export const resetUserPassword = async (req, res, next) => {
     if (!target) return res.status(404).json({ success: false, message: 'User not found' });
     if (denyIfOutOfScope(req, res, target, 'reset the password for')) return;
 
+    const hashed = await hashPassword(newPassword);
+
     const user = await User.findById(req.params.id).select('+password');
     if (user) {
-      user.password = newPassword;
-      await user.save({ validateBeforeSave: false });
+      // Also drops refreshTokenHash: an admin reset is an account takeover, so
+      // any session the previous holder still has must stop working.
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { password: hashed, refreshTokenHash: null } },
+      );
       return res.status(200).json({ success: true, message: `Password reset for ${user.email}.` });
     }
 
     // Suspended account: set the password on the archived copy so it is in place
     // the moment the account is restored.
-    const archived = await ArchivedUser.findByIdAndUpdate(req.params.id, { password: newPassword });
+    const archived = await ArchivedUser.findByIdAndUpdate(req.params.id, { password: hashed });
     if (!archived) return res.status(404).json({ success: false, message: 'User not found' });
 
     return res.status(200).json({
@@ -343,6 +385,14 @@ export const updateUserRole = async (req, res, next) => {
         message: 'Only an administrator can change an account role.',
       });
     }
+
+    // The document-level pre('validate') hook does not run for
+    // findByIdAndUpdate, so the AD-4 rule is checked here against the roles the
+    // account already holds. Demoting an employee to Customer while they still
+    // carry HRMS roles is exactly the case this catches.
+    const target = await User.findById(req.params.id).select('roles').lean();
+    if (!target) return res.status(404).json({ success: false, message: 'User not found' });
+    if (denyIfRoleCombinationInvalid(res, role, target.roles)) return;
 
     const user = await User.findByIdAndUpdate(
       req.params.id,
@@ -422,6 +472,39 @@ export const updateUserAccess = async (req, res, next) => {
 
     const target = await User.findById(req.params.id);
     if (!target) return res.status(404).json({ success: false, message: 'User not found' });
+
+    /**
+     * AD-4, enforced HERE rather than left to the schema.
+     *
+     * The save below passes `validateBeforeSave: false`, so the User model's
+     * AD-4 hook does NOT run on this path - and neither would it on a
+     * findOneAndUpdate. A rule that only exists in a hook is a rule with a hole
+     * in it, so this is the authorization boundary and the check belongs here.
+     *
+     * Two things are refused. First, extra access that carries an HRMS role:
+     * `extraGrants` compile to flat PORTAL keys and the registry holds no HRMS
+     * module, so this cannot happen today. It is asserted rather than assumed
+     * so that adding an HRMS module to the registry later fails loudly here
+     * instead of quietly becoming a second way to grant HRMS access.
+     */
+    const hrmsKeys = [...compileGrants(grants)].filter((key) => isHrmsRoleKey(String(key)));
+    if (hrmsKeys.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          `Extra access cannot carry HRMS roles (${hrmsKeys.join(', ')}). ` +
+          'HRMS roles are granted through the employee record, which enforces AD-4.',
+        code: 'HRMS_ROLE_NOT_GRANTABLE_HERE',
+      });
+    }
+
+    /**
+     * Second: the account's own role pair must still satisfy AD-4 before it is
+     * handed anything more. Widening the access of an account that is already
+     * in violation - a portal-only role still holding `hrms_*` keys - would
+     * write that violation back to disk with validation switched off.
+     */
+    if (denyIfRoleCombinationInvalid(res, target.role, target.roles)) return;
 
     target.extraGrants = grants;
     await target.save({ validateBeforeSave: false });

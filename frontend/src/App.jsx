@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { initSocket } from "./services/socketService";
 import { useUserStore } from "./store/userStore";
 import { useThemeStore } from "./store/themeStore";
+import { useHrmsStore } from "./store/hrmsStore";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,12 +21,18 @@ const queryClient = new QueryClient({
 function App() {
   const fetchUser = useUserStore((state) => state.fetchUser);
   const initTheme = useThemeStore((state) => state.initTheme);
+  const loadHrms = useHrmsStore((state) => state.load);
 
   useEffect(() => {
     initTheme();
     initSocket();
     fetchUser();
-  }, [fetchUser, initTheme]);
+    // Resolved once at startup so the sidebar knows whether to show HRMS at
+    // all. Returns 403 for a customer, which the store treats as the expected
+    // "no HRMS access" answer rather than an error — so the portal is never
+    // blocked or degraded by it.
+    loadHrms();
+  }, [fetchUser, initTheme, loadHrms]);
 
   return (
     <QueryClientProvider client={queryClient}>

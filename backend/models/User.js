@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
+import { isAssignableRoleKey } from '../shared/permissions/assignment.js';
 import { isAssignableRoleName } from '../utils/roleResolver.js';
+import { assertHrmsRolesAssignable } from '../utils/hrmsRoleGuard.js';
 
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
@@ -74,6 +76,29 @@ const userSchema = new mongoose.Schema({
     }],
     default: [],
   },
+
+  // ── HRMS roles (AD-3) ───────────────────────────────────────────────────
+  // Additive. `role` above is untouched and remains the portal's authority, so
+  // every existing check (`req.user.role === 'Admin'`, INVENTORY_ROLES, the
+  // legacy permission map) keeps working exactly as before.
+  //
+  // This array holds HRMS role keys — always `hrms_`-prefixed, so they can
+  // never collide with a portal role name. A user may hold both: a salesperson
+  // who is also an employee carries role='Sales' and roles=['hrms_employee'].
+  //
+  // AD-4: a Customer must never hold an HRMS role. Enforced in three places —
+  // here at the schema, in assertRolesAssignable() at every write path, and
+  // structurally in buildHrmsActor(), which only ever derives grants from
+  // `hrms_*` keys. An empty array therefore means no HRMS access at all, which
+  // is the correct default for every existing account.
+  roles: {
+    type: [String],
+    default: [],
+    validate: {
+      validator: (values) => (values ?? []).every((v) => isAssignableRoleKey(v)),
+      message: (props) => `roles contains an unknown role key: ${props.value}`,
+    },
+  },
   // Customer categorisation — drives which bulk-import template applies.
   // 'Customer' is the current name for the non-MSIL category. 'Regular
   // Customer' and 'Non-MSIL' are the two spellings it has had before, kept in
@@ -111,7 +136,42 @@ const userSchema = new mongoose.Schema({
   showMsilCode: { type: Boolean, default: false }, // Maps to 'Show MSIL Code'
   bookingCcEmails: { type: [String], default: [] }, // Maps to 'Booking CC Emails'
   status: { type: String, enum: ['Active', 'Inactive', 'Suspended'], default: 'Active' },
-  lastLogin: { type: Date }
+  lastLogin: { type: Date },
+
+  // ── Refresh-token rotation ──────────────────────────────────────────────
+  // SHA-256 of the CURRENT refresh token, so a database leak yields no usable
+  // sessions. Presenting a refresh token that does not hash to this value means
+  // an older one was replayed: every session for the account is then revoked by
+  // nulling this field, rather than merely refusing the one request.
+  //
+  // `select: false` keeps it out of every existing query and every API response
+  // that returns a user document — no controller needs to know it exists.
+  refreshTokenHash: { type: String, default: null, select: false },
 }, { timestamps: true });
+
+/**
+ * AD-4, at the document level: a Customer may hold no HRMS role.
+ *
+ * The path validator on `roles` above catches unknown keys, but the
+ * Customer rule is a cross-field check and needs both `role` and `roles`, so it
+ * lives here.
+ *
+ * Note this hook does NOT run for `findOneAndUpdate` / `findByIdAndUpdate`,
+ * even with `runValidators: true` — Mongoose runs update validators against the
+ * query, not a document. Every write path must therefore call
+ * `assertRolesAssignable()` itself; this hook is the backstop for `.save()`,
+ * not the only guard.
+ */
+userSchema.pre('validate', function assertRoleCombinationIsValid(next) {
+  try {
+    // The widened rule: any PORTAL-ONLY role, not just the literal 'Customer'.
+    // A Super Admin can mark a role they invent as portal-only, and an account
+    // on one is as fenced as a Customer is.
+    assertHrmsRolesAssignable(this.role, this.roles);
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default mongoose.model('User', userSchema);

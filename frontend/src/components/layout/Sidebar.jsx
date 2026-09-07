@@ -33,6 +33,8 @@ import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
 import { homePathFor } from "../../utils/permissions";
 import { buildNavigation } from "../../utils/navigation";
+import { useHrmsPermissions } from "../../hooks/useHrmsPermissions";
+import { visibleHrmsNavItems, groupHrmsNavItems } from "../hrms/navItems";
 
 /**
  * Icon names travel from the backend registry as strings; this is where they
@@ -50,7 +52,11 @@ const ICONS = {
   GaugeCircle, Upload, Images, Store, ShieldCheck, LayoutGrid, Key, BarChart3,
 };
 
-const iconFor = (name) => ICONS[name] || Circle;
+// The ERP registry sends icons as NAMES; the HRMS nav items hold the imported
+// component directly. Accepting both keeps one renderer for the whole rail
+// rather than forking it, and keeps every HRMS icon out of the map above.
+const iconFor = (name) =>
+  (typeof name === "function" || typeof name === "object") && name ? name : ICONS[name] || Circle;
 
 export const Sidebar = () => {
   const { sidebarOpen, toggleSidebar, collapsedNavGroups, toggleNavGroup } = useUIStore();
@@ -84,7 +90,39 @@ export const Sidebar = () => {
    * into groups. The presentation decisions that genuinely belong to the
    * sidebar - the cart badge, which group is open - stay here.
    */
-  const groups = buildNavigation(user);
+  /**
+   * HRMS navigation.
+   *
+   * Appended to the SAME group list the ERP menu produces, not rendered as a
+   * second rail: HRMS items then take part in the same active-item contest,
+   * the same collapse behaviour and the same renderer, so exactly one row is
+   * ever lit and the two halves cannot drift apart visually.
+   *
+   * Visibility comes from the HRMS evaluator, never from a portal permission.
+   * A group with no visible items is dropped by groupHrmsNavItems, so an
+   * account with no HRMS access - a customer, or a portal Admin who was never
+   * given an HRMS role - sees no trace of HRMS, not even a heading (AD-4).
+   */
+  const { can, implementedModules, hasAccess: hasHrmsAccess } = useHrmsPermissions();
+  const hrmsGroups = hasHrmsAccess
+    ? groupHrmsNavItems(visibleHrmsNavItems(can, implementedModules)).map((group) => ({
+        key: `hrms:${group.group}`,
+        label: group.label,
+        icon: "Users",
+        // Always a heading, even at one item: an HRMS entry loose among the
+        // ERP modules would read as an ERP module.
+        alwaysGrouped: true,
+        items: group.items.map((item) => ({
+          id: `hrms:${item.key}`,
+          key: item.key,
+          label: item.label,
+          path: item.path,
+          icon: item.icon,
+        })),
+      }))
+    : [];
+
+  const groups = [...buildNavigation(user), ...hrmsGroups];
 
   // Import Team's home is the inventory dashboard, so "/" only ever redirects
   // for them. Every flat path below is the one the user is actually taken to.

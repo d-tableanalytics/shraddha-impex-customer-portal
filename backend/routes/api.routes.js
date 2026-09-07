@@ -6,6 +6,8 @@ import Order from '../models/Order.js';
 import MsilCode from '../models/MsilCode.js';
 import Reservation from '../models/Reservation.js';
 import { protect } from '../middlewares/auth.js';
+import { login } from '../modules/auth/auth.controller.js';
+import { loginLimiter } from '../middlewares/rateLimiters.js';
 import { allowedBrandModels, brandFilter } from '../utils/brandAccess.js';
 
 import { isSuperAdmin } from '../middlewares/rbac.js';
@@ -181,31 +183,19 @@ router.get('/orders', async (req, res, next) => {
   }
 });
 
-// 5. POST /api/auth/login - plaintext match against User
-router.post('/auth/login', async (req, res, next) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required.' });
-    }
-
-    // Match plaintext password as requested
-    const user = await User.findOne({ email: String(email).toLowerCase() });
-
-    // TODO: replace with bcrypt.compare once ready
-    if (!user || user.password !== String(password)) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-
-    // Return user doc (minus password)
-    const userResponse = user.toObject();
-    delete userResponse.password;
-
-    res.status(200).json({ success: true, data: userResponse });
-  } catch (error) {
-    next(error);
-  }
-});
+// 5. POST /api/auth/login
+//
+// This route used to hold a SECOND login implementation: a raw
+// `user.password !== String(password)` comparison, no hashing, no rate limit,
+// no token, no audit entry. It sat beside the real one in
+// modules/auth/auth.controller.js and quietly undid it — an attacker with a
+// list of emails could brute-force here while the front door was throttled.
+//
+// It now delegates to the one secure implementation, so both paths get bcrypt
+// verification, the login rate limiter, refresh-cookie issuance, plaintext
+// migration and an audit trail. The route is kept rather than deleted so any
+// client still calling it keeps working, through the correct flow.
+router.post('/auth/login', loginLimiter, login);
 
 // 6. GET /api/dashboard/stats - real KPIs for the dashboard
 router.get('/dashboard/stats', protect, async (req, res, next) => {
