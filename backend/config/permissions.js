@@ -47,6 +47,19 @@ export const PERMISSIONS = {
   EDIT_BOOKING_PRE_PO: 'edit_booking_pre_po', // amend lines until the PO is raised
   RAISE_PO: 'raise_po',                       // generate the PO number (locks the booking)
   OVERRIDE_PO_LOCK: 'override_po_lock',       // edit a booking after the PO exists
+  /**
+   * See the four tier prices, and choose which one a customer is offered.
+   *
+   * Its own key rather than a corner of RAISE_PO, because "may raise the PO"
+   * and "may see what we charge everyone else" are different questions and the
+   * requirement asks for the second to be grantable on its own. A holder can
+   * read Product.prices and set the price on a booking; nobody else can do
+   * either, and the tier figures appear in no other response in the app.
+   *
+   * A customer never holds it and never needs it: the price they were given is
+   * copied onto their own order rows, which they may already read.
+   */
+  VIEW_PRICING: 'view_pricing',
 
   // ── Inventory Management System ─────────────────────────────────────────
   // The full set is declared here in one pass rather than being reopened for
@@ -168,6 +181,12 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_CUSTOMER_USERS,
     PERMISSIONS.EDIT_BOOKING_PRE_PO,
     PERMISSIONS.RAISE_PO,
+    // Sales quotes the customer, so Sales sees the price schedule. Admin holds
+    // it through the wildcard. No other built-in role does — a warehouse or
+    // import user has no reason to know what anyone is charged — and a Super
+    // Admin can grant it to a role they invent through the matrix, which is
+    // what "other specifically authorized users" means here.
+    PERMISSIONS.VIEW_PRICING,
     PERMISSIONS.VIEW_REPORTS,
     // Sales needs to know what can be sold - availability only, never the
     // ledger, costs or adjustments.

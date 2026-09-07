@@ -31,8 +31,10 @@ import { useShowMsilCode } from "../../hooks/useShowMsilCode";
 import { canViewLineItemBoxNo, canEditBookingQuantity, hasPermission, PERMISSIONS, isSuperAdmin} from "../../utils/permissions";
 import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
-import { PackageX } from "lucide-react";
+import { PackageX, Receipt } from "lucide-react";
 import toast from "react-hot-toast";
+import { PicklistPreview } from "../pricing/PicklistPreview";
+import { picklistFromCustomerOrder } from "../../utils/picklistDocument";
 import {
   BOOKING_LIFECYCLE,
   TERMINAL_STATUSES,
@@ -78,6 +80,7 @@ export const OrderDrawer = () => {
   // brings new server values cannot be silently clobbered by a stale draft.
   const [draftQty, setDraftQty] = useState({});
   const [showQtyHistory, setShowQtyHistory] = useState(false);
+  const [showPicklist, setShowPicklist] = useState(false);
 
   // Close the confirmation when the drawer switches booking, so a prompt opened
   // against one booking cannot be confirmed against another.
@@ -366,6 +369,20 @@ export const OrderDrawer = () => {
                     className="text-red-600 border-red-200 hover:bg-red-50"
                   >
                     <PackageX size={16} className="mr-2" /> Cancel booking
+                  </ERPButton>
+                )}
+                {/* The purchase order as a document, with the price that was
+                    agreed on it. Offered only once the PO has been raised —
+                    before that there is no purchase order to preview, and no
+                    price has been given. */}
+                {poRaised && (
+                  <ERPButton
+                    variant="outline"
+                    size="sm"
+                    className="hidden sm:flex"
+                    onClick={() => setShowPicklist(true)}
+                  >
+                    <Receipt size={16} className="mr-2" /> PO Preview
                   </ERPButton>
                 )}
                 <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePrint}>
@@ -1054,6 +1071,21 @@ export const OrderDrawer = () => {
             </div>
           )}
         </motion.div>
+
+        {/* The purchase order document. Built from what the server sent, so an
+            unpriced PO — or one this reader is not entitled to see the rate on
+            — renders the same paper with no money columns rather than a broken
+            one. */}
+        {showPicklist && (
+          <PicklistPreview
+            doc={picklistFromCustomerOrder(selectedOrder)}
+            onClose={() => setShowPicklist(false)}
+            onDownload={async (docModel) => {
+              const { downloadPicklistPdf } = await import("../../utils/picklistPdf");
+              return downloadPicklistPdf(docModel);
+            }}
+          />
+        )}
       </div>
     </AnimatePresence>
   );

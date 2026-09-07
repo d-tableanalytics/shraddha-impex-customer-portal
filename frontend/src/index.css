@@ -307,3 +307,36 @@ html.dark .text-warning-600 { color: #f0b866; }
 html.dark .text-warning-700 { color: #f3c98b; }
 html.dark .text-warning-500 { color: #e0a355; }
 html.dark .border-warning-200 { border-color: rgba(249, 115, 22, 0.30); }
+
+/* ── Printing the picklist / PO preview ─────────────────────────────────────
+   The preview is a dialog over the app, so a plain window.print() would put the
+   whole dashboard on the paper. Everything is hidden and only the document is
+   made visible again, then lifted out of the dialog's positioning so it starts
+   at the top of the sheet rather than wherever the modal happened to sit.
+
+   `visibility` rather than `display`, because hiding an ancestor with display
+   would take the document down with it. Scoped to the one id in
+   components/pricing/PicklistPreview.jsx; nothing else prints this way. */
+@media print {
+  body * { visibility: hidden !important; }
+
+  #picklist-document,
+  #picklist-document * { visibility: visible !important; }
+
+  #picklist-document {
+    position: absolute !important;
+    inset: 0 auto auto 0;
+    width: 100%;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* Table borders survive the printer's default colour dropping. */
+  #picklist-document table { border-collapse: collapse !important; }
+  #picklist-document th,
+  #picklist-document td { border: 1px solid #94a3b8 !important; }
+
+  @page { margin: 12mm; }
+}

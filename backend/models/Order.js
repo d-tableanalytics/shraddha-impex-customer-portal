@@ -67,7 +67,37 @@ const orderSchema = new mongoose.Schema({
   shopNumber: { type: String, default: null },
   gstCode: { type: String, default: null },
   paymentTerm: { type: String, default: null },
-  promiseDate: { type: Date, default: null }
+  promiseDate: { type: Date, default: null },
+
+  /**
+   * ── The price this customer was given ─────────────────────────────────────
+   *
+   * `priceType` is WHICH of the four tiers the sales desk offered (see
+   * config/pricing.js); `unitPrice` is the INR-per-piece figure that tier held
+   * at the moment the PO was raised.
+   *
+   * BOTH, not just the type, and this is the whole point of the pair. The
+   * pricelist is reloaded from a workbook whenever the supplier issues one, so
+   * looking a price up by type later would answer "what does the Trader tier
+   * cost today", when the question a raised PO asks is "what was this customer
+   * quoted". The number is copied here so the answer cannot drift, and the type
+   * rides along so the desk can still see which schedule it came from.
+   *
+   * Stamped on EVERY row of the booking, because a row is read on its own
+   * throughout this codebase and a line with no price is indistinguishable from
+   * a line that was free.
+   *
+   * null unitPrice is "no price on file for this SKU under that tier" — the
+   * picklist prints a dash. It is never 0.
+   *
+   * VISIBILITY: this is the only pricing a customer may ever see, and only for
+   * their own booking, and only once the PO exists. The four tier prices stay on
+   * the product master behind view_pricing.
+   */
+  priceType: { type: String, default: null },
+  unitPrice: { type: Number, default: null, min: 0 },
+  pricedAt: { type: Date, default: null },
+  pricedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });
 
 // Compound indexes

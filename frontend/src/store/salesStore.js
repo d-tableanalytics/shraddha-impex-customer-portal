@@ -34,8 +34,10 @@ export const useSalesStore = create((set, get) => ({
     get().fetchBookings();
   },
 
-  select: (booking) => set({ selected: booking }),
-  close: () => set({ selected: null }),
+  // Selecting a booking drops the previous booking's price quote — see the
+  // note on `pricing` below.
+  select: (booking) => set({ selected: booking, pricing: null }),
+  close: () => set({ selected: null, pricing: null }),
 
   /** Refresh the open booking from the server (after an edit elsewhere). */
   reloadSelected: async () => {
@@ -62,6 +64,52 @@ export const useSalesStore = create((set, get) => ({
         // 423 carries the lock message; surface the server's wording verbatim.
         error: err.response?.data?.message || err.message || "Could not save the booking.",
         locked: err.response?.status === 423,
+      };
+    }
+  },
+
+  /**
+   * The tier quote for the open booking: every rate for every line.
+   *
+   * Kept in the store rather than the dialog so it survives the dialog being
+   * closed and reopened, and cleared whenever a different booking is selected —
+   * showing one booking's prices against another's lines would be worse than
+   * showing none.
+   */
+  pricing: null,
+  pricingLoading: false,
+
+  loadPricing: async (orderId) => {
+    set({ pricingLoading: true });
+    try {
+      const pricing = await salesApi.getPricing(orderId);
+      set({ pricing, pricingLoading: false });
+      return { success: true, pricing };
+    } catch (err) {
+      set({ pricing: null, pricingLoading: false });
+      return {
+        success: false,
+        // A 403 here means the account may work bookings but not see prices,
+        // which is a legitimate configuration rather than a fault.
+        forbidden: err.response?.status === 403,
+        error: err.response?.data?.message || err.message || "Could not load prices.",
+      };
+    }
+  },
+
+  /** Set or clear the rate on a booking whose PO has already been raised. */
+  setPricing: async (orderId, priceType) => {
+    set({ saving: true });
+    try {
+      const res = await salesApi.setPricing(orderId, priceType);
+      set({ selected: res.data, saving: false });
+      await get().fetchBookings();
+      return { success: true, pricing: res.pricing };
+    } catch (err) {
+      set({ saving: false });
+      return {
+        success: false,
+        error: err.response?.data?.message || err.message || "Could not set the price.",
       };
     }
   },

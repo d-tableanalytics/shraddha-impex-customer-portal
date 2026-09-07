@@ -175,9 +175,15 @@ const rankedSearchPipeline = (match, term, skip, limit) =>
       { $sort: { _rank: 1, skuCode: 1, brand: 1 } },
       { $skip: skip },
       { $limit: limit },
-      { $unset: '_rank' },
+      // `prices` alongside `_rank`: an aggregation bypasses the schema's
+      // `select: false`, so the tier prices have to be dropped explicitly here.
+      // This pipeline feeds the SKU picker a CUSTOMER uses.
+      { $unset: ['_rank', 'prices'] },
     ]
-    : [{ $match: match }, { $sort: { skuCode: 1, brand: 1 } }, { $skip: skip }, { $limit: limit }];
+    : [
+      { $match: match }, { $sort: { skuCode: 1, brand: 1 } },
+      { $skip: skip }, { $limit: limit }, { $unset: 'prices' },
+    ];
 
 // GET /api/v1/products/search?search=&page=&limit=
 //

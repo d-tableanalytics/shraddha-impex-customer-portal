@@ -208,6 +208,24 @@ export const MODULES = [
           approve: ['raise_po'],
         },
       },
+      {
+        /**
+         * Its own sub-module, with ONE cell, because the thing being granted is
+         * "may see what we charge" - a commercial fact, not a screen. It has no
+         * path: the price selector lives inside the PO dialog on the booking
+         * desk above, and the four tier prices appear nowhere else in the app.
+         *
+         * `view` covers both halves of the requirement deliberately. Seeing the
+         * tiers and choosing between them are the same act at the desk - a
+         * salesperson who can read the schedule to quote it can quote it - and
+         * splitting them would produce a role that can look at every price and
+         * do nothing with it.
+         */
+        key: 'pricing',
+        label: 'Customer Pricing',
+        path: null,
+        actions: { view: ['view_pricing'] },
+      },
     ],
   },
 

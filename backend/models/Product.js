@@ -74,6 +74,48 @@ const productSchema = new mongoose.Schema(
       default: 'Active',
     },
 
+    /**
+     * ── Selling prices, one per price type ──────────────────────────────────
+     *
+     * INR per piece, loaded from the Ko-ken pricelist workbook by
+     * scripts/import-pricelist.js. The type keys are defined once in
+     * config/pricing.js and are the same four everywhere: the import, the sales
+     * desk's price selection, and the amount printed on a picklist.
+     *
+     * null means NO PRICE ON FILE, and is different from 0. A SKU the pricelist
+     * does not cover — every BIX and IMADA product, and the Ko-ken lines that
+     * are only in the MSIL schedule — must read as "no price" so the picklist
+     * says so, rather than quoting a free line.
+     *
+     * COMMERCIALLY SENSITIVE. These four numbers are never sent to a customer.
+     * The sales desk reads them behind view_pricing to choose which one to
+     * offer, and only the CHOSEN one is copied onto the order row (Order
+     * .unitPrice) where the customer can see it. Anything that serialises a
+     * product for a customer-facing screen must leave this field out — the
+     * catalogue and the inventory list both project explicit field lists, which
+     * is what keeps that true by default.
+     */
+    // `select: false` on all four: the price schedule is OPT-IN, at the schema.
+    //
+    // The alternative was to remember to exclude it from the dozen or so places
+    // that read a product with no projection — the inventory master list, the
+    // SKU detail panel, the rename and delete paths — and to keep remembering
+    // for every one added later. Defaulting to absent inverts that: a query
+    // gets prices only by naming them, which today is scripts/import-pricelist.js
+    // and modules/sales/pricing.service.js, and both are behind view_pricing or
+    // a shell. An explicit projection still wins, so nothing existing changes
+    // meaning; a query that never asked simply stops carrying a commercial
+    // figure it never wanted.
+    //
+    // NOTE: aggregation pipelines do NOT honour this — they bypass the schema —
+    // so a $project in a pipeline must exclude prices itself.
+    prices: {
+      venusAutomation: { type: Number, default: null, min: 0, select: false },
+      trader: { type: Number, default: null, min: 0, select: false },
+      endUser: { type: Number, default: null, min: 0, select: false },
+      msil: { type: Number, default: null, min: 0, select: false },
+    },
+
     // ── Balances (DEPRECATED — moving to M3) ────────────────────────────────
     // These stay for now because the booking lifecycle, the stock ledger and the
     // dashboard all read and write them today. Module M3 moves them into a

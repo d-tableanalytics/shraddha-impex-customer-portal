@@ -474,8 +474,17 @@ check('raisePo re-stamps box numbers before the PO is committed',
   /currentBoxNumbers\(rows\)/.test(salesCtl) && /\$set: \{ boxNo: current \}/.test(salesCtl));
 check('the re-stamp happens BEFORE the poNumber is written',
   salesCtl.indexOf('const reBoxed') < salesCtl.indexOf('poGeneratedAt: now'));
-check('re-boxed lines are recorded on the PO audit entry',
-  /reBoxed/.test(salesCtl) && /meta: \{ orderId, poNumber, poGeneratedAt: now, reBoxed \}/.test(salesCtl));
+// Checked as FACTS about the audit meta rather than as one literal line: the
+// meta object gained the price type when customer pricing shipped, and an
+// assertion that pins its exact formatting fails on a change that keeps every
+// property it was written to protect.
+check('re-boxed lines are recorded on the PO audit entry', (() => {
+  const from = salesCtl.indexOf("'PO Generated'");
+  const meta = salesCtl.slice(from, from + 900);
+  return from > 0
+    && /meta: \{/.test(meta)
+    && ['orderId', 'poNumber', 'poGeneratedAt', 'reBoxed'].every((k) => meta.includes(k));
+})());
 check('the customer PO email carries NO box number',
   !/Box No/.test(salesCtl.slice(salesCtl.indexOf('buildPoRaisedEmail'),
     salesCtl.indexOf('export const getBookings'))));

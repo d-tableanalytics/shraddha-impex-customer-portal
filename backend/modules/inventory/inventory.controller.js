@@ -461,6 +461,10 @@ export const listItems = async (req, res, next) => {
         { $sort: { _available: sortSpec._available, skuCode: 1 } },
         { $skip: (page - 1) * limit },
         { $limit: limit },
+        // An aggregation bypasses the schema's `select: false`, so the tier
+        // prices are dropped explicitly. The .find() branch below never carries
+        // them, and the inventory list must not either.
+        { $unset: 'prices' },
       ])
       : Product.find(query).sort(sortSpec).skip((page - 1) * limit).limit(limit).lean();
 

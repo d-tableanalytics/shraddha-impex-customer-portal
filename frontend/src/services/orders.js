@@ -1,5 +1,6 @@
 import { api } from "./api";
 import { bookingStatusOf } from "../constants/bookingLifecycle";
+import { asPrice, lineAmount } from "../constants/pricing";
 
 export const mapOrder = (order) => {
   if (!order) return null;
@@ -26,6 +27,11 @@ export const mapOrder = (order) => {
     // the quantity through the same sales endpoint the desk uses, which
     // addresses lines by row id.
     lineId: order._id,
+    // The rate this line was sold at, when the customer is entitled to it.
+    // The SERVER decides that: it removes unitPrice from anyone who is not the
+    // owner of a booking whose PO has been raised, so anything that arrives
+    // here is already cleared to be shown. Absent stays absent.
+    unitPrice: asPrice(order.unitPrice),
     // Raw quantities, kept apart because three different things move them:
     // bookedQty is what the customer asked for, confirmedQty is what stock
     // covered and what a desk edit changes, pendingQty is the indent remainder.
@@ -125,13 +131,39 @@ const groupIntoBookings = (rawOrders) => {
       bookedQty: r.bookedQty ?? r.requestedQty ?? 0,   // originally booked
       confirmedQty: r.confirmedQty ?? r.requestedQty ?? 0, // fulfilled from stock
       pendingQty: r.pendingQty ?? 0,                    // indent (unfulfilled)
+      unitPrice: asPrice(r.unitPrice),
+      amount: lineAmount(r.unitPrice, r.confirmedQty ?? r.requestedQty ?? 0),
     }));
+
+    /**
+     * What this booking comes to, if the customer may see it at all.
+     *
+     * Derived from what ARRIVED rather than from a flag: the server strips the
+     * rate from anyone not entitled to it, so rows with no unitPrice produce no
+     * pricing block and the preview simply has no money section. Nothing here
+     * decides entitlement — that decision was made before the response was sent.
+     *
+     * The PO charges for the confirmed quantity; an indent remainder is not on
+     * it, and lines with no rate are counted rather than folded into the total.
+     */
+    const pricedRows = rows.filter((r) => asPrice(r.unitPrice) !== null);
+    const pricing = pricedRows.length
+      ? {
+        currency: "INR",
+        totalAmount: Math.round(
+          rows.reduce((n, r) => n + (lineAmount(r.unitPrice, r.confirmedQty ?? r.requestedQty ?? 0) || 0), 0) * 100,
+        ) / 100,
+        pricedLines: pricedRows.length,
+        unpricedLines: rows.length - pricedRows.length,
+      }
+      : null;
 
     return {
       ...mapped,
       lineItemIds: rows.map((r) => r._id),
       items,
       lineItems,
+      pricing,
       totalQuantity,
       // What the CUSTOMER originally asked for across the booking, indent
       // included. Distinct from totalQuantity, which is what the booking holds

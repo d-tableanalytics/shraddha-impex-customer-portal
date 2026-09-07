@@ -1,5 +1,6 @@
 import { Product } from '../../models/Product.js';
 import { lockState, poDueAt, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
+import { lineAmount, labelForPriceType, normalisePriceType, asPrice } from '../../config/pricing.js';
 
 /**
  * Turning Order rows into the booking object the sales desk renders.
@@ -37,15 +38,65 @@ export const currentBoxNumbers = async (rows) => {
 };
 
 /**
+ * What this booking was priced at — the tier that was offered, and the money.
+ *
+ * PURE, and it reads ONLY the order rows. It cannot reach the product master,
+ * so it cannot surface a price the customer was not given: the row carries the
+ * one tier that was chosen and no trace of the other three. That is what makes
+ * the same summary safe to send to the sales desk and to the customer whose
+ * booking it is.
+ *
+ * Null when nothing has been priced, so a caller can omit the section entirely
+ * rather than render an empty one.
+ *
+ * `unpricedLines` counts lines the chosen tier has no rate for. It is reported
+ * rather than hidden because a total that quietly skips three lines is a wrong
+ * total, and the document has to be able to say so.
+ */
+export const pricingSummary = (rows = []) => {
+  const priced = rows.filter((r) => r?.priceType);
+  if (!priced.length) return null;
+
+  let totalAmount = 0;
+  let pricedLines = 0;
+  let unpricedLines = 0;
+
+  for (const row of rows) {
+    // The PO charges for what stock covered; an indent remainder is not on it.
+    const amount = lineAmount(row.unitPrice, row.confirmedQty || 0);
+    if (amount === null) { unpricedLines += 1; continue; }
+    totalAmount += amount;
+    pricedLines += 1;
+  }
+
+  const type = normalisePriceType(priced[0].priceType);
+  return {
+    priceType: type,
+    priceTypeLabel: labelForPriceType(type),
+    currency: 'INR',
+    pricedAt: priced[0].pricedAt || null,
+    pricedLines,
+    unpricedLines,
+    totalAmount: pricedLines ? Math.round(totalAmount * 100) / 100 : null,
+  };
+};
+
+/**
  * Collapse the flat Order rows into one booking object for the review screen.
  *
  * `boxNumbers` is the map from currentBoxNumbers(). Passing an empty map (the
  * default) falls back to each row's stored snapshot, which is what the locked
  * bookings use anyway.
  *
+ * `includePricing` decides whether the money is in the answer at all. It is OFF
+ * by default and switched on from the caller's permission, so a role that can
+ * work the booking desk without holding view_pricing gets a response with no
+ * prices in it rather than a response it is trusted not to render. Same reason
+ * the box number is filtered server-side rather than hidden in the table.
+ *
  * PURE — rows and a Map in, a plain object out. Nothing here queries.
  */
-export const shapeBooking = (rows, boxNumbers = new Map()) => {
+export const shapeBooking = (rows, boxNumbers = new Map(), { includePricing = false } = {}) => {
   const first = rows[0];
   const bookingDate = first.date || first.orderTimestamp || first.createdAt;
   const lock = lockState(rows);
@@ -76,6 +127,7 @@ export const shapeBooking = (rows, boxNumbers = new Map()) => {
     paymentTerm: first.paymentTerm || null,
     promiseDate: first.promiseDate || first.supplyByDate || null,
     ...lock,
+    pricing: includePricing ? pricingSummary(rows) : null,
     totalQuantity: rows.reduce((n, r) => n + (r.confirmedQty || 0), 0),
     lineCount: rows.length,
     lines: rows.map((r) => ({
@@ -102,8 +154,15 @@ export const shapeBooking = (rows, boxNumbers = new Map()) => {
       bookedQty: r.bookedQty || 0,
       confirmedQty: r.confirmedQty || 0,
       pendingQty: r.pendingQty || 0,
+      // The rate this customer was given for this line and what it comes to.
+      // Present only when the viewer may see pricing; absent, not zeroed, so a
+      // template cannot mistake "not allowed to know" for "free".
+      ...(includePricing ? {
+        unitPrice: asPrice(r.unitPrice),
+        amount: lineAmount(r.unitPrice, r.confirmedQty || 0),
+      } : {}),
     })),
   };
 };
 
-export default { boxKey, currentBoxNumbers, shapeBooking };
+export default { boxKey, currentBoxNumbers, shapeBooking, pricingSummary };

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
   Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle, Download, FileText,
-  MapPin,
+  MapPin, Receipt, IndianRupee, Pencil,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
@@ -12,8 +12,12 @@ import { ERPButton } from "../ui/ERPButton";
 import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { PoCountdown } from "../ui/PoCountdown";
 import { ProductSearchDropdown } from "../ui/ProductSearchDropdown";
-import { canEditBooking, canRaisePo, canViewLineItemBoxNo, hasPermission, PERMISSIONS } from "../../utils/permissions";
+import { canEditBooking, canRaisePo, canViewLineItemBoxNo, canViewPricing, hasPermission, PERMISSIONS } from "../../utils/permissions";
 import { PoConfirmModal } from "../modal/PoConfirmModal";
+import { PicklistPreview } from "../pricing/PicklistPreview";
+import { PriceTypeSelector } from "../pricing/PriceTypeSelector";
+import { picklistFromSalesBooking } from "../../utils/picklistDocument";
+import { formatRupees } from "../../constants/pricing";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
 //
@@ -34,13 +38,18 @@ const toDraft = (booking) =>
   }));
 
 export const SalesBookingDrawer = () => {
-  const { selected, close, saveItems, raisePo, saving } = useSalesStore();
+  const { selected, close, saveItems, raisePo, setPricing, saving } = useSalesStore();
   const { user } = useUserStore();
 
   const [draft, setDraft] = useState([]);
   const [poInput, setPoInput] = useState("");
   const [showPoBox, setShowPoBox] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [showPicklist, setShowPicklist] = useState(false);
+  // Re-pricing a booking whose PO is already raised. Closed by default: the
+  // ordinary path is to choose the rate in the PO dialog, and this is the
+  // correction for the ones that were raised before the choice existed.
+  const [repricing, setRepricing] = useState(false);
 
   // `selected` is only replaced on an explicit select / save / raise-PO, so this
   // resyncs the draft with server truth after a write without clobbering
@@ -50,6 +59,8 @@ export const SalesBookingDrawer = () => {
     setShowPoBox(false);
     setPoInput("");
     setShowModal(false);
+    setShowPicklist(false);
+    setRepricing(false);
   }, [selected]);
 
   if (!selected) return null;
@@ -58,6 +69,8 @@ export const SalesBookingDrawer = () => {
   const editable = canEditBooking(user, selected);
   const showBoxNo = canViewLineItemBoxNo(user);
   const mayRaise = canRaisePo(user, selected);
+  const mayPrice = canViewPricing(user);
+  const pricing = selected.pricing || null;
   const isOverride = locked && hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
 
   const dirty =
@@ -171,6 +184,30 @@ export const SalesBookingDrawer = () => {
 
   const handleOpenModal = () => {
     setShowModal(true);
+  };
+
+  // The document both audiences see. Built from the SAVED booking, never the
+  // draft: a picklist showing quantities that are not in the system yet is the
+  // kind of paper that gets goods picked wrong.
+  const picklist = picklistFromSalesBooking(selected, { showBoxNo });
+
+  const handlePicklistPdf = async (docModel) => {
+    const { downloadPicklistPdf } = await import("../../utils/picklistPdf");
+    return downloadPicklistPdf(docModel);
+  };
+
+  const handleSetPrice = async (priceType) => {
+    const res = await setPricing(selected.orderId, priceType);
+    if (res.success) {
+      setRepricing(false);
+      toast.success(
+        res.pricing?.priceType
+          ? `Priced at the ${res.pricing.priceTypeLabel} rate.`
+          : "Pricing removed from this booking.",
+      );
+    } else {
+      toast.error(res.error);
+    }
   };
 
   const handleModalConfirm = async (formData) => {
@@ -296,6 +333,57 @@ export const SalesBookingDrawer = () => {
               </div>
             </div>
 
+            {/* Customer pricing.
+                Shown only to a view_pricing holder, and only for a booking whose
+                PO exists — before that the choice is made in the PO dialog,
+                where it belongs, and duplicating it here would be two ways to
+                set one thing. */}
+            {mayPrice && locked && (
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <IndianRupee size={18} className="text-emerald-600" />
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-800">Customer Pricing</h3>
+                      <p className="text-[11px] text-slate-500">
+                        {pricing?.priceType
+                          ? `${pricing.priceTypeLabel} rate · ${pricing.pricedLines} of ${pricing.pricedLines + pricing.unpricedLines} line(s) rated`
+                          : "This purchase order has no pricing on it."}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {pricing?.totalAmount != null && (
+                      <span className="text-base font-black text-slate-900">
+                        {formatRupees(pricing.totalAmount)}
+                      </span>
+                    )}
+                    <button
+                      onClick={() => setRepricing((v) => !v)}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-700 bg-primary-50 border border-primary-200 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition-all"
+                    >
+                      <Pencil size={13} /> {repricing ? "Close" : pricing?.priceType ? "Change" : "Set price"}
+                    </button>
+                  </div>
+                </div>
+                {repricing && (
+                  <div className="p-5">
+                    <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
+                      The customer sees only the rate chosen here. Changing it rewrites what this
+                      purchase order shows them, and is recorded in the audit trail.
+                    </p>
+                    <PriceTypeSelector
+                      orderId={selected.orderId}
+                      value={pricing?.priceType ?? null}
+                      onChange={handleSetPrice}
+                      customerCategory={selected.customerProfile?.customerCategory}
+                      disabled={saving}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Lines */}
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -329,6 +417,17 @@ export const SalesBookingDrawer = () => {
                     className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:text-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <FileText size={14} /> PDF
+                  </button>
+                  {/* The document the customer will see, on the desk's screen
+                      first. The desk's copy names the price schedule and shows
+                      box numbers; the customer's carries neither. */}
+                  <button
+                    onClick={() => setShowPicklist(true)}
+                    disabled={(selected.lines || []).length === 0}
+                    title="Preview the picklist / purchase order document"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:text-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Receipt size={14} /> Picklist
                   </button>
                   {editable && (
                     <button
@@ -476,6 +575,14 @@ export const SalesBookingDrawer = () => {
             </div>
           </div>
         </motion.div>
+
+        {showPicklist && (
+          <PicklistPreview
+            doc={picklist}
+            onClose={() => setShowPicklist(false)}
+            onDownload={handlePicklistPdf}
+          />
+        )}
 
         <PoConfirmModal
           isOpen={showModal}

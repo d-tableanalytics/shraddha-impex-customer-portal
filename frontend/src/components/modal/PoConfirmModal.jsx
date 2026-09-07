@@ -2,9 +2,13 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, MapPin, Building2, Store, FileText, Hash, Calendar,
-  CreditCard, Clock, FileCheck2, Loader2, ShieldCheck, Phone, Navigation
+  CreditCard, Clock, FileCheck2, Loader2, ShieldCheck, Phone, Navigation, IndianRupee
 } from "lucide-react";
 import { ERPButton } from "../ui/ERPButton";
+import { PriceTypeSelector } from "../pricing/PriceTypeSelector";
+import { useUserStore } from "../../store/userStore";
+import { canViewPricing } from "../../utils/permissions";
+import { labelForPriceType } from "../../constants/pricing";
 
 export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoNumber, saving }) => {
   const [formData, setFormData] = useState({
@@ -20,7 +24,14 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
     poDate: "",
     paymentTerm: "Net 30",
     promiseDate: "",
+    // Which rate this customer is being offered. The AMOUNT is never in here —
+    // the server resolves it from the product master, so a price cannot be
+    // decided by the browser.
+    priceType: null,
   });
+
+  const user = useUserStore((s) => s.user);
+  const mayPrice = canViewPricing(user);
 
   useEffect(() => {
     if (isOpen && booking) {
@@ -43,6 +54,9 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
         poDate: booking.poDate ? new Date(booking.poDate).toISOString().split("T")[0] : today,
         paymentTerm: booking.paymentTerm || "Net 30",
         promiseDate: booking.promiseDate ? new Date(booking.promiseDate).toISOString().split("T")[0] : defaultPromise,
+        // If the booking has already been priced, open on that choice rather
+        // than making the desk remember it.
+        priceType: booking.pricing?.priceType ?? null,
       });
     }
   }, [isOpen, booking, initialPoNumber]);
@@ -300,6 +314,35 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
               </div>
 
             </div>
+
+            {/* 13. Customer pricing.
+                Only for an authorised user — a desk account without
+                view_pricing sees no prices here and raises the PO without
+                them, which the server enforces independently of this check. */}
+            {mayPrice && (
+              <div className="pt-2">
+                <label className={labelClass}>
+                  <IndianRupee size={14} className="text-emerald-600" />
+                  Price Offered to Customer
+                  {formData.priceType && (
+                    <span className="ml-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">
+                      {labelForPriceType(formData.priceType)}
+                    </span>
+                  )}
+                </label>
+                <p className="text-[11px] text-slate-500 mb-2 leading-relaxed">
+                  The customer sees only the rate chosen here, and only after this
+                  purchase order is raised. The other schedules are never shown to them.
+                </p>
+                <PriceTypeSelector
+                  orderId={booking?.orderId}
+                  value={formData.priceType}
+                  onChange={(priceType) => handleChange("priceType", priceType)}
+                  customerCategory={booking?.customerProfile?.customerCategory}
+                  disabled={saving}
+                />
+              </div>
+            )}
 
             {/* Modal Actions */}
             <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3 shrink-0">

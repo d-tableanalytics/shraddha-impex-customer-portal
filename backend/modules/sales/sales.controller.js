@@ -9,7 +9,9 @@ import { sendEmail } from '../../utils/mailer.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { assertBookingEditable, isPlaceholderPo } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
-import { boxKey, currentBoxNumbers, shapeBooking } from './booking.shape.js';
+import { boxKey, currentBoxNumbers, shapeBooking, pricingSummary } from './booking.shape.js';
+import { quoteBooking, applyPricing } from './pricing.service.js';
+import { PRICE_TYPES, normalisePriceType } from '../../config/pricing.js';
 import {
   findProductBySku, reserveStock, releaseStock, consumeStock,
   adjustReservedQty, adjustConsumedQty,
@@ -37,6 +39,15 @@ const loadBooking = async (orderId, session = null) => {
 };
 
 // Audit writing lives in utils/auditLog.js — see recordAudit().
+
+/**
+ * May this actor see what a customer is charged, and choose it?
+ *
+ * Asked of every booking response rather than trusted to the client. A role
+ * with the booking desk but not view_pricing gets a payload with no money in
+ * it — nothing to hide in the UI, because nothing was sent.
+ */
+const mayPrice = (user) => hasPermission(user, PERMISSIONS.VIEW_PRICING);
 
 const esc = (v) =>
   String(v ?? '')
@@ -176,7 +187,7 @@ export const getBookings = async (req, res, next) => {
     // One lookup for every row on the screen, not one per booking.
     const boxNumbers = await currentBoxNumbers(rows);
     const all = await attachCustomerDetails(
-      [...byBooking.values()].map((b) => shapeBooking(b, boxNumbers)),
+      [...byBooking.values()].map((b) => shapeBooking(b, boxNumbers, { includePricing: mayPrice(req.user) })),
     );
 
     // Counts come from the UNFILTERED set (search still applies) so the tabs
@@ -210,7 +221,9 @@ export const getBookingDetail = async (req, res, next) => {
     }
     res.status(200).json({
       success: true,
-      data: (await attachCustomerDetails([shapeBooking(rows, await currentBoxNumbers(rows))]))[0],
+      data: (await attachCustomerDetails([
+        shapeBooking(rows, await currentBoxNumbers(rows), { includePricing: mayPrice(req.user) }),
+      ]))[0],
     });
   } catch (error) {
     next(error);
@@ -636,7 +649,9 @@ export const updateBookingItems = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: (await attachCustomerDetails([shapeBooking(updated, await currentBoxNumbers(updated))]))[0],
+      data: (await attachCustomerDetails([
+        shapeBooking(updated, await currentBoxNumbers(updated), { includePricing: mayPrice(req.user) }),
+      ]))[0],
       changes,
     });
   } catch (error) {
@@ -739,6 +754,25 @@ export const raisePo = async (req, res, next) => {
       { $set: setFields },
     );
 
+    /**
+     * The price this customer is being given.
+     *
+     * The desk sends a price TYPE and the server looks the rate up; an amount
+     * posted by a client would be an amount a client chose. Applied only when
+     * the caller may price at all — a role that can raise a PO but does not
+     * hold view_pricing has its `priceType` ignored rather than obeyed.
+     *
+     * Omitting the field leaves the booking unpriced, which is what every PO
+     * raised before this feature existed is. It can be priced afterwards
+     * through PUT .../pricing without reopening the booking.
+     */
+    let pricing = null;
+    if (mayPrice(req.user) && req.body?.priceType !== undefined) {
+      pricing = await applyPricing({
+        orderId, rows, priceType: req.body.priceType, actor: req.user,
+      });
+    }
+
     // Raising the PO commits the goods: the reserved units leave inventory for
     // good (total and booked both drop). Done here so stock is correct the
     // instant the PO exists, rather than waiting for the nightly job.
@@ -770,9 +804,20 @@ export const raisePo = async (req, res, next) => {
       + `Booking is now locked.`
       + (reBoxed.length
         ? ` ${reBoxed.length} line(s) picked up a box number changed since booking.`
+        : '')
+      // The price offered is part of what was agreed, so it belongs in the
+      // trail beside the lock rather than only on the rows it was written to.
+      + (pricing?.priceType
+        ? ` Priced at the ${pricing.priceTypeLabel} rate — ${pricing.pricedLines} of ${pricing.lines} line(s) rated, total ₹${pricing.totalAmount}.`
         : ''),
       req,
-      { meta: { orderId, poNumber, poGeneratedAt: now, reBoxed } },
+      {
+        meta: {
+          orderId, poNumber, poGeneratedAt: now, reBoxed,
+          priceType: pricing?.priceType ?? null,
+          totalAmount: pricing?.totalAmount ?? null,
+        },
+      },
     );
 
     // Tell the customer their PO is through — in-app, and by email with a
@@ -816,7 +861,12 @@ export const raisePo = async (req, res, next) => {
 
     io.emit('po-generated', { orderId, poNumber });
 
-    res.status(200).json({ success: true, data: (await attachCustomerDetails([shapeBooking(updated)]))[0] });
+    res.status(200).json({
+      success: true,
+      data: (await attachCustomerDetails([
+        shapeBooking(updated, new Map(), { includePricing: mayPrice(req.user) }),
+      ]))[0],
+    });
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({ success: false, message: error.message });
@@ -825,4 +875,114 @@ export const raisePo = async (req, res, next) => {
   }
 };
 
-export default { getBookings, getBookingDetail, updateBookingItems, raisePo };
+/**
+ * GET /api/v1/sales/bookings/:orderId/pricing
+ *
+ * Every tier price for every line of this booking, and what each tier would
+ * total. THE INTERNAL VIEW — this is the one response in the application that
+ * carries more than one price for a SKU, which is why its route is the only one
+ * behind view_pricing and why nothing else calls quoteBooking().
+ *
+ * Read-only. Choosing a tier is the PUT below, or the PO dialog.
+ */
+export const getBookingPricing = async (req, res, next) => {
+  try {
+    const rows = await loadBooking(req.params.orderId);
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    const quote = await quoteBooking(rows);
+    res.status(200).json({
+      success: true,
+      data: {
+        orderId: req.params.orderId,
+        customer: rows[0].company || null,
+        locked: rows.some((r) => Boolean(r.poGeneratedAt)) || Boolean(rows[0].poNumber && rows[0].poNumber !== '-'),
+        // What is on the booking NOW, so the dialog opens on the current
+        // choice rather than making the desk remember it.
+        current: pricingSummary(rows),
+        ...quote,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/v1/sales/bookings/:orderId/pricing   { priceType }
+ *
+ * Set — or change, or clear — the tier this customer is being offered.
+ *
+ * DELIBERATELY NOT BLOCKED BY THE PO LOCK, which every other write on a raised
+ * booking is. The lock exists to freeze WHAT IS BEING SUPPLIED: quantities,
+ * SKUs, line composition. A price is not that, and two ordinary cases need this
+ * to work after the PO exists — every PO raised before this feature shipped is
+ * unpriced, and a tier chosen in error has to be correctable without reopening
+ * a locked booking. It is confined to view_pricing holders and every change is
+ * audited with the old and new tier.
+ *
+ * `priceType: null` clears the pricing.
+ */
+export const setBookingPricing = async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+    const rows = await loadBooking(orderId);
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+
+    const raw = req.body?.priceType ?? null;
+    const priceType = normalisePriceType(raw);
+    // Blank and null mean "clear it". Anything else that does not resolve is a
+    // mistake worth refusing rather than silently treating as a clear.
+    if (raw !== null && String(raw).trim() !== '' && !priceType) {
+      return res.status(400).json({
+        success: false,
+        message: `"${raw}" is not a price type. Use one of: ${PRICE_TYPES.map((t) => t.label).join(', ')}.`,
+      });
+    }
+
+    const before = pricingSummary(rows);
+    const result = await applyPricing({ orderId, rows, priceType, actor: req.user });
+
+    await recordAudit(
+      req.user,
+      'Booking Priced',
+      priceType
+        ? `Booking ${orderId} priced at the ${result.priceTypeLabel} rate`
+          + (before?.priceType && before.priceType !== priceType
+            ? ` (was ${before.priceTypeLabel})` : '')
+          + `. ${result.pricedLines} of ${result.lines} line(s) rated, total ₹${result.totalAmount}.`
+        : `Pricing removed from booking ${orderId}`
+          + (before?.priceType ? ` (was ${before.priceTypeLabel}).` : '.'),
+      req,
+      {
+        meta: {
+          orderId,
+          from: before?.priceType ?? null,
+          to: result.priceType,
+          totalAmount: result.totalAmount,
+          unpricedLines: result.unpricedLines,
+        },
+      },
+    );
+
+    const updated = await loadBooking(orderId);
+    res.status(200).json({
+      success: true,
+      data: (await attachCustomerDetails([
+        shapeBooking(updated, await currentBoxNumbers(updated), { includePricing: true }),
+      ]))[0],
+      pricing: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export default {
+  getBookings, getBookingDetail, updateBookingItems, raisePo,
+  getBookingPricing, setBookingPricing,
+};

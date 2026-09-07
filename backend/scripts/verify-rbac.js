@@ -96,10 +96,29 @@ const PORTAL_ADDITIONS = new Set([
   PERMISSIONS.EDIT_PROFILE, PERMISSIONS.VIEW_HELP, PERMISSIONS.VIEW_ORDERS,
 ]);
 
+/**
+ * Capabilities a role was DELIBERATELY given after this snapshot was taken.
+ *
+ * Kept apart from PORTAL_ADDITIONS, which name access that already existed
+ * without a key behind it. These are genuinely new powers, listed one by one
+ * with the role that has them, so the check above keeps its teeth: anything a
+ * role picks up that is not on either list still fails, which is the escalation
+ * this section exists to catch.
+ *
+ *   view_pricing (Sales) — the customer pricing feature. Sales quotes the
+ *   customer, so Sales sees the price schedule; no other non-wildcard role
+ *   holds it, which the pricing suite asserts directly.
+ */
+const DELIBERATE_ADDITIONS = {
+  Sales: new Set([PERMISSIONS.VIEW_PRICING]),
+};
+
 for (const [role, before] of Object.entries(BEFORE)) {
   if (before.includes('*')) continue;
   const now = resolveRolePermissions(role);
-  const gained = now.filter((p) => !before.includes(p) && !PORTAL_ADDITIONS.has(p));
+  const allowed = DELIBERATE_ADDITIONS[role] || new Set();
+  const gained = now.filter((p) =>
+    !before.includes(p) && !PORTAL_ADDITIONS.has(p) && !allowed.has(p));
   check(
     `${role} gained nothing unexpected`,
     gained.length === 0,

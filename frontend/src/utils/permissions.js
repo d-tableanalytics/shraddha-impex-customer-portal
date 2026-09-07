@@ -34,6 +34,10 @@ export const PERMISSIONS = {
   EDIT_BOOKING_PRE_PO: "edit_booking_pre_po",
   RAISE_PO: "raise_po",
   OVERRIDE_PO_LOCK: "override_po_lock",
+  // See the four tier prices and choose which one a customer is offered.
+  // MIRRORS backend/config/permissions.js — the server refuses the pricing
+  // routes without it, so this only decides what the screen offers.
+  VIEW_PRICING: "view_pricing",
 
   // Inventory Management System. The full set is mirrored so the map does not
   // need reopening for each module; only the M1 four are used by any screen yet.
@@ -297,6 +301,20 @@ export const canRaisePo = (user, booking) =>
   Boolean(booking) && !booking.locked && hasPermission(user, PERMISSIONS.RAISE_PO);
 
 /**
+ * Who may see what we charge, and pick the rate a customer is quoted.
+ *
+ * Admin and Sales by baseline; anyone else only if a Super Admin ticks
+ * Sales Desk > Customer Pricing in the permission matrix. The four tier prices
+ * appear on exactly one screen (the PO dialog) and in exactly one response
+ * (GET /sales/bookings/:id/pricing), and both are behind this.
+ *
+ * NOT the same question as "may this customer see their own price". That is
+ * decided on the server, which strips the rate from anyone who is not the owner
+ * of a booking whose PO has been raised - see utils/pricingVisibility.js.
+ */
+export const canViewPricing = (user) => hasPermission(user, PERMISSIONS.VIEW_PRICING);
+
+/**
  * Whether to offer the IMS master screens. Customers hold no inventory
  * permission at any level, so they never see them. Sales can read availability
  * through the ordering flow and does not need the master list.
@@ -432,6 +450,7 @@ export default {
   canEditBooking,
   canEditBookingQuantity,
   canRaisePo,
+  canViewPricing,
   canUseInventoryMaster,
   canOpenUserManagement,
   canManageRoles,
