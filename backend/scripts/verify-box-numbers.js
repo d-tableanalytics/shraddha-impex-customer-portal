@@ -76,7 +76,7 @@ const fe = await import(
 );
 
 const ROLES = [
-  'Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Customer',
+  'Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Import Team', 'Customer',
 ];
 const asUser = (role) => ({ role, _id: `id-${role}` });
 
@@ -120,7 +120,7 @@ console.log('\n   line-item rule is narrower than the inventory rule');
 eq(
   'inventory screens show the box to Admin, Sales and inventory roles',
   ROLES.filter((r) => fe.canViewBoxNo(asUser(r))),
-  ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management'],
+  ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Import Team'],
 );
 eq(
   'line items show the box to Sales and Admin only',
@@ -171,7 +171,7 @@ check('stripping does not mutate the caller\'s object', original.boxNo === 'B-12
 
 console.log('\n   catalogue rows (inventory screens, wider audience)');
 const productRow = { skuCode: 'SKU1', msilCode: 'M1', boxNo: 'B-12', availableForSale: 3 };
-for (const role of ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management']) {
+for (const role of ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Import Team']) {
   check(`${role} receives boxNo on a catalogue row`,
     withCatalogueBoxNoVisibility({ ...productRow }, asUser(role)).boxNo === 'B-12');
 }

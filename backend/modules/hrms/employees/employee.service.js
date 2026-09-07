@@ -17,7 +17,7 @@ import User from '../../../models/User.js';
 import { hashPassword } from '../../../utils/password.js';
 import { isDuplicateKeyError, isTransactionUnsupported } from '../../../utils/mongoSession.js';
 import { hasHrmsPermission } from '../../../shared/permissions/has-permission.js';
-import { assertRolesAssignable } from '../../../shared/permissions/assignment.js';
+import { assertHrmsRolesAssignable } from '../../../utils/hrmsRoleGuard.js';
 import {
   HRMS_MODULES as M,
   HRMS_ACTIONS as A,
@@ -777,7 +777,9 @@ export async function assignEmployeeRoles(id, roleKeys, actor) {
 
   // AD-4, checked here as well as in the schema hook: findOneAndUpdate does not
   // run document validation, so this is the real control on this path.
-  assertRolesAssignable(user.role, roleKeys);
+  // The LIVE portal-only question, not the literal name 'Customer': a role a
+  // Super Admin invented and marked portalOnly is as fenced as a Customer is.
+  assertHrmsRolesAssignable(user.role, roleKeys);
 
   // Replace only the HRMS half; portal roles on the same account are untouched.
   const portalRoles = (user.roles ?? []).filter((k) => !isHrmsRoleKey(k));

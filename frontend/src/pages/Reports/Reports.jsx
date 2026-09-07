@@ -2,10 +2,20 @@ import { Navigate } from 'react-router-dom';
 import { Card, CardContent } from '../../components/ui/Card';
 import { TrendingUp, Package } from 'lucide-react';
 import { useUserStore } from '../../store/userStore';
+import { isSuperAdmin } from '../../utils/permissions';
 
 export const Reports = () => {
   const { user } = useUserStore();
-  if (user && user.role !== 'Admin') {
+  // Unrestricted accounts only, as before - but asked as "is this account
+  // unrestricted" rather than `role !== 'Admin'`, which would have redirected a
+  // Super Admin off a page they are supposed to be able to reach.
+  //
+  // Deliberately NOT widened to view_reports, which Sales, Inventory Manager
+  // and Management all hold: this screen still renders placeholder figures, and
+  // showing invented numbers to three more roles is not an improvement. The
+  // sub-module is registered as `hidden` in the module registry for the same
+  // reason, so it stays out of the sidebar until the screen is real.
+  if (user && !isSuperAdmin(user)) {
     return <Navigate to="/" replace />;
   }
 

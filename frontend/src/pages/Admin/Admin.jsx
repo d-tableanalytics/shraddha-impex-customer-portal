@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Users, Boxes, Key } from "lucide-react";
+import { Users, Boxes, Key, Image as ImageIcon } from "lucide-react";
 import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
 import { Badge } from "../../components/ui/Badge";
 import { useUserStore } from "../../store/userStore";
@@ -16,10 +16,16 @@ export const Admin = () => {
       path: "/admin/users",
     },
     {
-      name: "Access Permissions",
-      desc: "Manage role-based access via the permission matrix.",
+      name: "Roles & Permissions",
+      desc: "Create roles and grant module access: view, create, edit, delete, approve.",
       icon: Key,
       path: "/admin/permissions",
+    },
+    {
+      name: "Product Details",
+      desc: "Descriptions, product images and videos, by SKU.",
+      icon: ImageIcon,
+      path: "/admin/product-details",
     },
     {
       name: "Inventory",

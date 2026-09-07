@@ -1,5 +1,5 @@
 import { useUserStore } from "../store/userStore";
-import { INVENTORY_ROLES } from "../utils/permissions";
+import { INVENTORY_ROLES, isSuperAdmin} from "../utils/permissions";
 
 /**
  * Who MSIL Codes are shown to.
@@ -18,7 +18,7 @@ import { INVENTORY_ROLES } from "../utils/permissions";
 export const useShowMsilCode = () => {
   const user = useUserStore((s) => s.user);
   return (
-    user?.role === "Admin" ||
+    isSuperAdmin(user) ||
     user?.role === "Sales" ||
     user?.customerCategory === "MSIL" ||
     user?.showMsilCode === true ||

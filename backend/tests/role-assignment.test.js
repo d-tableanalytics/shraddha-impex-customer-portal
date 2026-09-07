@@ -130,14 +130,23 @@ test('schema: roles defaults to empty, so every existing account has no HRMS acc
 
 test('schema: the existing portal fields are untouched', () => {
   const path = User.schema.path('role');
-  assert.deepEqual(path.enumValues, [
-    'Admin',
-    'Sales',
-    'Inventory Manager',
-    'Warehouse User',
-    'Management',
-    'Customer',
-  ]);
+  /**
+   * `role` was a fixed enum; it is a VALIDATOR now, because a Super Admin can
+   * create roles and an enum cannot grow at runtime. What must not change is
+   * that it is still a closed set - every built-in name still validates, and a
+   * name nobody defined still does not.
+   */
+  assert.equal(path.enumValues.length, 0, 'no longer an enum - see isAssignableRoleName');
+
+  // `validateSync` reports rather than throws, and reports every field at once,
+  // so the question asked is specifically "did `role` fail".
+  const roleError = (role) =>
+    new User({ email: 'x@y.z', password: 'x'.repeat(20), user: 'X', role }).validateSync()?.errors?.role;
+
+  for (const name of ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Customer']) {
+    assert.equal(roleError(name), undefined, `${name} must still be assignable`);
+  }
+  assert.ok(roleError('Not A Real Role'), 'a role nobody defined must still be refused');
   // Fields the portal depends on still exist.
   for (const f of ['email', 'password', 'company', 'brandAccess', 'status', 'customerCategory']) {
     assert.ok(User.schema.path(f) || User.schema.nested[f], `${f} must still exist`);
@@ -157,9 +166,17 @@ test('the user controller guards every path that can change a portal role', asyn
     calls.length >= 3,
     `expected the guard on createUser, updateUser and updateUserRole; found ${calls.length}`,
   );
+  // The rule moved behind hrmsRoleGuard, which asks the LIVE role model whether
+  // the portal role is portal-only instead of comparing it to 'Customer'. The
+  // controller must use that, not a local copy and not the narrower helper.
   assert.match(
     src,
-    /import \{ assertRolesAssignable, RoleAssignmentError \}/,
-    'the controller must use the shared rule, not a local copy',
+    /import \{ assertHrmsRolesAssignable \} from '\.\.\/\.\.\/utils\/hrmsRoleGuard\.js'/,
+    'the controller must use the widened shared rule',
+  );
+  assert.doesNotMatch(
+    src,
+    /assertRolesAssignable\(/,
+    'the narrow Customer-only rule must not be called directly here',
   );
 });

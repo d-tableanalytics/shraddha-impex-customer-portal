@@ -1,46 +1,87 @@
 /**
- * Role-based access control for the customer portal.
+ * Role-based access control.
  *
- * Permissions are derived from `user.role`. Admin holds the '*' wildcard and so
- * satisfies every check; other roles carry an explicit list.
+ * Permissions are derived from the user's role. A Super Admin holds the '*'
+ * wildcard and so satisfies every check; other roles carry an explicit list
+ * assembled from a compiled-in baseline plus whatever the Super Admin has
+ * granted them in the permission matrix.
  *
- * ---------------------------------------------------------------------------
- * The definitions moved; the exports did not
- * ---------------------------------------------------------------------------
- * `PERMISSIONS`, the role map, `INVENTORY_ROLES` and the evaluator now live in
- * `../shared/permissions/legacy.js`, so the backend and the frontend read one
- * copy instead of two hand-maintained mirrors. This file re-exports them under
- * their original names: every existing consumer keeps working unchanged.
+ * Adding a capability means adding it to config/permissions.js and giving it a
+ * cell in config/moduleRegistry.js - never inline in a controller - so the
+ * authoritative answer to "who may do this" lives in one place.
  *
- * Adding a capability still means adding it in one place - now
- * `shared/permissions/legacy.js` - and never inline in a controller.
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHAT CHANGED, AND WHAT DELIBERATELY DID NOT
+ * ─────────────────────────────────────────────────────────────────────────
  *
- * ---------------------------------------------------------------------------
- * HRMS authorization is somewhere else
- * ---------------------------------------------------------------------------
- * HRMS uses a module x action x scope model, not flat strings. It lives in
- * `./hrmsAuth.js` and `../shared/permissions/`. The two never merge (AD-3), and
- * a portal role grants no HRMS permission (AD-4).
+ * This file used to OWN a hardcoded role -> permission map. It now owns the
+ * route guards and nothing else; the vocabulary moved to config/permissions.js
+ * and the resolution moved to utils/roleResolver.js, so that permissions can
+ * come from the database without every consumer having to know that.
+ *
+ * The public surface is unchanged on purpose. `PERMISSIONS`, `INVENTORY_ROLES`,
+ * `permissionsFor`, `hasPermission` and `authorize` all keep their exact
+ * previous names, signatures and semantics, and the first two are re-exported
+ * from here so the ~145 existing import sites did not have to move. If you are
+ * reading a route file that says
+ *
+ *     import { authorize, PERMISSIONS } from '../../middlewares/rbac.js';
+ *
+ * it means today what it meant before: the same check, against a set that a
+ * Super Admin can now widen.
  */
 
 import {
   PERMISSIONS,
   INVENTORY_ROLES,
-  permissionsFor,
-  hasLegacyPermission,
-} from '../shared/permissions/legacy.js';
+  BASELINE_ROLE_PERMISSIONS,
+  SYSTEM_ROLE_NAMES,
+  SUPER_ADMIN_ROLES,
+  isSuperAdminRoleName,
+} from '../config/permissions.js';
+import {
+  resolveUserPermissions,
+  setHas,
+  can,
+  menuFor,
+  grantsForUser,
+} from '../utils/roleResolver.js';
 
-export { PERMISSIONS, INVENTORY_ROLES, permissionsFor };
+// Re-exported so existing imports keep resolving from this module.
+export {
+  PERMISSIONS,
+  INVENTORY_ROLES,
+  BASELINE_ROLE_PERMISSIONS,
+  SYSTEM_ROLE_NAMES,
+  SUPER_ADMIN_ROLES,
+  isSuperAdminRoleName,
+};
+export { can, menuFor, grantsForUser };
 
 /**
- * True when the user holds the permission (or the Admin wildcard).
+ * Permission list for a user. Unknown/absent role -> no permissions.
  *
- * Kept under its original name for the existing call sites. The canonical
- * implementation is `hasLegacyPermission` - the rename exists so this can never
- * be confused with the HRMS evaluator, which takes an actor and a
- * module/action/scope triple.
+ * Synchronous, as it has always been - see the note at the top of
+ * utils/roleResolver.js for why the database lookup behind it is a cache read.
  */
-export const hasPermission = hasLegacyPermission;
+export const permissionsFor = (user) => resolveUserPermissions(user);
+
+/** True when the user holds the permission (or the Super Admin wildcard). */
+export const hasPermission = (user, permission) =>
+  setHas(permissionsFor(user), permission);
+
+/**
+ * Is this user unrestricted?
+ *
+ * The question ~15 call sites used to ask as `user.role === 'Admin'`. That
+ * string comparison was correct while 'Admin' was the only unrestricted role;
+ * it silently stopped being correct the moment 'Super Admin' existed, and would
+ * stop being correct again for any role a Super Admin marks as full-access.
+ *
+ * Asking the permission set instead means all three answer true, and a fourth
+ * would too. It is the same wildcard authorize() has always honoured.
+ */
+export const isSuperAdmin = (user) => hasPermission(user, '*');
 
 /**
  * Route guard. Passes when the user holds ANY of the listed permissions.
@@ -65,4 +106,46 @@ export const authorize = (...requiredPermissions) => {
   };
 };
 
-export default { authorize, hasPermission, permissionsFor, PERMISSIONS, INVENTORY_ROLES };
+/**
+ * Route guard in matrix terms.
+ *
+ *   router.delete('/items/:sku', authorizeModule('inventory', 'master', 'delete'), handler)
+ *
+ * Identical in effect to authorize() with that cell's keys spelled out, and
+ * preferable for NEW modules: it reads as the thing the Super Admin ticked, and
+ * it cannot drift out of step with the matrix, because it asks the registry
+ * rather than repeating its answer.
+ *
+ * Existing routes were left on authorize() rather than mechanically rewritten.
+ * Both are the same check, and a 145-file diff that changes no behaviour buries
+ * the ones that do.
+ */
+export const authorizeModule = (moduleKey, submoduleKey, action) => {
+  return (req, res, next) => {
+    if (!req.user || !req.user.role) {
+      return res.status(403).json({ success: false, message: 'Forbidden. No role assigned.' });
+    }
+
+    if (!can(req.user, moduleKey, submoduleKey, action)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden. Insufficient permissions.',
+      });
+    }
+
+    next();
+  };
+};
+
+export default {
+  authorize,
+  authorizeModule,
+  hasPermission,
+  isSuperAdmin,
+  permissionsFor,
+  can,
+  menuFor,
+  grantsForUser,
+  PERMISSIONS,
+  INVENTORY_ROLES,
+};

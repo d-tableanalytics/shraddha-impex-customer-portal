@@ -1,5 +1,5 @@
 import { ProductKoken, ProductBIX, ProductIMADA } from '../models/Product.js';
-import { INVENTORY_ROLES } from '../middlewares/rbac.js';
+import { INVENTORY_ROLES, isSuperAdmin} from '../middlewares/rbac.js';
 
 /**
  * Central brand-access rules.
@@ -32,7 +32,7 @@ const MODEL_BY_BRAND = {
  * what existing Sales users see on the dashboard and in their booking lists.
  */
 const seesAllBrands = (user) =>
-  user?.role === 'Admin' || INVENTORY_ROLES.includes(user?.role);
+  isSuperAdmin(user) || INVENTORY_ROLES.includes(user?.role);
 
 const isMsilCustomer = (user) => !seesAllBrands(user) && user?.customerCategory === 'MSIL';
 

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { ordersApi } from "../services/orders";
 import { reservationsApi } from "../services/reservations";
+import { groupMatches } from "../utils/historySearch";
 
 const computeMetrics = (orders) => {
   const now = new Date();
@@ -85,13 +86,18 @@ export const useOrderHistoryStore = create((set, get) => ({
     let result = [...allOrders];
 
     if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (o) =>
-          String(o.poNumber || '').toLowerCase().includes(q) ||
-          String(o.orderNumber || '').toLowerCase().includes(q) ||
-          String(o.customer || '').toLowerCase().includes(q),
-      );
+      // A booking row is a GROUP of SKU lines, and searching only the group's
+      // own fields meant a SKU sitting one click inside the row matched
+      // nothing. Every line is searched too, so a SKU returns every booking it
+      // appears in. Shared with Indent History — see utils/historySearch.js.
+      result = result.filter((o) => groupMatches(
+        [o.poNumber, o.orderNumber, o.customer],
+        // Both shapes are offered: `lineItems` is the per-SKU detail the
+        // grouping builds, `items` is the mapped view. A booking always has the
+        // first; the second is belt and braces for a row built elsewhere.
+        o.lineItems?.length ? o.lineItems : o.items,
+        searchQuery,
+      ));
     }
 
     if (filters.status !== "all") {

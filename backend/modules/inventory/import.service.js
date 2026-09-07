@@ -9,10 +9,15 @@ import StockMovement from '../../models/StockMovement.js';
 import StockBalance from '../../models/StockBalance.js';
 import Location from '../../models/Location.js';
 import { Product, createProductModel } from '../../models/Product.js';
+import ProductDetail from '../../models/ProductDetail.js';
 import { nextSequence } from '../../models/Counter.js';
 
 import { IMPORT_TEMPLATES, matchHeaders, coerce } from './import.templates.js';
 import { suppliesBoxNo, boxRowKey, boxNumberChanges } from './boxNumber.rules.js';
+import {
+  NEW_SKU_FIELD_NAMES, parseNewSkuDetails, incompleteNewSkus,
+} from './newSku.rules.js';
+import { parseDescription, parseVideos } from './productDetail.rules.js';
 import { readerFor, MAX_ROWS } from './import.parser.js';
 import { postBatch } from './ledger.service.js';
 import { applyMovements, syncLegacyStock } from './balance.service.js';
@@ -278,19 +283,24 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
       // Not an error when the sheet may create SKUs — it just means this row is
       // a new one, and a new one has no brand to resolve from, so it must say.
       if (template.brandFromJobForNewSku) {
-        // New SKU: take the Brand selected for the whole upload. Without one
-        // there is nothing to create the product under, and guessing would file
-        // it against the wrong brand silently.
-        if (context.jobBrand) {
-          data.brand = context.jobBrand;
-        } else {
-          errors.push({
-            category: 'required', column: 'SKU Code',
-            message: `${data.skuCode} is not in the catalogue yet, so it will be created — `
-              + 'choose a Brand on the upload form first.',
-            value: data.skuCode,
-          });
-        }
+        /**
+         * A NEW SKU. Its brand comes from the upload form when one was chosen,
+         * and OTHERWISE IS LEFT UNSET FOR THE PROMPT TO ASK.
+         *
+         * This used to reject the row — "choose a Brand on the upload form
+         * first" — and that was the wrong shape of answer twice over. A
+         * rejected row creates nothing, so the new-SKU prompt never saw it and
+         * the file imported everything except the part the user was adding,
+         * quietly. And a brand is a per-SKU fact rather than a per-file one: a
+         * sheet can carry new parts for two brands at once, which one dropdown
+         * on the upload form cannot express.
+         *
+         * So the row stays VALID with no brand, and the brand is collected
+         * alongside the SKU's other mandatory details before the import runs.
+         * Nothing is created without one: confirmJob() refuses while any new
+         * SKU is unanswered, and `brand` is one of the answers.
+         */
+        if (context.jobBrand) data.brand = context.jobBrand;
       } else if (template.brandRequiredForNewSku) {
         errors.push({
           category: 'required', column: 'Brand',
@@ -512,6 +522,16 @@ export const createImportJob = async ({
     const seenKeys = new Map();
     let staged = [];
     const errorDocs = [];
+    /**
+     * The SKUs this file will CREATE, keyed by code so the list is one entry per
+     * SKU rather than one per row.
+     *
+     * Collected here, at validation, because that is where "is this SKU already
+     * in the catalogue" is answered — and answered against the catalogue as it
+     * stands BEFORE the file runs, which is the only moment the question has a
+     * stable answer.
+     */
+    const newSkus = new Map();
 
     const flush = async () => {
       if (staged.length) {
@@ -572,6 +592,45 @@ export const createImportJob = async ({
 
       if (result.valid) validRows += 1; else invalidRows += 1;
 
+      // ── New SKUs, queued for their mandatory details ─────────────────────
+      // Only rows that will actually import: a rejected row creates nothing, so
+      // asking for its planning figures would be asking about a SKU that is
+      // never going to exist.
+      if (result.valid && template.requiresNewSkuDetails && result.data?.isNewSku
+          && !newSkus.has(result.data.skuCode)) {
+        // Every field the upload already knows is PREFILLED rather than left
+        // blank, so the prompt is usually a confirmation rather than a form.
+        // What it does not know stays null, which is what makes it get asked.
+        const sheetQuantity = result.data.quantity;
+        newSkus.set(result.data.skuCode, {
+          skuCode: result.data.skuCode,
+          description: result.data.description || null,
+          msilCode: result.data.msilCode || null,
+          rowNumber: row.rowNumber,
+          // From the Brand chosen on the upload form, when one was.
+          brand: result.data.brand || null,
+          /**
+           * From the sheet's Quantity column, when it carries one.
+           *
+           * `null` — not zero — when the cell is blank, because the two mean
+           * different things: a blank cell is "nobody has said", which the
+           * prompt must ask about, and a zero is "the part exists, the stock
+           * has not arrived", which is an answer. A negative figure is a
+           * DEDUCTION on this sheet and cannot be an opening stock, so it is
+           * left unanswered for the prompt to correct rather than carried in.
+           */
+          availableStock: (sheetQuantity === null || sheetQuantity === undefined || sheetQuantity < 0)
+            ? null
+            : Number(sheetQuantity),
+          moq: null,
+          leadTime: null,
+          safetyFactor: null,
+          // A sheet that already carries a Box No for the new SKU has answered
+          // that field — it is prefilled to be confirmed, not retyped.
+          boxNo: suppliesBoxNo(result.data) ? result.data.boxNo : null,
+        });
+      }
+
       staged.push({
         jobId,
         rowNumber: row.rowNumber,
@@ -616,6 +675,9 @@ export const createImportJob = async ({
     job.invalidRows = invalidRows;
     job.chunksTotal = chunksTotal;
     job.fileErrors = fileErrors;
+    // A failed file imports nothing, so there is no new SKU to configure — and
+    // listing some would prompt for details that could never be used.
+    job.newSkus = fileErrors.length ? [] : [...newSkus.values()];
     if (fileErrors.length) job.completedAt = new Date();
     await job.save();
   } catch (error) {
@@ -631,8 +693,14 @@ export const createImportJob = async ({
 
   await recordAudit(actor, 'Inventory Import Uploaded',
     `${template.label} file "${fileName}" uploaded as ${jobId}: ` +
-    `${totalRows} row(s), ${validRows} valid, ${invalidRows} rejected.`,
-    req, { meta: { jobId, importType, fileName, fileHash, totalRows, validRows, invalidRows, fileErrors } });
+    `${totalRows} row(s), ${validRows} valid, ${invalidRows} rejected` +
+    (job.newSkus.length ? `, ${job.newSkus.length} new SKU(s) awaiting details.` : '.'),
+    req, {
+      meta: {
+        jobId, importType, fileName, fileHash, totalRows, validRows, invalidRows, fileErrors,
+        newSkus: job.newSkus.map((s) => s.skuCode),
+      },
+    });
 
   return job.toObject();
 };
@@ -752,11 +820,62 @@ const applyBoxNumbers = async ({ rows, landed, job, chunkIndex, actor, req }) =>
   );
 };
 
+/**
+ * Answers that describe the SKU but are not columns on the product document.
+ * See the note where this is used in processMaster().
+ */
+const NON_PRODUCT_NEW_SKU_FIELDS = new Set(['boxNo', 'brand', 'availableStock']);
+
 /** Products are the master itself — written directly, with M1's own normalisers. */
 const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
   const successes = [];
   const failures = [];
   const ops = new Map(); // brand → bulk ops, so each discriminator writes once
+
+  /**
+   * The mandatory details answered for the SKUs this file creates, keyed by
+   * code. Empty for every other import type, and for a job created before this
+   * prompt existed — both of which fall through to the old behaviour of leaving
+   * the schema defaults and queueing the SKU for MOQ afterwards.
+   */
+  const newSkuDetails = new Map((job.newSkus || []).map((s) => [s.skuCode, s]));
+
+  /**
+   * The answers are written ONTO THE ROW before anything below reads it.
+   *
+   * Everything downstream — the master upsert, applyBoxNumbers(), the ledger
+   * posting in postQuantities() — already knows how to read a row's brand, box
+   * number and quantity. Overlaying the prompt's answers here means none of
+   * them needs a second code path for "a SKU being created", and the box number
+   * in particular lands through the same writer, with the same audit entry,
+   * rather than a second quieter one.
+   *
+   * The BRAND is the important one: the row is staged with no brand when the
+   * upload form did not name one, and this is where the prompt's answer becomes
+   * the row's. Without it the upsert would have nothing to file the product
+   * under.
+   */
+  for (const row of rows) {
+    if (!row.data?.isNewSku) continue;
+    const answered = newSkuDetails.get(row.data.skuCode);
+    if (!answered) continue;
+
+    if (answered.brand) row.data.brand = answered.brand;
+    if (answered.boxNo) row.data.boxNo = answered.boxNo;
+    /**
+     * The ANSWER is the opening stock, and it wins.
+     *
+     * That is not a contradiction of "use the Excel value when it has one": the
+     * prompt is PREFILLED from the sheet, so leaving it alone imports exactly
+     * what the file said. What it also allows is correcting an obviously wrong
+     * figure at the point of confirming it, without going back to the
+     * spreadsheet — and the value the user last looked at and approved is the
+     * one that should land.
+     */
+    if (answered.availableStock !== null && answered.availableStock !== undefined) {
+      row.data.quantity = answered.availableStock;
+    }
+  }
 
   for (const row of rows) {
     const d = row.data;
@@ -792,6 +911,38 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
       ...(d.safetyFactor !== null && d.safetyFactor !== undefined ? { safetyFactor: d.safetyFactor } : {}),
     };
 
+    /**
+     * The planning figures the uploader gave for a SKU this row CREATES.
+     *
+     * Written with $setOnInsert, never $set, for two reasons. They describe a
+     * SKU being created, so they must not touch one that already exists — if
+     * the catalogue gained this code between validation and here, whoever
+     * created it owns its planning figures. And boxNo is deliberately absent:
+     * applyBoxNumbers() is the sole writer of that field, because it has to
+     * read the previous value to record what changed.
+     *
+     * Keys already in `set` are dropped rather than duplicated: Mongo rejects
+     * an update naming the same path in both operators, and the sheet's own
+     * column is the more specific answer.
+     */
+    const details = d.isNewSku ? newSkuDetails.get(d.skuCode) : null;
+    const onInsert = {};
+    if (details) {
+      for (const field of NEW_SKU_FIELD_NAMES) {
+        // Three of the six answers are NOT product fields and must not be
+        // written as though they were:
+        //   boxNo         — applyBoxNumbers() is its sole writer, because it
+        //                   has to read the previous value to record the change
+        //   brand         — the discriminator stamps it on write; setting it
+        //                   here would fight the model for the same path
+        //   availableStock— stock, not master data. It goes through the ledger
+        //                   in postQuantities() like every other quantity
+        if (NON_PRODUCT_NEW_SKU_FIELDS.has(field)) continue;
+        const value = details[field];
+        if (value !== null && value !== undefined && !(field in set)) onInsert[field] = value;
+      }
+    }
+
     if (!ops.has(d.brand)) ops.set(d.brand, []);
     ops.get(d.brand).push({
       rowNumber: row.rowNumber,
@@ -800,7 +951,7 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
           filter: { skuCode: d.skuCode },
           // Upsert: the same import creates new SKUs and updates existing ones,
           // which is what "master import" means to the people running it.
-          update: { $set: set, $setOnInsert: { skuCode: d.skuCode } },
+          update: { $set: set, $setOnInsert: { skuCode: d.skuCode, ...onInsert } },
           // Upsert: a SKU the catalogue does not have is CREATED. Validation has
           // already insisted such a row carries a Brand, so the discriminator
           // model below writes it into the right brand.
@@ -843,12 +994,19 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
 
   const landedRows = new Set(successes.map((s) => s.rowNumber));
 
-  // NEW SKUs this chunk created. `isNewSku` was decided during validation,
-  // against the catalogue as it stood BEFORE the file ran — deciding it here
-  // would be wrong, because an earlier chunk of this same file may already have
-  // created the SKU. Only rows that actually landed are offered for MOQ.
+  // NEW SKUs this chunk created that were NOT configured before the import ran.
+  // `isNewSku` was decided during validation, against the catalogue as it stood
+  // BEFORE the file ran — deciding it here would be wrong, because an earlier
+  // chunk of this same file may already have created the SKU. Only rows that
+  // actually landed are offered for MOQ.
+  //
+  // A job that collected the mandatory details up front leaves nothing here:
+  // the SKU was created WITH its MOQ, so prompting for one again would ask a
+  // question that has already been answered. The list still fills for jobs
+  // uploaded before that prompt existed, which is what keeps them finishable.
   const created = rows
-    .filter((r) => r.data?.isNewSku && landedRows.has(r.rowNumber))
+    .filter((r) => r.data?.isNewSku && landedRows.has(r.rowNumber)
+      && !newSkuDetails.get(r.data.skuCode)?.moq)
     .map((r) => ({
       skuCode: r.data.skuCode,
       brand: r.data.brand,
@@ -1214,26 +1372,121 @@ const processFreshInventory = async (args) => {
   return outcome;
 };
 
+/**
+ * Product descriptions and video links.
+ *
+ * THE ONE PROCESSOR THAT TOUCHES NO INVENTORY AT ALL. It writes to the
+ * `productdetails` collection and nowhere else: no product row, no movement, no
+ * balance, no projection. A description landing on the wrong SKU is a wrong
+ * description — never a wrong stock figure — and keeping that true is why this
+ * content lives in its own collection rather than as more fields on the master.
+ *
+ * BLANK MEANS "LEAVE ALONE", for the same reason it does on the Box No column:
+ * a sheet is uploaded to change the rows it fills in, and an empty cell is far
+ * more often an empty cell than an instruction to erase. So a blank Description
+ * keeps the stored one, and three blank video columns keep the stored links.
+ *
+ * Videos are REPLACED rather than merged when any column carries a link. Three
+ * fixed columns are how this sheet says "these are the videos for this SKU";
+ * merging would make the sheet incapable of ever removing one.
+ */
+const processProductDetails = async ({ rows, actor }) => {
+  const successes = [];
+  const failures = [];
+  const ops = [];
+
+  for (const row of rows) {
+    const d = row.data;
+
+    const set = {};
+    if (d.productDescription) {
+      const parsed = parseDescription(d.productDescription);
+      if (parsed.problem) {
+        failures.push({ rowNumber: row.rowNumber, reason: parsed.problem });
+        continue;
+      }
+      set.description = parsed.value;
+    }
+
+    const supplied = [d.video1, d.video2, d.video3];
+    if (supplied.some((v) => v !== null && v !== undefined && String(v).trim() !== '')) {
+      // Every link was already checked against the template's validator, so a
+      // problem here would be a rule that had changed underneath a staged file.
+      const { values, problems } = parseVideos(supplied);
+      if (problems.length) {
+        failures.push({ rowNumber: row.rowNumber, reason: problems.join(' ') });
+        continue;
+      }
+      set.videos = values;
+    }
+
+    if (Object.keys(set).length === 0) {
+      // Validation refuses an empty row, so reaching here means the sheet
+      // changed shape between staging and processing.
+      failures.push({ rowNumber: row.rowNumber, reason: 'The row supplies nothing to save.' });
+      continue;
+    }
+
+    set.brand = d.brand ?? null;
+    set.updatedBy = actor?._id ?? null;
+
+    ops.push({
+      rowNumber: row.rowNumber,
+      op: {
+        updateOne: {
+          filter: { skuCode: d.skuCode },
+          // Upsert: most SKUs have no content row until the first sheet
+          // describes them.
+          update: { $set: set, $setOnInsert: { skuCode: d.skuCode } },
+          upsert: true,
+        },
+      },
+    });
+  }
+
+  if (ops.length) {
+    try {
+      await ProductDetail.bulkWrite(ops.map((o) => o.op), { ordered: false });
+      for (const o of ops) successes.push({ rowNumber: o.rowNumber, result: { saved: true } });
+    } catch (error) {
+      // A partial bulkWrite reports which indexes failed; the rest did land.
+      const failedIndexes = new Set((error.writeErrors || []).map((w) => w.index));
+      ops.forEach((o, i) => {
+        if (failedIndexes.has(i)) {
+          failures.push({
+            rowNumber: o.rowNumber,
+            reason: error.writeErrors?.find((w) => w.index === i)?.errmsg || error.message,
+          });
+        } else {
+          successes.push({ rowNumber: o.rowNumber, result: { saved: true } });
+        }
+      });
+    }
+  }
+
+  return { successes, failures, refs: [] };
+};
+
 const PROCESSORS = {
   'inventory-master': processMaster,
   'fresh-inventory': processFreshInventory,
   planning: processPlanning,
+  'product-details': processProductDetails,
 };
 
 // ─── Confirm and process ─────────────────────────────────────────────────────
 
 /**
- * Confirm an import and start processing.
- *
- * Returns as soon as the job is marked Processing. The work runs detached and
- * reports through the job counters, because a 40,000-row import through the
- * ledger takes minutes and holding an HTTP request open for it would time out
- * with the work half done and no way to tell how far it got.
- */
-/**
  * Set the MOQ for SKUs an import created, and clear them from its pending list.
  *
- * WHY THIS EXISTS SEPARATELY. A SKU created by an import lands with the schema
+ * THE AFTER-THE-FACT PATH. A master import now collects MOQ, lead time, safety
+ * factor and box number BEFORE it runs — see setNewSkuDetails() — so a job
+ * staged today creates its SKUs already configured and queues nothing here.
+ * This remains for the jobs that were already staged, or already finished, when
+ * that prompt did not exist: their SKUs are in the catalogue on the defaults,
+ * and this is what still lets them be answered.
+ *
+ * WHY IT EXISTS SEPARATELY. A SKU created by an import lands with the schema
  * default MOQ of 0, which reads as "no minimum" and is indistinguishable from a
  * deliberate 0. That is fine for a SKU nobody has thought about, and wrong for
  * one that has just entered the catalogue — so the import records what it
@@ -1321,11 +1574,148 @@ export const setImportMoq = async ({ jobId, entries, actor, req }) => {
   };
 };
 
+/**
+ * Answer the mandatory details for the NEW SKUs a staged import will create.
+ *
+ * WHY THIS RUNS BEFORE THE IMPORT, not after. A SKU created by an import lands
+ * on the schema defaults — MOQ 0, lead time 0, safety factor 0, no box number —
+ * and each of those reads as a deliberate answer while being nothing of the
+ * kind. Its Max Level is DAC x LeadTime x SafetyFactor, so it computes to zero:
+ * the SKU is permanently "over-stocked", never reorders, and the warehouse has
+ * nowhere to pick it from. Asking afterwards means the catalogue holds SKUs in
+ * that state for as long as it takes someone to come back, so the import is
+ * held at the gate instead — confirmJob() refuses while anything is unanswered.
+ *
+ * ONLY the SKUs this file will create can be set here, and only while the job
+ * is still awaiting confirmation. This is not a back door onto an established
+ * SKU's planning figures: that is the inventory master's job, and it has its
+ * own permissions and audit trail.
+ *
+ * Partial answers are accepted and saved. Ten new SKUs can be answered three at
+ * a time — nothing is lost by closing the prompt, because the list and the
+ * answers live on the job, not in the browser.
+ */
+export const setNewSkuDetails = async ({ jobId, entries, actor, req }) => {
+  const job = await ImportJob.findOne({ jobId });
+  if (!job) fail(`Import ${jobId} not found.`, 404, 'NOT_FOUND');
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    fail('Send an entries array of { skuCode, moq, leadTime, safetyFactor, boxNo }.', 400);
+  }
+
+  // Answers are an input to the import, so they close when the import starts.
+  // Afterwards the SKU is a real product and the inventory master owns it.
+  if (job.status !== 'Validated') {
+    fail(
+      `Import ${jobId} is ${job.status} — new SKU details can only be given while it is `
+      + 'awaiting confirmation. Edit the SKU in the inventory master instead.',
+      409, 'INVALID_STATE',
+    );
+  }
+
+  const queued = new Map((job.newSkus || []).map((s) => [s.skuCode, s]));
+  const applied = [];
+  const errors = [];
+
+  for (const raw of entries) {
+    const skuCode = String(raw?.skuCode ?? '').trim();
+    if (!skuCode) { errors.push('A row was sent with no SKU code.'); continue; }
+
+    const target = queued.get(skuCode);
+    if (!target) {
+      errors.push(`${skuCode} is not a new SKU in this import, so its details cannot be set here.`);
+      continue;
+    }
+
+    // Every field is checked, and a SKU is taken whole or not at all — a half
+    // saved row would sit on the list looking answered and still block confirm.
+    const { values, problems, ok } = parseNewSkuDetails(raw);
+    if (!ok) {
+      errors.push(`${skuCode}: ${Object.values(problems).join('; ')}.`);
+      continue;
+    }
+
+    /**
+     * The brand has to be a REAL brand this uploader may write to.
+     *
+     * newSku.rules.js only knows the answer is non-empty — it is a leaf and has
+     * no business knowing the brand list or who may see which. Checking it here
+     * is what lets confirmJob() treat "brand is filled in" as sufficient: a bad
+     * one can never have been stored.
+     */
+    const canonical = ALL_BRANDS.find(
+      (b) => b.toLowerCase() === String(values.brand).toLowerCase(),
+    );
+    if (!canonical) {
+      errors.push(`${skuCode}: "${values.brand}" is not a brand. Expected ${ALL_BRANDS.join(', ')}.`);
+      continue;
+    }
+    if (!allowedBrands(actor).includes(canonical)) {
+      errors.push(`${skuCode}: you do not have access to ${canonical}.`);
+      continue;
+    }
+    values.brand = canonical;
+
+    Object.assign(target, values);
+    applied.push({ skuCode, ...values });
+  }
+
+  if (applied.length) {
+    job.markModified('newSkus');
+    await job.save();
+
+    await recordAudit(
+      actor,
+      'Inventory Planning Updated',
+      `Details set for ${applied.length} new SKU(s) on import ${jobId}: `
+      + applied.map((a) => `${a.skuCode} (MOQ ${a.moq}, lead ${a.leadTime}d, `
+        + `safety ${a.safetyFactor}, box ${a.boxNo})`).join(', ') + '.',
+      req,
+      { meta: { jobId, applied } },
+    );
+  }
+
+  const newSkus = (job.newSkus || []).map((s) => (typeof s.toObject === 'function' ? s.toObject() : s));
+  return {
+    applied,
+    errors,
+    newSkus,
+    // What the screen needs to know: may the import be confirmed yet?
+    ready: incompleteNewSkus(newSkus).length === 0,
+  };
+};
+
+/**
+ * Confirm an import and start processing.
+ *
+ * Returns as soon as the job is marked Processing. The work runs detached and
+ * reports through the job counters, because a 40,000-row import through the
+ * ledger takes minutes and holding an HTTP request open for it would time out
+ * with the work half done and no way to tell how far it got.
+ */
 export const confirmJob = async ({ jobId, actor, req }) => {
   const job = await ImportJob.findOne({ jobId });
   if (!job) fail(`Import ${jobId} not found.`, 404, 'NOT_FOUND');
   assertTransition(job.status, 'Processing');
   if (job.validRows === 0) fail('There are no valid rows to import.', 400, 'NOTHING_TO_IMPORT');
+
+  /**
+   * New SKUs must be fully described before anything is written.
+   *
+   * The gate is here rather than only in the browser because this is the
+   * request that creates the SKUs — a screen check alone would be one
+   * hand-written POST away from a catalogue full of unconfigured parts.
+   */
+  const incomplete = incompleteNewSkus(job.newSkus || []);
+  if (incomplete.length) {
+    const named = incomplete.slice(0, 5).map((s) => s.skuCode).join(', ');
+    fail(
+      `${incomplete.length} new SKU(s) in this file still need an MOQ, Lead Time, Safety Factor `
+      + `and Box Number: ${named}${incomplete.length > 5 ? ', …' : ''}. `
+      + 'Fill them in before importing.',
+      400, 'NEW_SKU_DETAILS_REQUIRED',
+    );
+  }
 
   job.status = 'Processing';
   job.confirmedBy = actor._id;

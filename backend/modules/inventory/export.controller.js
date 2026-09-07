@@ -2,6 +2,7 @@ import ExportJob from '../../models/ExportJob.js';
 import { EXPORTS, EXPORT_NAMES, runExport, listSnapshotRuns } from './export.service.js';
 import { allowedBrands, canAccessBrand } from '../../utils/brandAccess.js';
 
+import { isSuperAdmin } from '../../middlewares/rbac.js';
 /**
  * Export endpoints (IMS Module M9).
  *
@@ -153,7 +154,7 @@ export const history = async (req, res, next) => {
     }
     // A non-admin sees their own downloads. Who else exported the stock
     // position is an administrative question, not an everyday one.
-    if (asString(req.query.mine) === 'true' || req.user?.role !== 'Admin') {
+    if (asString(req.query.mine) === 'true' || !isSuperAdmin(req.user)) {
       filter.requestedBy = req.user._id;
     }
 

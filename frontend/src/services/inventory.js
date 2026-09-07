@@ -73,6 +73,71 @@ export const inventoryApi = {
   },
 
   /**
+   * Is this SKU code free?
+   *
+   * Asked by the Add form as the code is typed, so a duplicate is caught before
+   * the rest of the form is filled in. It calls the SAME check the save calls,
+   * so the form cannot say a code is available and then have the save refuse it.
+   *
+   * Returns { exists, sameBrand, otherBrands, msilClash } — `otherBrands` is
+   * not a duplicate, it is a warning: a code under two brands cannot be
+   * resolved by a sheet that names no brand.
+   */
+  checkSkuAvailable: async ({ skuCode, brand = "", msilCode = "" }) => {
+    const qs = new URLSearchParams({ skuCode });
+    if (brand) qs.set("brand", brand);
+    if (msilCode) qs.set("msilCode", msilCode);
+    const response = await api.get(`/inventory/items/available?${qs.toString()}`);
+    return response.data;
+  },
+
+  /**
+   * Change a SKU's CODE.
+   *
+   * Its own call rather than a field on updatePlanning, because it is the
+   * business key rather than a description: it is refused for a SKU anything
+   * has transacted against, and on success the item's identity changes, which
+   * every caller has to react to.
+   */
+  renameSkuCode: async (skuCode, brand, newSkuCode) => {
+    const response = await api.patch(
+      `/inventory/items/${encodeURIComponent(skuCode)}/code`,
+      { brand, newSkuCode },
+    );
+    return response.data;
+  },
+
+  /** Create one SKU. Rejects a duplicate with 409 and names the existing row. */
+  createItem: async (payload) => {
+    const response = await api.post("/inventory/items", payload);
+    return { item: response.data.data, warnings: response.data.warnings || [] };
+  },
+
+  /**
+   * What would break if this SKU were deleted.
+   *
+   * Read before showing the confirmation, so the dialog states the cost rather
+   * than the refusal doing it afterwards.
+   */
+  skuReferences: async (skuCode, brand) => {
+    const response = await api.get(
+      `/inventory/items/${encodeURIComponent(skuCode)}/references?brand=${encodeURIComponent(brand)}`,
+    );
+    return response.data;
+  },
+
+  /**
+   * Delete a SKU. Admin only, and the server refuses anything with history —
+   * the brand is required because one code can exist under two.
+   */
+  deleteItem: async (skuCode, brand) => {
+    const response = await api.delete(
+      `/inventory/items/${encodeURIComponent(skuCode)}?brand=${encodeURIComponent(brand)}`,
+    );
+    return response.data;
+  },
+
+  /**
    * Apply one set of planning values to many SKUs (M1).
    *
    * Returns `blocked` and `skipped` alongside the counts — a bulk edit that
@@ -509,6 +574,28 @@ export const inventoryApi = {
       { entries },
     );
     return { applied: r.data.applied || [], errors: r.data.errors || [], pendingMoqSkus: r.data.pendingMoqSkus || [] };
+  },
+
+  /**
+   * Answer the mandatory details for the NEW SKUs a staged import will create.
+   *
+   * Sent BEFORE the import is confirmed — the server refuses to confirm while
+   * any of MOQ, Lead Time, Safety Factor or Box Number is unanswered. Partial
+   * answers are saved, so closing the prompt mid-way loses nothing. Returns
+   * { applied, errors, newSkus, ready } — `newSkus` is the whole list with the
+   * answers on it, and `ready` is whether the import may now be confirmed.
+   */
+  setImportNewSkuDetails: async (jobId, entries) => {
+    const r = await api.post(
+      `/inventory/imports/${encodeURIComponent(jobId)}/new-skus`,
+      { entries },
+    );
+    return {
+      applied: r.data.applied || [],
+      errors: r.data.errors || [],
+      newSkus: r.data.newSkus || [],
+      ready: Boolean(r.data.ready),
+    };
   },
 
   listImports: async ({ importType = "", status = "", page = 1, limit = 25 } = {}) => {

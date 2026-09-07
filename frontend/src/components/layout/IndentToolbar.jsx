@@ -6,11 +6,12 @@ import { DateField } from "../ui/DateField";
 import { useIndentHistoryStore, INDENT_STATUSES } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
 
+import { isSuperAdmin } from "../../utils/permissions";
 export const IndentToolbar = () => {
   const { searchQuery, setSearchQuery, filters, setFilters, selectedIds, allIndents } =
     useIndentHistoryStore();
   const [showFilters, setShowFilters] = useState(false);
-  const isAdmin = useUserStore((s) => s.user?.role === "Admin");
+  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
 
   // Customer list is derived from the loaded indents — no extra request needed,
   // and it can only ever offer customers that actually have an indent.

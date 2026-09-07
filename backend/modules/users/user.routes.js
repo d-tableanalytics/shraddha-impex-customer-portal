@@ -1,5 +1,7 @@
 import express from 'express';
-import { getUsers, createUser, updateUser, updateUserRole, resetUserPassword } from './user.controller.js';
+import {
+  getUsers, createUser, updateUser, updateUserRole, resetUserPassword, updateUserAccess,
+} from './user.controller.js';
 import { protect } from '../../middlewares/auth.js';
 import { authorize, PERMISSIONS } from '../../middlewares/rbac.js';
 import { passwordLimiter } from '../../middlewares/rateLimiters.js';
@@ -28,6 +30,11 @@ router.post('/', auditLogger('Create User'), createUser);
 router.patch('/:id', auditLogger('Update User'), updateUser);
 // Changing a role is Admin-only; the handler refuses anyone else outright.
 router.put('/:id/roles', auditLogger('Update User Role'), updateUserRole);
+// The rate limiter stays on the password route: it is the one path here that
+// can be used to guess or grind, and the merge must not drop it.
 router.put('/:id/password', passwordLimiter, auditLogger('Reset User Password'), resetUserPassword);
+// Extra per-account access. Admin-only, and the handler refuses anyone else
+// outright - handing out permissions is not part of managing customers.
+router.put('/:id/access', auditLogger('Update User Access'), updateUserAccess);
 
 export default router;

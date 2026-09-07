@@ -1,0 +1,359 @@
+/**
+ * The seam between the two authorization systems.
+ *
+ * The portal's model and the HRMS model now live in one process, and the whole
+ * risk of that is CROSSOVER: a portal permission leaking into HRMS, or an HRMS
+ * role landing on an account the portal has fenced into the customer area.
+ * Neither system's own tests can catch that, because each is right about its
+ * own half. These are the tests about the boundary between them.
+ *
+ * The one that matters most is the wildcard. `setHas` answers true for EVERY
+ * flat key when a role resolves to `['*']`, and production has two Admin
+ * accounts. If HRMS permissions were ever expressed as flat keys, those
+ * accounts would silently hold payroll, PAN and audit access. They are not, and
+ * this is what says so out loud.
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import User from '../models/User.js';
+import Role from '../models/Role.js';
+import Employee from '../models/hrms/Employee.js';
+import { PERMISSIONS, hasPermission, permissionsFor } from '../middlewares/rbac.js';
+import { loadRoles } from '../utils/roleResolver.js';
+import { assertHrmsRolesAssignable, isPortalOnlyRole } from '../utils/hrmsRoleGuard.js';
+import { RoleAssignmentError } from '../shared/permissions/assignment.js';
+import {
+  buildHrmsActor,
+  hasHrmsPermission,
+  hasAnyHrmsAccess,
+} from '../shared/permissions/has-permission.js';
+import {
+  HRMS_MODULES as M,
+  HRMS_ACTIONS as A,
+  SCOPES as S,
+  HRMS_ROLES as R,
+  HRMS_MODULE_LIST,
+  HRMS_ACTION_LIST,
+} from '../shared/permissions/constants.js';
+import { employeeReferenceProvider } from '../modules/hrms/employees/employee.provider.js';
+import { startTestMongo, stopTestMongo, syncIndexes, clearCollections } from './helpers/mongo.js';
+
+test.before(async () => {
+  await startTestMongo();
+  await syncIndexes(Employee, User, Role);
+});
+
+test.after(async () => {
+  await stopTestMongo();
+});
+
+test.beforeEach(async () => {
+  await clearCollections();
+  await loadRoles(); // empty collection -> baseline only, which is the point
+});
+
+// ---------------------------------------------------------------------------
+// 1 + 2. A portal role, including the wildcard, reaches no HRMS permission
+// ---------------------------------------------------------------------------
+
+test('a portal Admin with no HRMS role holds ZERO HRMS permissions', () => {
+  const admin = { role: 'Admin', roles: [] };
+
+  // The portal half: unrestricted, exactly as before.
+  assert.deepEqual(permissionsFor(admin), ['*']);
+  for (const key of Object.values(PERMISSIONS)) {
+    assert.equal(hasPermission(admin, key), true, `Admin must still hold ${key}`);
+  }
+
+  // The HRMS half: nothing at all.
+  const actor = buildHrmsActor({ userId: 'u1', roles: admin.roles, legacyRole: admin.role });
+  assert.equal(hasAnyHrmsAccess(actor), false);
+  assert.deepEqual(actor.roleKeys, []);
+  assert.deepEqual(actor.permissions, []);
+});
+
+test("the portal wildcard '*' satisfies no HRMS module, action or scope", () => {
+  // The failure this rules out: HRMS expressed as flat keys, where `setHas`
+  // would answer true for every one of them on a wildcard role.
+  const admin = { role: 'Admin', roles: [] };
+  assert.equal(hasPermission(admin, '*'), true, 'the portal wildcard is real');
+  assert.equal(hasPermission(admin, 'a_key_nobody_defined'), true, 'and it is total');
+
+  const actor = buildHrmsActor({ roles: admin.roles, legacyRole: 'Admin' });
+  for (const module of HRMS_MODULE_LIST) {
+    for (const action of HRMS_ACTION_LIST) {
+      for (const scope of [S.SELF, S.TEAM, S.DEPARTMENT, S.ORG]) {
+        assert.equal(
+          hasHrmsPermission(actor, module, action, scope),
+          false,
+          `Admin must not reach ${module}:${action}:${scope}`,
+        );
+      }
+    }
+  }
+});
+
+test('Super Admin is unrestricted in the portal and still holds no HRMS access', () => {
+  const superAdmin = { role: 'Super Admin', roles: [] };
+  assert.deepEqual(permissionsFor(superAdmin), ['*']);
+
+  const actor = buildHrmsActor({ roles: superAdmin.roles, legacyRole: superAdmin.role });
+  assert.equal(hasAnyHrmsAccess(actor), false);
+  assert.equal(hasHrmsPermission(actor, M.PAYROLL, A.VIEW, S.ORG), false);
+  assert.equal(hasHrmsPermission(actor, M.EMPLOYEES_COMPENSATION, A.VIEW, S.ORG), false);
+  assert.equal(hasHrmsPermission(actor, M.AUDIT_LOGS, A.VIEW, S.ORG), false);
+});
+
+// ---------------------------------------------------------------------------
+// 3 + 4. AD-4, widened: no PORTAL-ONLY role may hold an HRMS role
+// ---------------------------------------------------------------------------
+
+test('a Customer cannot receive an HRMS role', () => {
+  assert.equal(isPortalOnlyRole('Customer'), true);
+  assert.throws(
+    () => assertHrmsRolesAssignable('Customer', [R.EMPLOYEE]),
+    (err) => err instanceof RoleAssignmentError && err.code === 'CUSTOMER_CANNOT_HOLD_HRMS_ROLE',
+  );
+});
+
+test('a CUSTOM portal-only role cannot receive an HRMS role either', async () => {
+  // The hole the widening closes. A Super Admin invents 'Dealer', marks it
+  // portalOnly, and the old rule - which compared against the literal string
+  // 'Customer' - would have let a Dealer hold hrms_employee and reach payroll.
+  await Role.create({ name: 'Dealer', portalOnly: true, grants: [], permissions: [] });
+  await loadRoles();
+
+  assert.equal(isPortalOnlyRole('Dealer'), true, 'the flag must be read from the role document');
+  assert.throws(
+    () => assertHrmsRolesAssignable('Dealer', [R.EMPLOYEE]),
+    (err) => err instanceof RoleAssignmentError,
+  );
+
+  // And a custom role that is NOT portal-only is unaffected: staff roles may
+  // legitimately hold HRMS roles.
+  await Role.create({ name: 'Ops Lead', portalOnly: false, grants: [], permissions: [] });
+  await loadRoles();
+  assert.equal(isPortalOnlyRole('Ops Lead'), false);
+  assert.equal(assertHrmsRolesAssignable('Ops Lead', [R.EMPLOYEE]), true);
+});
+
+test('the schema hook refuses a portal-only account holding an HRMS role', async () => {
+  await Role.create({ name: 'Dealer', portalOnly: true, grants: [], permissions: [] });
+  await loadRoles();
+
+  await assert.rejects(
+    User.create({
+      email: 'dealer@example.net',
+      password: 'x'.repeat(20),
+      user: 'A Dealer',
+      role: 'Dealer',
+      roles: [R.EMPLOYEE],
+    }),
+    (err) => /customer portal|mutually exclusive/i.test(err.message),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 5 + 6. extraGrants cannot become a second way into HRMS
+// ---------------------------------------------------------------------------
+
+test('extraGrants cannot carry an HRMS role, structurally', async () => {
+  const { validateGrants, compileGrants, allRegistryKeys } = await import(
+    '../config/moduleRegistry.js'
+  );
+
+  // Nothing in the ERP registry compiles to an hrms_ key, so the matrix has no
+  // vocabulary for HRMS at all. That is what makes updateUserAccess safe.
+  for (const key of allRegistryKeys()) {
+    assert.doesNotMatch(String(key), /^hrms_/, `the registry must not expose ${key}`);
+  }
+
+  // And a hand-crafted grant naming an HRMS module is rejected outright.
+  const { error } = validateGrants([{ module: 'hrms', submodule: 'payroll', actions: ['view'] }]);
+  assert.ok(error, 'a grant outside the registry must be refused');
+  assert.deepEqual([...compileGrants([])], []);
+});
+
+test('updateUserAccess enforces AD-4 itself, not through the schema hook', async () => {
+  const src = await (await import('node:fs/promises')).readFile(
+    new URL('../modules/users/user.controller.js', import.meta.url),
+    'utf8',
+  );
+  const handler = src.slice(src.indexOf('export const updateUserAccess'));
+
+  // It saves with validation OFF, so the model's AD-4 hook does not run here.
+  assert.match(handler, /validateBeforeSave: false/);
+  // Therefore the controller must check both halves itself.
+  assert.match(handler, /isHrmsRoleKey/, 'must refuse a grant carrying an HRMS role');
+  assert.match(handler, /denyIfRoleCombinationInvalid/, 'must re-check the account role pair');
+});
+
+// ---------------------------------------------------------------------------
+// 7 - 10. The HRMS half still works, through User.roles[]
+// ---------------------------------------------------------------------------
+
+test('an HRMS role granted through User.roles[] still resolves', () => {
+  const actor = buildHrmsActor({
+    userId: 'u1',
+    roles: ['hrms_hr_admin'],
+    legacyRole: 'Management',
+    employee: { id: 'e1', departmentId: 'd1', managerChain: [] },
+  });
+
+  assert.deepEqual(actor.roleKeys, ['hrms_hr_admin']);
+  assert.equal(hasAnyHrmsAccess(actor), true);
+  assert.equal(hasHrmsPermission(actor, M.EMPLOYEES, A.VIEW, S.ORG), true);
+});
+
+test('employee self scope: an employee reaches their own record and no other', () => {
+  const actor = buildHrmsActor({
+    userId: 'u1',
+    roles: [R.EMPLOYEE],
+    employee: { id: 'e1', departmentId: 'd1', managerChain: [] },
+  });
+
+  assert.equal(
+    hasHrmsPermission(actor, M.ATTENDANCE, A.VIEW, S.SELF, { ownerEmployeeId: 'e1' }),
+    true,
+  );
+  assert.equal(
+    hasHrmsPermission(actor, M.ATTENDANCE, A.VIEW, S.SELF, { ownerEmployeeId: 'e2' }),
+    false,
+    'somebody else is not self',
+  );
+  assert.equal(hasHrmsPermission(actor, M.ATTENDANCE, A.VIEW, S.ORG), false);
+});
+
+test('manager/team scope: a manager reaches a report through the chain only', () => {
+  const manager = buildHrmsActor({
+    userId: 'u2',
+    roles: [R.MANAGER],
+    employee: { id: 'm1', departmentId: 'd1', managerChain: [] },
+  });
+
+  assert.equal(
+    hasHrmsPermission(manager, M.LEAVE, A.APPROVE, S.TEAM, {
+      ownerEmployeeId: 'e9',
+      ownerManagerChain: ['m1'],
+    }),
+    true,
+    'a direct report is in the team',
+  );
+  assert.equal(
+    hasHrmsPermission(manager, M.LEAVE, A.APPROVE, S.TEAM, {
+      ownerEmployeeId: 'e9',
+      ownerManagerChain: ['someone-else'],
+    }),
+    false,
+    'somebody outside the chain is not',
+  );
+});
+
+test('sensitive employee data stays behind its own module, not a portal key', () => {
+  const employee = buildHrmsActor({
+    roles: [R.EMPLOYEE],
+    employee: { id: 'e1', managerChain: [] },
+  });
+  const manager = buildHrmsActor({ roles: [R.MANAGER], employee: { id: 'm1', managerChain: [] } });
+  const portalAdmin = { role: 'Admin', roles: [] };
+
+  for (const actor of [employee, manager]) {
+    assert.equal(
+      hasHrmsPermission(actor, M.EMPLOYEES_COMPENSATION, A.VIEW, S.ORG),
+      false,
+      'compensation is not an ordinary employee or manager grant',
+    );
+  }
+
+  // And the portal wildcard does not reach it either.
+  assert.equal(hasPermission(portalAdmin, '*'), true);
+  assert.equal(
+    hasHrmsPermission(
+      buildHrmsActor({ roles: portalAdmin.roles, legacyRole: 'Admin' }),
+      M.EMPLOYEES_COMPENSATION,
+      A.VIEW,
+      S.ORG,
+    ),
+    false,
+  );
+
+  // Payroll admin is the role that does hold it.
+  const payroll = buildHrmsActor({ roles: [R.PAYROLL_ADMIN], employee: { id: 'p1', managerChain: [] } });
+  assert.equal(hasHrmsPermission(payroll, M.EMPLOYEES_COMPENSATION, A.VIEW, S.ORG), true);
+});
+
+// ---------------------------------------------------------------------------
+// 11 + 12. The Employee invariants the merge must not disturb
+// ---------------------------------------------------------------------------
+
+test('an employee with no login is still valid, and actor resolution never finds one', async () => {
+  const base = {
+    firstName: 'No',
+    lastName: 'Login',
+    dateOfJoining: new Date('2025-01-01'),
+    employmentType: 'full_time',
+    status: 'active',
+  };
+  await Employee.create({ ...base, employeeCode: 'NL-1', userId: null });
+  await Employee.create({ ...base, employeeCode: 'NL-2', userId: null });
+
+  assert.equal(await Employee.countDocuments({ userId: null }), 2, 'more than one may exist');
+
+  for (const bad of [null, undefined, '', 'not-an-id']) {
+    assert.equal(await employeeReferenceProvider.byUserId(bad), null);
+  }
+});
+
+test('one login still resolves to exactly one employee', async () => {
+  const mongoose = (await import('mongoose')).default;
+  const userId = new mongoose.Types.ObjectId();
+  const base = {
+    firstName: 'A',
+    lastName: 'B',
+    dateOfJoining: new Date('2025-01-01'),
+    employmentType: 'full_time',
+    status: 'active',
+  };
+
+  await Employee.create({ ...base, employeeCode: 'ONE', userId });
+  await assert.rejects(
+    Employee.create({ ...base, employeeCode: 'TWO', userId }),
+    (err) => err.code === 11000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 15. The portal's own access is exactly what it was
+// ---------------------------------------------------------------------------
+
+test('every production role keeps the portal access it had, and gains no HRMS', async () => {
+  const expected = {
+    Admin: '*',
+    Sales: [PERMISSIONS.VIEW_ALL_BOOKINGS, PERMISSIONS.RAISE_PO, PERMISSIONS.MANAGE_CUSTOMER_USERS],
+    Management: [PERMISSIONS.APPROVE_ADJUSTMENT, PERMISSIONS.VIEW_REPORTS],
+    'Import Team': [PERMISSIONS.MANAGE_INVENTORY_MASTER, PERMISSIONS.POST_STOCK_IN],
+    Customer: [PERMISSIONS.CREATE_ORDER, PERMISSIONS.VIEW_ORDERS],
+  };
+
+  for (const [role, keys] of Object.entries(expected)) {
+    const user = { role, roles: [] };
+    if (keys === '*') {
+      assert.equal(hasPermission(user, '*'), true, `${role} keeps the wildcard`);
+    } else {
+      for (const key of keys) {
+        assert.equal(hasPermission(user, key), true, `${role} must keep ${key}`);
+      }
+    }
+    // None of them gains HRMS access by existing.
+    assert.equal(
+      hasAnyHrmsAccess(buildHrmsActor({ roles: user.roles, legacyRole: role })),
+      false,
+      `${role} must hold no HRMS access without an hrms_ role`,
+    );
+  }
+
+  // Separation of duties, unchanged: Sales raises the PO it cannot then unlock.
+  assert.equal(hasPermission({ role: 'Sales', roles: [] }, PERMISSIONS.OVERRIDE_PO_LOCK), false);
+});

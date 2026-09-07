@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { inventoryApi } from "../services/inventory";
+import { describeRequestFailure } from "../services/api";
 
 /**
  * Import / export state (IMS Module M9).
@@ -49,7 +50,7 @@ export const useImportStore = create((set, get) => ({
       step: 1, importType: "", file: null, uploadPercent: 0, uploading: false,
       job: null, preview: { columns: [], rows: [], pagination: null },
       errors: { errors: [], byCategory: {}, pagination: null },
-      showInvalidOnly: false, error: null, pollTimer: null,
+      showInvalidOnly: false, error: null, pollTimer: null, savingNewSkus: false,
     });
   },
 
@@ -108,6 +109,35 @@ export const useImportStore = create((set, get) => ({
       set({ errors: await inventoryApi.importErrors(job.jobId, { page, limit: 100 }) });
     } catch {
       // The error report is secondary; the job's own summary still shows.
+    }
+  },
+
+  /**
+   * Answer the mandatory details for the NEW SKUs this file will create.
+   *
+   * Kept on the job rather than in a second slice of state: the server owns the
+   * list and the answers, so a reload or a different device picks the import up
+   * exactly where it was left. Partial saves are accepted, and the returned
+   * list replaces the one on the job so the screen knows what is still missing
+   * without refetching.
+   */
+  savingNewSkus: false,
+
+  saveNewSkuDetails: async (entries) => {
+    const job = get().job;
+    if (!job) return { ok: false };
+
+    set({ savingNewSkus: true });
+    try {
+      const res = await inventoryApi.setImportNewSkuDetails(job.jobId, entries);
+      set((s) => ({ job: { ...s.job, newSkus: res.newSkus }, savingNewSkus: false }));
+      return { ok: true, ...res };
+    } catch (err) {
+      // Distinguishes "the server said no" from "nothing came back", because
+      // the second may mean the answers WERE saved and only the reply was lost.
+      const message = describeRequestFailure(err, "The new SKU details could not be saved");
+      set({ savingNewSkus: false });
+      return { ok: false, message };
     }
   },
 

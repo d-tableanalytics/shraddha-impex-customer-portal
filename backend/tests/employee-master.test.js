@@ -593,7 +593,7 @@ test('AD-4: an employee login is never created as a Customer', async () => {
 test('only HRMS roles can be granted through the employee endpoints', async () => {
   const service = await src('../modules/hrms/employees/employee.service.js');
   assert.match(service, /Only HRMS roles can be granted here/);
-  assert.match(service, /assertRolesAssignable\(/, 'the AD-4 rule is re-checked on the write path');
+  assert.match(service, /assertHrmsRolesAssignable\(/, 'the AD-4 rule is re-checked on the write path');
   assert.match(service, /portalRoles/, 'portal roles on the same account must survive');
 });
 

@@ -6,7 +6,7 @@ import { onStockUpdated } from '../../services/socketService';
 import { useUserStore } from '../../store/userStore';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
 import { allowedBrands } from '../../utils/brandAccess';
-import { canViewBoxNo } from '../../utils/permissions';
+import { canViewBoxNo, isSuperAdmin} from '../../utils/permissions';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { SkuLookupModal } from '../../components/inventory/SkuLookupModal';
@@ -20,7 +20,7 @@ const PAGE_SIZE = 12;
 export const Inventory = () => {
   const { inventory, inventoryLoading, fetchInventory, exportInventory } = useProductStore();
   const { user } = useUserStore();
-  const isAdmin = user?.role === "Admin";
+  const isAdmin = isSuperAdmin(user);
   const showMsilCode = useShowMsilCode();
   // This screen serves customers as well as staff. A box number is an internal
   // picking location, so it is shown to the people who pick and quote against
@@ -243,12 +243,27 @@ export const Inventory = () => {
                 )}
                 <AnimatePresence>
                   {!filtering && items.map(product => (
+                    // The WHOLE ROW opens the details panel, not just the eye
+                    // button — a row of product information that does nothing
+                    // when clicked reads as broken. The button stays because it
+                    // is what makes the behaviour discoverable, and because a
+                    // row is not a focusable control.
                     <motion.tr
                       key={product.code}
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      className="hover:bg-slate-50 transition-colors"
+                      onClick={() => handleViewDetails(product)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleViewDetails(product);
+                        }
+                      }}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`View details for ${product.code}`}
+                      className="hover:bg-slate-50 transition-colors cursor-pointer focus:outline-none focus:bg-primary-50/60"
                     >
                       <td className="px-6 py-4 font-bold text-slate-900">{product.code}</td>
                       {showMsilCode && <td className="px-6 py-4 font-semibold text-slate-600">{product.msilCode || '-'}</td>}
@@ -275,7 +290,10 @@ export const Inventory = () => {
                       <td className="px-6 py-4 text-center">
                         <button
                           type="button"
-                          onClick={() => handleViewDetails(product)}
+                          // The row handles this too, so the click must not run
+                          // twice — harmless today, but it would reopen the
+                          // panel on the next thing that keys off the event.
+                          onClick={(e) => { e.stopPropagation(); handleViewDetails(product); }}
                           className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-primary-600 transition-colors cursor-pointer inline-flex items-center justify-center"
                           title="View product details"
                         >

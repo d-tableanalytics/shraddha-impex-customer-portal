@@ -22,10 +22,7 @@ import { SENSITIVE_EMPLOYEE_FIELD_LIST } from '../../../shared/security/sensitiv
 import { rebuildAllManagerChains, assertNoCycle } from './managerChain.js';
 import { buildSensitiveUpdate } from './sensitiveUpdate.js';
 import { HrmsValidationError } from '../hrms.errors.js';
-import {
-  assertRolesAssignable,
-  CUSTOMER_ROLE,
-} from '../../../shared/permissions/assignment.js';
+import { assertHrmsRolesAssignable, isPortalOnlyRole } from '../../../utils/hrmsRoleGuard.js';
 import crypto from 'node:crypto';
 
 const idStr = (v) => (v === null || v === undefined ? null : String(v));
@@ -138,11 +135,14 @@ async function linkOrCreateUser(record) {
       );
     }
 
-    if (existingUser.role === CUSTOMER_ROLE) {
+    // Any PORTAL-ONLY role, not just the literal Customer: a Super Admin can
+    // mark a role they invent as portalOnly, and an account on one is as fenced
+    // as a Customer is.
+    if (isPortalOnlyRole(existingUser.role)) {
       throw new HrmsValidationError(
-        `${record.employeeCode}: that login is a ${CUSTOMER_ROLE} account. ` +
-          'AD-4 makes Customer and Employee mutually exclusive, so it cannot become an employee login ' +
-          'until its portal role is corrected.',
+        `${record.employeeCode}: that login is a ${existingUser.role} account, which is confined to ` +
+          'the customer portal. AD-4 makes a portal account and an Employee mutually exclusive, so it ' +
+          'cannot become an employee login until its portal role is corrected.',
       );
     }
 
@@ -150,7 +150,7 @@ async function linkOrCreateUser(record) {
     // holds - a salesperson who is also an employee keeps role='Sales'.
     const roles = [...new Set([...(existingUser.roles ?? []), 'hrms_employee'])];
     if (roles.length !== (existingUser.roles ?? []).length) {
-      assertRolesAssignable(existingUser.role, roles);
+      assertHrmsRolesAssignable(existingUser.role, roles);
       await User.updateOne({ _id: existingUser._id }, { $set: { roles } });
     }
     return existingUser;

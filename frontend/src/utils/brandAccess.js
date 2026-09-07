@@ -10,9 +10,14 @@
  *   • MSIL customers never carry IMADA, regardless of the flag.
  */
 
+import { isSuperAdmin } from "./permissions";
+
 export const ALL_BRANDS = ["Koken", "BIX", "IMADA"];
 
-const isAdmin = (user) => user?.role === "Admin";
+// Any unrestricted account, not only the one historically named "Admin".
+// Comparing the role string missed 'Super Admin' and would miss any custom
+// full-access role a Super Admin creates.
+const isAdmin = (user) => isSuperAdmin(user);
 const isMsilCustomer = (user) => !isAdmin(user) && user?.customerCategory === "MSIL";
 
 /** Canonical brand names this user may see, e.g. ['Koken', 'BIX']. */

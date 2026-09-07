@@ -57,8 +57,16 @@ test('legacy: middlewares/rbac.js still exports the original surface', () => {
   assert.equal(typeof rbacHasPermission, 'function');
   assert.equal(typeof rbacPermissionsFor, 'function');
   assert.equal(typeof legacyMiddleware.authorize, 'function');
-  assert.deepEqual(rbacPermissions, PERMISSIONS);
-  assert.deepEqual(rbacInventoryRoles, INVENTORY_ROLES);
+  // The portal's vocabulary is now owned by config/permissions.js and grows
+  // with the ERP, so this is a SUPERSET check rather than an equality one:
+  // every key the HRMS foundation was written against must still exist and
+  // still mean the same thing. A missing one is a break; a new one is not.
+  for (const [name, key] of Object.entries(PERMISSIONS)) {
+    assert.equal(rbacPermissions[name], key, `rbac.js must still export ${name}`);
+  }
+  for (const role of INVENTORY_ROLES) {
+    assert.ok(rbacInventoryRoles.includes(role), `${role} must still be an inventory role`);
+  }
   // The default export shape several call sites rely on.
   for (const k of ['authorize', 'hasPermission', 'permissionsFor', 'PERMISSIONS', 'INVENTORY_ROLES']) {
     assert.ok(k in legacyMiddleware, `default export is missing ${k}`);

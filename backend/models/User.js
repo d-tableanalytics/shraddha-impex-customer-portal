@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
-import { isAssignableRoleKey, assertRolesAssignable } from '../shared/permissions/assignment.js';
+import { isAssignableRoleKey } from '../shared/permissions/assignment.js';
+import { isAssignableRoleName } from '../utils/roleResolver.js';
+import { assertHrmsRolesAssignable } from '../utils/hrmsRoleGuard.js';
 
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
@@ -24,10 +26,55 @@ const userSchema = new mongoose.Schema({
   //   Management        — oversight: reads everything, approves, creates nothing
   //
   // Permissions live in middlewares/rbac.js — never inline in a controller.
+  //   Import Team      — loads and corrects catalogue data in bulk; holds no
+  //                      ordering or booking permission at all
+  //   Super Admin      - full access to the entire ERP, forever. Added
+  //                      alongside 'Admin' rather than replacing it: 'Admin'
+  //                      has meant exactly this since the system was built, and
+  //                      renaming every existing account is not a prerequisite
+  //                      for the new role model. Both resolve to the wildcard.
+  /**
+   * VALIDATED, NOT ENUMERATED.
+   *
+   * This was a fixed enum of seven names. It cannot stay one: the Super Admin
+   * can now create roles, and a role nobody can be assigned to is not a role.
+   *
+   * The validator accepts the built-in names unconditionally - so an account
+   * can always be given a real role even with a cold cache or an unreachable
+   * roles collection - plus any role that actually exists. It is still a closed
+   * set, just one that grows when the Super Admin grows it: an arbitrary string
+   * is refused exactly as it was before.
+   */
   role: {
     type: String,
-    enum: ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Customer'],
     default: 'Customer',
+    validate: {
+      validator: (value) => isAssignableRoleName(value),
+      message: (props) => `"${props.value}" is not a role that exists.`,
+    },
+  },
+
+  /**
+   * Per-user extra access, in the same shape as a role's grants -
+   * requirement 4.
+   *
+   * For the one person who needs one more thing than their role gives them.
+   * Without this the only way to say "Priya, and only Priya, may approve
+   * counts" is to invent a role for Priya, and a roles list that grows a row
+   * per person stops being a roles list.
+   *
+   * Additive by design. Access is granted here, never
+   * revoked - taking something away is done by changing the role, where it is
+   * visible to whoever reviews the matrix next.
+   */
+  extraGrants: {
+    type: [{
+      module: { type: String, required: true },
+      submodule: { type: String, required: true },
+      actions: [{ type: String, enum: ['view', 'create', 'edit', 'delete', 'approve'] }],
+      _id: false,
+    }],
+    default: [],
   },
 
   // ── HRMS roles (AD-3) ───────────────────────────────────────────────────
@@ -117,7 +164,10 @@ const userSchema = new mongoose.Schema({
  */
 userSchema.pre('validate', function assertRoleCombinationIsValid(next) {
   try {
-    assertRolesAssignable(this.role, this.roles);
+    // The widened rule: any PORTAL-ONLY role, not just the literal 'Customer'.
+    // A Super Admin can mark a role they invent as portal-only, and an account
+    // on one is as fenced as a Customer is.
+    assertHrmsRolesAssignable(this.role, this.roles);
     next();
   } catch (err) {
     next(err);

@@ -1,15 +1,33 @@
 import User from '../../models/User.js';
 import ArchivedUser from '../../models/ArchivedUser.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
-import { assertRolesAssignable, RoleAssignmentError } from '../../shared/permissions/assignment.js';
+import { RoleAssignmentError } from '../../shared/permissions/assignment.js';
+import { isHrmsRoleKey } from '../../shared/permissions/constants.js';
+// AD-4, asked of the LIVE role model rather than the literal name 'Customer'.
+import { assertHrmsRolesAssignable } from '../../utils/hrmsRoleGuard.js';
 import { hashPassword } from '../../utils/password.js';
+import {
+  assignableRoleNames,
+  resolveUserPermissions,
+  grantsForUser,
+} from '../../utils/roleResolver.js';
+import { validateGrants, compileGrants } from '../../config/moduleRegistry.js';
 
 /**
- * Roles an admin may assign. Derived from the User schema enum so the two can
- * never drift — adding a role to the model makes it assignable, and nothing
- * else has to change.
+ * Roles an admin may assign.
+ *
+ * Asked of the role resolver rather than read off a schema enum, because the
+ * set is no longer fixed: a Super Admin can create roles, and one that cannot
+ * be assigned to anybody is not a role. The resolver answers with the built-in
+ * names plus every role that actually exists, and the User model validates
+ * against the same function - so the check here and the check at save time
+ * cannot disagree.
+ *
+ * A FUNCTION, not a constant. The old version was evaluated once at import; a
+ * role created five minutes into the process's life would have been rejected
+ * as unknown until the next restart.
  */
-const ASSIGNABLE_ROLES = User.schema.path('role').enumValues;
+const assignableRoles = () => assignableRoleNames();
 
 /**
  * Customer master details — captured at creation, never editable afterwards.
@@ -41,17 +59,21 @@ const canManageAllUsers = (actor) => hasPermission(actor, PERMISSIONS.MANAGE_USE
 const isCustomerAccount = (account) => (account?.role || 'Customer') === 'Customer';
 
 /**
- * AD-4: a Customer may hold no HRMS role.
+ * AD-4: an account fenced into the customer portal may hold no HRMS role.
  *
  * The portal-role endpoints below can create that violation from the other
- * direction - demoting an employee to Customer while they still hold `hrms_*`
- * keys. `assertRolesAssignable` is the single rule; this wraps it for the HTTP
- * layer. Responds 409 (a conflicting state) rather than 400, and returns true
- * when it has already answered.
+ * direction - demoting an employee to a portal-only role while they still hold
+ * `hrms_*` keys. `assertHrmsRolesAssignable` is the single rule; this wraps it
+ * for the HTTP layer. Responds 409 (a conflicting state) rather than 400, and
+ * returns true when it has already answered.
+ *
+ * It asks the LIVE role model, not the literal name `Customer`: a Super Admin
+ * can mark any role they invent as `portalOnly`, and an account on one is as
+ * fenced as a Customer is.
  */
 const denyIfRoleCombinationInvalid = (res, role, roles) => {
   try {
-    assertRolesAssignable(role, roles ?? []);
+    assertHrmsRolesAssignable(role, roles ?? []);
     return false;
   } catch (err) {
     if (!(err instanceof RoleAssignmentError)) throw err;
@@ -89,9 +111,13 @@ export const getUsers = async (req, res, next) => {
     // manage customers must not receive staff accounts in the payload either.
     const scope = canManageAllUsers(req.user) ? {} : { role: 'Customer' };
 
+    // -password: the admin list has never had a use for it, and sending every
+    // account's credential to a browser on every visit to this screen is a
+    // wider blast radius than the screen needs. Nothing on the client reads it
+    // (the create form has its own field).
     const [users, archived] = await Promise.all([
-      User.find(scope).lean(),
-      ArchivedUser.find(scope).lean(),
+      User.find(scope).select('-password').lean(),
+      ArchivedUser.find(scope).select('-password').lean(),
     ]);
 
     res.status(200).json({
@@ -114,7 +140,7 @@ export const createUser = async (req, res, next) => {
 
     // Only recognised roles are accepted; anything else falls back to Customer
     // so an unexpected value can never grant privileges.
-    const requestedRole = ASSIGNABLE_ROLES.includes(role) ? role : 'Customer';
+    const requestedRole = assignableRoles().includes(role) ? role : 'Customer';
 
     // A Sales actor may only create CUSTOMERS. Checked against the role being
     // requested, before anything is written — otherwise the obvious escalation
@@ -377,6 +403,125 @@ export const updateUserRole = async (req, res, next) => {
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
     res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Extra access for ONE account, on top of whatever its role gives it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY A PER-USER GRANT EXISTS AT ALL
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * Because the alternative is worse. "Priya, and only Priya, may approve stock
+ * counts" is a real request, and without this the only way to say it is to
+ * invent a role for Priya - and a roles list that grows a row per person stops
+ * being a roles list and becomes a second, worse copy of the user list.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE THREE RULES
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * 1. ADDITIVE ONLY. These grants are unioned with the role's; they can never
+ *    subtract. An account always holds at least what its role advertises, so
+ *    "what can this role do" stays answerable from the role screen alone.
+ *    Taking something away is done by changing the role, where the next person
+ *    to review the matrix will see it.
+ *
+ * 2. FULL USER MANAGEMENT ONLY. Deliberately narrower than the rest of this
+ *    router, which also admits MANAGE_CUSTOMER_USERS. A salesperson may create
+ *    and maintain customer accounts; letting them also hand one extra
+ *    permissions would turn account creation into privilege escalation, which
+ *    is the exact attack MANAGE_CUSTOMER_USERS exists to prevent.
+ *
+ * 3. YOU CANNOT GRANT WHAT YOU DO NOT HOLD. Today every actor who reaches this
+ *    handler holds the wildcard, so the check never fires. It is here for the
+ *    day somebody builds a custom role with MANAGE_USERS and not much else -
+ *    at which point "the user admin can give anyone anything" would be a hole
+ *    nobody remembered opening.
+ */
+export const updateUserAccess = async (req, res, next) => {
+  try {
+    if (!canManageAllUsers(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only an administrator can change the extra access on an account.',
+      });
+    }
+
+    const { extraGrants } = req.body;
+
+    const { grants, error } = validateGrants(extraGrants || []);
+    if (error) return res.status(400).json({ success: false, message: error });
+
+    // Rule 3. Compared against the flat keys, because that is what a grant
+    // actually means once resolved - a cell the actor cannot satisfy is a cell
+    // they must not be able to hand on.
+    const actorPermissions = resolveUserPermissions(req.user);
+    if (!actorPermissions.includes('*')) {
+      const beyond = [...compileGrants(grants)].filter((key) => !actorPermissions.includes(key));
+      if (beyond.length) {
+        return res.status(403).json({
+          success: false,
+          message: `You cannot grant access you do not hold yourself: ${beyond.join(', ')}`,
+        });
+      }
+    }
+
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ success: false, message: 'User not found' });
+
+    /**
+     * AD-4, enforced HERE rather than left to the schema.
+     *
+     * The save below passes `validateBeforeSave: false`, so the User model's
+     * AD-4 hook does NOT run on this path - and neither would it on a
+     * findOneAndUpdate. A rule that only exists in a hook is a rule with a hole
+     * in it, so this is the authorization boundary and the check belongs here.
+     *
+     * Two things are refused. First, extra access that carries an HRMS role:
+     * `extraGrants` compile to flat PORTAL keys and the registry holds no HRMS
+     * module, so this cannot happen today. It is asserted rather than assumed
+     * so that adding an HRMS module to the registry later fails loudly here
+     * instead of quietly becoming a second way to grant HRMS access.
+     */
+    const hrmsKeys = [...compileGrants(grants)].filter((key) => isHrmsRoleKey(String(key)));
+    if (hrmsKeys.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          `Extra access cannot carry HRMS roles (${hrmsKeys.join(', ')}). ` +
+          'HRMS roles are granted through the employee record, which enforces AD-4.',
+        code: 'HRMS_ROLE_NOT_GRANTABLE_HERE',
+      });
+    }
+
+    /**
+     * Second: the account's own role pair must still satisfy AD-4 before it is
+     * handed anything more. Widening the access of an account that is already
+     * in violation - a portal-only role still holding `hrms_*` keys - would
+     * write that violation back to disk with validation switched off.
+     */
+    if (denyIfRoleCombinationInvalid(res, target.role, target.roles)) return;
+
+    target.extraGrants = grants;
+    await target.save({ validateBeforeSave: false });
+
+    const updated = target.toObject();
+    delete updated.password;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ...updated,
+        // What the account ACTUALLY holds now, role and extras combined, so the
+        // screen can show the result rather than only the delta it just sent.
+        permissions: resolveUserPermissions(updated),
+        grants: grantsForUser(updated),
+      },
+    });
   } catch (error) {
     next(error);
   }

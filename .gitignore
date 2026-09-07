@@ -36,4 +36,9 @@ documentation/import-reports/
 # own directory, so nothing here belongs in the repository.
 #
 # The directory itself is NOT deleted — only untracked.
+#
+# Uploaded product images. User data, not source — and deliberately ignored
+# rather than merely uncommitted: the deploy runs `git reset --hard`, which
+# leaves ignored files alone, so the gallery survives every deploy. Set
+# PRODUCT_IMAGE_DIR in backend/.env to move the store off the repo tree.
 backend/uploads/

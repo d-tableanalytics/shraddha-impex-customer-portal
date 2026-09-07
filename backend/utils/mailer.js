@@ -21,6 +21,14 @@ const transporter = nodemailer.createTransport({
  * @param {string}   htmlBody  Inner HTML — wrapped in the standard shell below.
  * @param {object}  [options]
  * @param {string[]} [options.cc]  Extra addresses to copy (e.g. a user's bookingCcEmails).
+ * @param {Array}   [options.attachments]  nodemailer attachments —
+ *        `[{ filename, content: Buffer, contentType }]`. Used by the scheduled
+ *        reports, which are only useful with their spreadsheet attached.
+ * @param {boolean} [options.throwOnError]  Reject instead of resolving false.
+ *        The notification paths want a failed mail to be a logged non-event —
+ *        a booking must not fail because its confirmation bounced. A SCHEDULED
+ *        REPORT is the opposite case: delivery is the entire job, so its caller
+ *        needs the error itself to decide whether to retry and what to record.
  */
 // The shell around every notification. Named for the PORTAL, not for one of
 // the things it carries: the same portal handles bookings, purchase orders and
@@ -34,6 +42,10 @@ export const sendEmail = async (to, subject, htmlBody, options = {}) => {
     console.warn(`[Mailer] Skipped — "${to}" is a blocked recipient. Subject: ${subject}`);
     return false;
   }
+
+  // Normalised once. An absent list and an empty list behave identically
+  // everywhere below, so no call site has to care which it passed.
+  const attachments = Array.isArray(options.attachments) ? options.attachments : [];
 
   // Accept a single string or an array; drop blanks and de-duplicate against `to`.
   const cc = [...new Set(
@@ -59,6 +71,13 @@ export const sendEmail = async (to, subject, htmlBody, options = {}) => {
     console.log(`To: ${to}`);
     if (cc.length) console.log(`Cc: ${cc.join(', ')}`);
     console.log(`Subject: ${subject}`);
+    if (attachments.length) {
+      // Named and sized rather than dumped: a report attachment is megabytes of
+      // binary, and printing it would bury the message it belongs to.
+      console.log(`Attachments: ${attachments
+        .map((a) => `${a.filename} (${Math.round((a.content?.length ?? 0) / 1024)} KB)`)
+        .join(', ')}`);
+    }
     console.log(`Body: \n${htmlBody}`);
     console.log(`============================\n`);
     return true;
@@ -69,6 +88,7 @@ export const sendEmail = async (to, subject, htmlBody, options = {}) => {
       from: process.env.EMAIL_FROM || '"Shraddha Impex Portal" <no-reply@example.com>',
       to,
       ...(cc.length ? { cc } : {}),
+      ...(attachments.length ? { attachments } : {}),
       subject,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
@@ -87,6 +107,9 @@ export const sendEmail = async (to, subject, htmlBody, options = {}) => {
     return true;
   } catch (error) {
     console.error(`[Mailer] Failed to send email to ${to}:`, error);
+    // Opt-in, so every existing caller keeps the "log it and carry on" contract
+    // it was written against.
+    if (options.throwOnError) throw error;
     return false;
   }
 };

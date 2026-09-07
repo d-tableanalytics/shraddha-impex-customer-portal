@@ -18,6 +18,7 @@ import salesRoutes from './modules/sales/sales.routes.js';
 import inventoryRoutes from './modules/inventory/inventory.routes.js';
 import hrmsRoutes from './modules/hrms/hrms.routes.js';
 import { captureBiometricRawBody } from './modules/hrms/attendance/rawBody.js';
+import productDetailRoutes from './modules/inventory/productDetail.routes.js';
 import apiRoutes from './routes/api.routes.js';
 
 const app = express();
@@ -76,6 +77,12 @@ app.use('/api/v1/inventory', inventoryRoutes);
 // requireHrmsAccess, so no HRMS endpoint can be reached without HRMS
 // authorization, and no portal route is affected by any of it.
 app.use('/api/v1/hrms', hrmsRoutes);
+// Product content — descriptions, photographs and user-guide videos. Mounted
+// apart from the inventory router because that router authenticates everything
+// under it, and serving an image must not be authenticated: a browser's <img>
+// carries no Authorization header and the session is not a cookie. The image id
+// is the capability instead — see productDetail.routes.js.
+app.use('/api/v1/product-details', productDetailRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/v1', apiRoutes); // also serve under /api/v1 so frontend api.get('/dashboard/stats') resolves
 

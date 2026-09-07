@@ -29,6 +29,7 @@ export const IMPORT_TYPES = [
   'stock-movements',
   'physical-count',
   'locations',
+  'product-details',
 ];
 
 /**
@@ -136,6 +137,58 @@ const importJobSchema = new mongoose.Schema(
         description: { type: String, default: null },
         msilCode: { type: String, default: null },
         quantity: { type: Number, default: 0 },
+        _id: false,
+      }],
+      default: [],
+    },
+
+    /**
+     * NEW SKUs this file will CREATE, and the details they must state first.
+     *
+     * Written at validation time — before anything is imported — from the rows
+     * whose SKU code is not in the catalogue. A new SKU otherwise lands on the
+     * schema defaults for MOQ, lead time, safety factor and box number, which
+     * read as deliberate answers and are not: its Max Level is zero, so it is
+     * permanently "over-stocked", never reorders, and is picked from nowhere.
+     *
+     * The four are therefore asked for BEFORE the import runs, not after. The
+     * confirm endpoint refuses a job with any of them unanswered, and
+     * `newSku.rules.js` is the single definition of what counts as answered.
+     *
+     * Held on the job rather than in the browser so a closed tab, a reload or a
+     * different device picks the same import back up with the answers already
+     * given still in place.
+     */
+    newSkus: {
+      type: [{
+        skuCode: { type: String },
+        description: { type: String, default: null },
+        msilCode: { type: String, default: null },
+        // The row that introduced the SKU, so the prompt can point at it.
+        rowNumber: { type: Number, default: null },
+
+        // Null means "not answered yet" — the state confirm refuses.
+        //
+        // `brand` and `availableStock` are prefilled where the upload already
+        // knows them: brand from the Brand chosen on the upload form, stock
+        // from the sheet's Quantity column. Prefilled is not the same as
+        // answered only in that the user can change them — both still have to
+        // be present before the import may run.
+        brand: { type: String, default: null },
+        /**
+         * The opening stock the SKU is created with.
+         *
+         * Defaults to NULL, not zero, and the distinction is the whole point: a
+         * sheet with no Quantity for this row leaves it unanswered so the prompt
+         * asks, whereas a deliberate zero is a real answer meaning "the part
+         * exists, the stock has not arrived". A default of 0 would make those
+         * two indistinguishable and the prompt would never ask.
+         */
+        availableStock: { type: Number, default: null },
+        moq: { type: Number, default: null },
+        leadTime: { type: Number, default: null },
+        safetyFactor: { type: Number, default: null },
+        boxNo: { type: String, default: null },
         _id: false,
       }],
       default: [],

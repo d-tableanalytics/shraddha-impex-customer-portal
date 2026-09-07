@@ -40,11 +40,21 @@ export class RoleAssignmentError extends Error {
  *      keeps a customer out of payroll on a shared login (AD-14), so it is
  *      checked on every write path rather than trusted to the caller.
  *
+ * `portalOnly` is supplied by the CALLER because the answer now depends on the
+ * database: a Super Admin can mark any role they invent as portal-only, and
+ * this module is dependency-free so it cannot ask. The compiled-in
+ * `CUSTOMER_ROLE` check stays as the floor that holds without it - see
+ * `backend/utils/hrmsRoleGuard.js`, which every backend write path uses to
+ * supply the flag.
+ *
  * @param {string}   role   the portal role (`User.role`)
  * @param {string[]} roles  the multi-role array (`User.roles`)
+ * @param {object}   [options]
+ * @param {boolean}  [options.portalOnly]  true when `role` is fenced into the
+ *   customer portal by the live role model, whatever it is called
  * @throws {RoleAssignmentError}
  */
-export function assertRolesAssignable(role, roles = []) {
+export function assertRolesAssignable(role, roles = [], { portalOnly = false } = {}) {
   const list = Array.isArray(roles) ? roles : [];
 
   const unknown = list.filter((k) => !isAssignableRoleKey(k));
@@ -56,10 +66,10 @@ export function assertRolesAssignable(role, roles = []) {
   }
 
   const hrmsRoles = list.filter(isHrmsRoleKey);
-  if (role === CUSTOMER_ROLE && hrmsRoles.length > 0) {
+  if ((portalOnly || role === CUSTOMER_ROLE) && hrmsRoles.length > 0) {
     throw new RoleAssignmentError(
-      `A ${CUSTOMER_ROLE} account cannot hold HRMS roles (${hrmsRoles.join(', ')}). ` +
-        'Customer and Employee are mutually exclusive.',
+      `A ${role} account is confined to the customer portal and cannot hold HRMS roles ` +
+        `(${hrmsRoles.join(', ')}). Customer and Employee are mutually exclusive.`,
       'CUSTOMER_CANNOT_HOLD_HRMS_ROLE',
     );
   }
@@ -68,9 +78,9 @@ export function assertRolesAssignable(role, roles = []) {
 }
 
 /** Non-throwing form, for UI affordances. */
-export function canAssignRoles(role, roles = []) {
+export function canAssignRoles(role, roles = [], options) {
   try {
-    assertRolesAssignable(role, roles);
+    assertRolesAssignable(role, roles, options);
     return true;
   } catch {
     return false;
