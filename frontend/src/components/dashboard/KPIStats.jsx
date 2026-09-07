@@ -5,7 +5,7 @@ import { Card, CardContent } from '../ui/Card';
 import { Package, Clock, AlertTriangle, Users, PackageX, Layers, Loader2 } from 'lucide-react';
 import { api } from '../../services/api';
 import { useUserStore } from '../../store/userStore';
-import { canUseOrdering } from '../../utils/permissions';
+import { canUseOrdering, isSuperAdmin} from '../../utils/permissions';
 
 export const KPIStats = () => {
   const navigate = useNavigate();
@@ -25,8 +25,8 @@ export const KPIStats = () => {
   }, []);
 
   if (loading) {
-    const skeletonCount = user?.role === 'Admin' ? 5 : 3;
-    const gridCols = user?.role === 'Admin' ? 'xl:grid-cols-5' : 'xl:grid-cols-3';
+    const skeletonCount = isSuperAdmin(user) ? 5 : 3;
+    const gridCols = isSuperAdmin(user) ? 'xl:grid-cols-5' : 'xl:grid-cols-3';
     return (
       <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 ${gridCols} gap-4`}>
         {Array.from({ length: skeletonCount }).map((_, i) => (
@@ -55,7 +55,7 @@ export const KPIStats = () => {
       icon: Clock, color: 'warning',
       path: '/orders/history',
     }] : []),
-    ...(user?.role === 'Admin' ? [{
+    ...(isSuperAdmin(user) ? [{
       id: 5, title: 'Low Stock SKUs',
       value: stats?.lowStockAlerts?.toLocaleString() ?? '—',
       sub: 'Available for sale ≤ 0',
@@ -90,7 +90,7 @@ export const KPIStats = () => {
         path: '/orders/indent-history',
       },
     ] : []),
-    ...(user?.role === 'Admin' ? [{
+    ...(isSuperAdmin(user) ? [{
       id: 6, title: 'Active Users',
       value: stats?.activeUsers?.toLocaleString() ?? '—',
       sub: 'Registered customers',

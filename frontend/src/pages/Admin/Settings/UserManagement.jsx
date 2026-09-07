@@ -8,11 +8,12 @@ import { Modal } from '../../../components/ui/Modal';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Pagination } from '../../../components/ui/Pagination';
 import { usePagination } from '../../../hooks/usePagination';
-import { UserPlus, Shield, Mail, Search, X, Pencil, KeyRound } from 'lucide-react';
+import { UserPlus, Shield, Mail, Search, X, Pencil, KeyRound, SlidersHorizontal } from 'lucide-react';
 import { TableSkeleton } from '../../../components/ui/TableSkeleton';
+import { UserAccessModal } from '../../../components/admin/UserAccessModal';
 import toast from 'react-hot-toast';
 import {
-  canOpenUserManagement, canManageAllUsers, canManageAccount, assignableRolesFor,
+  canOpenUserManagement, canManageAllUsers, canManageAccount, assignableRolesFor, canManageRoles,
 } from '../../../utils/permissions';
 
 /**
@@ -62,8 +63,10 @@ const emptyForm = {
   shopNumber: '',
   vendorNumber: '',
   gstNumber: '',
-  role: 'Customer',
-  customerCategory: 'Customer',
+  // The new account's access level, in the same vocabulary the edit modal and
+  // the table use: 'Customer' and 'MSIL' are levels here, not a role plus a
+  // category. It is turned back into { role, customerCategory } on submit.
+  accessLevel: 'Customer',
   status: 'Active',
   brandAccess: {
     koken: true,
@@ -94,6 +97,14 @@ const emptyForm = {
  */
 const SALES_LEVEL = 'Sales User';
 
+/**
+ * The levels that ARE a customer. Both sit on the Customer role and differ only
+ * by category, and both trade with us — so both need the master details, and
+ * neither may be created without them.
+ */
+const CUSTOMER_LEVELS = ['Customer', 'MSIL'];
+const isCustomerLevel = (level) => CUSTOMER_LEVELS.includes(level);
+
 /** The level an existing account currently sits at. Never guesses. */
 const accessLevelOf = (u) => {
   const role = u?.role || 'Customer';
@@ -113,16 +124,26 @@ const accessLevelToFields = (level) => {
   return { role: level };
 };
 
-/** Every level this actor may set, in the order the roles are listed. */
-const accessLevelsFor = (actor) =>
-  assignableRolesFor(actor).flatMap((role) => {
+/**
+ * Every level this actor may set, in the order the roles are listed.
+ *
+ * `customRoles` carries the roles a Super Admin has created since this bundle
+ * was built. They are passed in rather than read from a constant, because a
+ * role invented last week cannot appear in a list written last year - and a
+ * role nobody can be assigned to is not much of a role.
+ */
+const accessLevelsFor = (actor, customRoles = []) =>
+  assignableRolesFor(actor, customRoles).flatMap((role) => {
     if (role === 'Customer') return ['Customer', 'MSIL'];
     if (role === 'Sales') return [SALES_LEVEL];
     return [role];
   });
 
 export const UserManagement = () => {
-  const { users, fetchUsers, loading, createUser, updateUser, resetUserPassword } = useAdminStore();
+  const {
+    users, fetchUsers, loading, createUser, updateUser, resetUserPassword,
+    roles, fetchAssignableRoles,
+  } = useAdminStore();
   const { user } = useUserStore();
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -133,6 +154,8 @@ export const UserManagement = () => {
   const [savingEdit, setSavingEdit] = useState(false);
   const [confirmSuspend, setConfirmSuspend] = useState(false);
   const [pwUser, setPwUser] = useState(null);
+  // The account whose extra access is being edited, if any.
+  const [accessUser, setAccessUser] = useState(null);
   const [newPw, setNewPw] = useState('');
   const [savingPw, setSavingPw] = useState(false);
 
@@ -140,7 +163,28 @@ export const UserManagement = () => {
   // server enforces both — this decides what the screen offers.
   const mayOpen = canOpenUserManagement(user);
   const isAdmin = canManageAllUsers(user);
-  const assignableRoles = assignableRolesFor(user);
+
+  /**
+   * Who may hand one account access beyond its role.
+   *
+   * BOTH permissions, not just manage_users. The server only demands the first,
+   * but the screen also has to SHOW what the account's role already grants -
+   * and that comes from the roles API, which is behind manage_roles. Without it
+   * the grid would render every inherited cell as empty and invite an admin to
+   * "grant" forty permissions the account already had.
+   *
+   * Super Admin holds both through the wildcard, so this only ever excludes a
+   * custom role built with user management and nothing else.
+   */
+  const mayGrantExtraAccess = isAdmin && canManageRoles(user);
+
+  // The roles a Super Admin has created. Only an actor who may manage every
+  // account can assign one, so nobody else pays for the fetch.
+  const customRoles = roles.filter((r) => !r.isSystem).map((r) => r.name);
+  // The levels this actor may create an account at. Same list the edit modal
+  // offers, so an account is created at the level it would later be edited to
+  // rather than through a different pair of dropdowns.
+  const addLevels = accessLevelsFor(user, customRoles);
 
   /**
    * The levels the edit modal offers.
@@ -155,7 +199,7 @@ export const UserManagement = () => {
    */
   const editLevels = editForm
     ? [...new Set([
-      ...(isAdmin ? accessLevelsFor(user) : []),
+      ...(isAdmin ? accessLevelsFor(user, customRoles) : []),
       editForm.accessLevel,
     ])].filter(Boolean)
     : [];
@@ -173,6 +217,13 @@ export const UserManagement = () => {
   useEffect(() => {
     if (mayOpen) fetchUsers();
   }, [fetchUsers, mayOpen]);
+
+  // The custom roles, for the access-level dropdown. Only an actor who may
+  // manage every account can assign one, so a Sales user does not pay for a
+  // request whose answer they could not use.
+  useEffect(() => {
+    if (isAdmin) fetchAssignableRoles();
+  }, [isAdmin, fetchAssignableRoles]);
 
   // A new search gives a different result set — start it from the first page.
   useEffect(() => {
@@ -289,10 +340,11 @@ export const UserManagement = () => {
       return;
     }
 
-    // The six master details are mandatory for a customer and CANNOT be added
-    // later — the server refuses to change them once the account exists — so
-    // they are checked here before anything is created, not afterwards.
-    if (form.role === 'Customer') {
+    // The six master details are mandatory for a customer — MSIL included,
+    // since MSIL is a customer category and not a staff role — and the server
+    // refuses the create without them. Checked here so the answer names the
+    // missing fields while the form is still open, rather than after a 400.
+    if (isCustomerLevel(form.accessLevel)) {
       const missing = CUSTOMER_MASTER_FIELDS.filter((f) => !String(form[f.key] || '').trim());
       if (missing.length) {
         toast.error(`Required: ${missing.map((f) => f.label).join(', ')}`);
@@ -309,14 +361,16 @@ export const UserManagement = () => {
     }
 
     setSaving(true);
-    const res = await createUser(form);
+    // The server stores a role and a category, not a level.
+    const { accessLevel, ...details } = form;
+    const res = await createUser({ ...details, ...accessLevelToFields(accessLevel) });
     setSaving(false);
     if (res.success) {
-      toast.success('Customer created');
+      toast.success('User created');
       setForm(emptyForm);
       setShowAdd(false);
     } else {
-      toast.error(res.error || 'Failed to create customer');
+      toast.error(res.error || 'Failed to create user');
     }
   };
 
@@ -347,7 +401,7 @@ export const UserManagement = () => {
           </div>
           <Button size="sm" variant="primary" onClick={() => setShowAdd(true)} className="shrink-0">
             <UserPlus size={16} className="mr-2" />
-            Add Customer
+            Add User
           </Button>
         </div>
       </div>
@@ -471,6 +525,21 @@ export const UserManagement = () => {
                                   <KeyRound size={14} className="mr-1.5" />
                                   Password
                                 </Button>
+                                {/* Extra access is admin-only, and meaningless
+                                    for an archived row - that account is not in
+                                    the users collection, so there is nothing to
+                                    write to until it is restored. */}
+                                {mayGrantExtraAccess && !u.archived && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setAccessUser(u)}
+                                    title="Grant this account access beyond its role"
+                                  >
+                                    <SlidersHorizontal size={14} className="mr-1.5" />
+                                    Access
+                                  </Button>
+                                )}
                               </>
                             )}
                           </div>
@@ -496,8 +565,8 @@ export const UserManagement = () => {
         </CardContent>
       </Card>
 
-      {/* Add Customer modal */}
-      <Modal isOpen={showAdd} onClose={() => setShowAdd(false)} title="Add Customer">
+      {/* Add User modal */}
+      <Modal isOpen={showAdd} onClose={() => setShowAdd(false)} title="Add User">
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Name">
@@ -514,15 +583,60 @@ export const UserManagement = () => {
             <input type="text" value={form.password} onChange={setField('password')} className={inputCls} placeholder="Initial password" required />
           </Field>
 
-          {/* Customer master details. */}
-          {form.role === 'Customer' && (
+          {/* The role comes BEFORE the master details, because it decides
+              whether they are asked for at all. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Role">
+              {/* One list, the same one the edit modal offers. Customer and
+                  MSIL are LEVELS here rather than a role plus a separate
+                  category dropdown: they are the two kinds of customer the
+                  business has, and asking for them in two places offered an
+                  MSIL category on an Inventory Manager, where nothing reads it.
+
+                  Only what this actor may assign is listed. A salesperson gets
+                  Customer and MSIL and nothing else — the server refuses
+                  anything wider, so offering it would only produce a 403.
+                  Inventory roles work the business's own stock rather than
+                  their own orders, so they see every brand and none of the
+                  ordering screens. */}
+              <select
+                value={form.accessLevel}
+                onChange={setField('accessLevel')}
+                className={inputCls}
+                disabled={addLevels.length === 1}
+              >
+                {addLevels.map((lvl) => (
+                  <option key={lvl} value={lvl}>{lvl}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Status">
+              <select value={form.status} onChange={setField('status')} className={inputCls}>
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+                <option value="Suspended">Suspended</option>
+              </select>
+            </Field>
+          </div>
+
+          {/* Customer master details — shown for a Customer or an MSIL account,
+              and for nothing else. Directly under the role so it appears the
+              moment one of those two is chosen; a staff account has no GST or
+              shop number and is never asked for one.
+
+              All six are mandatory at creation — the server refuses a customer
+              without them — and they are what Booking History shows as the
+              customer's name, location and phone. They can be corrected later
+              in the edit modal. */}
+          {isCustomerLevel(form.accessLevel) && (
             <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 flex flex-col gap-3">
               <div>
                 <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wide">
                   Customer master details
                 </h4>
                 <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
-                  Required fields that identify the entity we trade with.
+                  Required for {form.accessLevel === 'MSIL' ? 'an MSIL' : 'a Customer'} account —
+                  these identify the entity we trade with, and appear with the account's bookings.
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -540,52 +654,7 @@ export const UserManagement = () => {
               </div>
             </div>
           )}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Field label="Role">
-              {/* Only the roles this actor may assign. A salesperson gets
-                  Customer and nothing else — the server refuses anything wider,
-                  so offering it would only produce a 403. Inventory roles work
-                  the business's own stock rather than their own orders, so they
-                  see every brand and none of the ordering screens. */}
-              <select
-                value={form.role}
-                onChange={setField('role')}
-                className={inputCls}
-                disabled={assignableRoles.length === 1}
-              >
-                {assignableRoles.map((r) => (
-                  <option key={r} value={r}>{r === 'Sales' ? 'Sales User' : r}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Customer Category">
-              {/* A category belongs to a CUSTOMER. It was disabled for Admin
-                  and Sales by name, which left it editable for every staff role
-                  added since — offering an MSIL category on an Inventory
-                  Manager, where it means nothing and nothing reads it. Asked of
-                  the role now, so a new role needs no edit here. */}
-              <select
-                value={form.customerCategory}
-                onChange={setField('customerCategory')}
-                className={inputCls}
-                disabled={form.role !== 'Customer'}
-                title={form.role !== 'Customer'
-                  ? `A customer category does not apply to a ${form.role} account.`
-                  : undefined}
-              >
-                <option value="Customer">Customer</option>
-                <option value="MSIL">MSIL</option>
-              </select>
-            </Field>
-             <Field label="Status">
-               <select value={form.status} onChange={setField('status')} className={inputCls}>
-                 <option value="Active">Active</option>
-                 <option value="Inactive">Inactive</option>
-                 <option value="Suspended">Suspended</option>
-               </select>
-             </Field>
-           </div>
- 
+
            <div className="flex flex-col gap-2 mt-1">
              <span className="text-xs font-bold text-slate-600">Brand Access</span>
              <div className="flex gap-4">
@@ -622,7 +691,7 @@ export const UserManagement = () => {
           <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 mt-2">
             <Button type="button" variant="outline" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
             <Button type="submit" variant="primary" size="sm" disabled={saving}>
-              {saving ? 'Creating...' : 'Create Customer'}
+              {saving ? 'Creating...' : 'Create User'}
             </Button>
           </div>
         </form>
@@ -671,8 +740,11 @@ export const UserManagement = () => {
                </Field>
              </div>
 
-            {/* Customer master details */}
-            {(editUser?.role || 'Customer') === 'Customer' && (
+            {/* Customer master details — follows the level CHOSEN above, not
+                the one the account was opened at, so moving a staff account to
+                Customer or MSIL asks for them straight away instead of after a
+                save and a reopen. */}
+            {isCustomerLevel(editForm.accessLevel) && (
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 flex flex-col gap-3">
                 <div className="flex items-center gap-2">
                   <Shield size={13} className="text-slate-400" />
@@ -770,6 +842,8 @@ export const UserManagement = () => {
       />
 
       {/* Reset Password modal */}
+      <UserAccessModal user={accessUser} onClose={() => setAccessUser(null)} />
+
       <Modal isOpen={!!pwUser} onClose={() => setPwUser(null)} title="Reset Password" size="sm">
         {pwUser && (
           <form onSubmit={handleResetPw} className="flex flex-col gap-4">

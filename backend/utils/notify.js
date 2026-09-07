@@ -2,6 +2,7 @@ import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import { io } from '../server.js';
 
+import { isSuperAdmin } from '../middlewares/rbac.js';
 // Real-time notification helpers.
 //
 // Delivery is room-based: every connected socket is placed into a `user:<id>`
@@ -25,7 +26,7 @@ export const notifyUser = async (userId, { title, message, type = 'reservation' 
     io.to(room(userId)).emit('notification-received', populatedNotif);
     
     // If the recipient user is not an Admin, also emit to all admins so they see it in real-time
-    if (populatedNotif.user && populatedNotif.user.role !== 'Admin') {
+    if (populatedNotif.user && !isSuperAdmin(populatedNotif.user)) {
       io.to('admins').emit('notification-received', populatedNotif);
     }
     

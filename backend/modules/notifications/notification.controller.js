@@ -1,8 +1,9 @@
 import Notification from '../../models/Notification.js';
 
+import { isSuperAdmin } from '../../middlewares/rbac.js';
 export const getNotifications = async (req, res, next) => {
   try {
-    const query = req.user.role === 'Admin' ? {} : { user: req.user._id };
+    const query = isSuperAdmin(req.user) ? {} : { user: req.user._id };
     const notifications = await Notification.find(query)
       .populate('user', 'user name company email role')
       .sort({ createdAt: -1 })
@@ -15,7 +16,7 @@ export const getNotifications = async (req, res, next) => {
 
 export const markAllRead = async (req, res, next) => {
   try {
-    const query = req.user.role === 'Admin' ? { read: false } : { user: req.user._id, read: false };
+    const query = isSuperAdmin(req.user) ? { read: false } : { user: req.user._id, read: false };
     await Notification.updateMany(query, { read: true });
     res.status(200).json({ success: true, message: 'All notifications marked as read' });
   } catch (error) {
@@ -25,7 +26,7 @@ export const markAllRead = async (req, res, next) => {
 
 export const markOneRead = async (req, res, next) => {
   try {
-    const query = req.user.role === 'Admin' ? { _id: req.params.id } : { _id: req.params.id, user: req.user._id };
+    const query = isSuperAdmin(req.user) ? { _id: req.params.id } : { _id: req.params.id, user: req.user._id };
     const notif = await Notification.findOneAndUpdate(
       query,
       { read: true },

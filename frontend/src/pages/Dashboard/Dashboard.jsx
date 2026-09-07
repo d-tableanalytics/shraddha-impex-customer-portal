@@ -8,12 +8,12 @@ import { Button } from "../../components/ui/Button";
 import { PlusCircle, UploadCloud, Boxes } from "lucide-react";
 
 import { useUserStore } from "../../store/userStore";
-import { canUseOrdering } from "../../utils/permissions";
+import { canUseOrdering, isSuperAdmin} from "../../utils/permissions";
 
 export const Dashboard = () => {
   const navigate = useNavigate();
   const { user } = useUserStore();
-  const isAdmin = user?.role === "Admin";
+  const isAdmin = isSuperAdmin(user);
   /**
    * Whether to show the booking half of the dashboard at all.
    *

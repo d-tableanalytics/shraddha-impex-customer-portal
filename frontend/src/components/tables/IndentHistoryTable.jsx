@@ -5,6 +5,7 @@ import { useUserStore } from "../../store/userStore";
 import { Pagination } from "../ui/Pagination";
 import { TableSkeleton } from "../ui/TableSkeleton";
 
+import { isSuperAdmin } from "../../utils/permissions";
 export const IndentHistoryTable = () => {
   const {
     indents,
@@ -21,7 +22,7 @@ export const IndentHistoryTable = () => {
     toggleSelectAll,
   } = useIndentHistoryStore();
 
-  const isAdmin = useUserStore((s) => s.user?.role === "Admin");
+  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
 
   const totalPages = Math.max(1, Math.ceil(indents.length / limit));
   const currentPage = Math.min(page, totalPages);

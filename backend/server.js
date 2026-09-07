@@ -17,6 +17,7 @@ import { runWeeklyInventoryReport } from './modules/inventory/inventoryReport.jo
 import { readInventoryReportConfig, describeInventoryReportConfig } from './config/inventoryReport.js';
 import cron from 'node-cron';
 
+import { isSuperAdmin } from './middlewares/rbac.js';
 dotenv.config();
 
 const PORT = process.env.PORT || 5000;
@@ -59,7 +60,10 @@ io.on('connection', (socket) => {
   // Personal room for own notifications; admins additionally get the firehose.
   if (userId) {
     socket.join(`user:${userId}`);
-    if (role === 'Admin') socket.join('admins');
+    // The firehose is for unrestricted accounts. Asked of the permission set
+    // rather than the role string so 'Super Admin' and any custom full-access
+    // role join it too.
+    if (isSuperAdmin({ role })) socket.join('admins');
   }
 
   socket.on('disconnect', () => {

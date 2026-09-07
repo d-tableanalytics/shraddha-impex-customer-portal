@@ -45,7 +45,11 @@ const fe = await import(
   pathToFileURL(path.join(REPO, 'frontend', 'src', 'utils', 'permissions.js')).href
 );
 
-const ROLES = ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Import Team', 'Customer'];
+// 'Super Admin' joined the list when roles became configurable. It is the same
+// authority as 'Admin' under the name the client asked for, so every assertion
+// below that says "an admin may X" must hold for it too - which is the point of
+// listing it here rather than exempting it.
+const ROLES = ['Super Admin', 'Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Import Team', 'Customer'];
 const asUser = (role) => ({ role, _id: `id-${role}` });
 
 // Mirrors denyIfOutOfScope() in the user controller.

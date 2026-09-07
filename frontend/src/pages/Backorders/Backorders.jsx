@@ -8,12 +8,13 @@ import { BackordersTable, groupByIndent } from "../../components/backorders/Back
 import { Pagination } from "../../components/ui/Pagination";
 import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
 
+import { isSuperAdmin } from "../../utils/permissions";
 const PAGE_SIZE = 10;
 
 export const Backorders = () => {
   const { pendingItems, pendingLoading, fetchPendingReservations } = useCartStore();
   const { user } = useUserStore();
-  const isAdmin = user?.role === "Admin";
+  const isAdmin = isSuperAdmin(user);
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState([]);
 

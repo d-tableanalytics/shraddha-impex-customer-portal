@@ -4,6 +4,7 @@ import { msilAppliesTo } from '../../utils/msilVisibility.js';
 import { withCatalogueBoxNoVisibility } from '../../utils/boxNoVisibility.js';
 import { prefixMatch, containsMatch, escapedTerm } from '../../utils/searchQuery.js';
 
+import { isSuperAdmin } from '../../middlewares/rbac.js';
 // Map brand param → correct Mongoose model
 const getModel = (brand) => {
   const b = String(brand || '').toLowerCase();
@@ -65,7 +66,7 @@ export const getInventory = async (req, res, next) => {
 
     // Low Stock is an Admin-only tile, and the $expr count cannot use an index,
     // so it is only run for the users who actually see it.
-    const wantsLowStock = req.user?.role === 'Admin';
+    const wantsLowStock = isSuperAdmin(req.user);
 
     // MSIL Codes are only searchable by users they are shown to. Shared rule —
     // see utils/msilVisibility.js.

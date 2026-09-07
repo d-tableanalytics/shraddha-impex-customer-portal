@@ -1,4 +1,4 @@
-import { INVENTORY_ROLES } from '../middlewares/rbac.js';
+import { INVENTORY_ROLES, isSuperAdmin} from '../middlewares/rbac.js';
 
 /**
  * Who MSIL Codes are shown to.
@@ -15,7 +15,7 @@ import { INVENTORY_ROLES } from '../middlewares/rbac.js';
  * new role is covered everywhere at once.
  */
 export const msilAppliesTo = (user) =>
-  user?.role === 'Admin' ||
+  isSuperAdmin(user) ||
   // Sales work the desk for MSIL and non-MSIL customers alike, so they must be
   // able to see and quote an MSIL Code — a category is a property of the
   // customer they are serving, not of the salesperson.

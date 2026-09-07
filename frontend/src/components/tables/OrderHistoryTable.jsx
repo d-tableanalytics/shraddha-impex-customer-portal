@@ -6,6 +6,7 @@ import { useUserStore } from "../../store/userStore";
 import { Pagination } from "../ui/Pagination";
 import { TableSkeleton } from "../ui/TableSkeleton";
 
+import { isSuperAdmin } from "../../utils/permissions";
 export const OrderHistoryTable = () => {
   const {
     orders,
@@ -28,7 +29,7 @@ export const OrderHistoryTable = () => {
     pendingItems.map((p) => p.poNumber).filter(Boolean),
   );
 
-  const isAdmin = useUserStore((s) => s.user?.role === "Admin");
+  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
 
   const totalPages = Math.max(1, Math.ceil(orders.length / limit));
   const currentPage = Math.min(page, totalPages);

@@ -1,5 +1,7 @@
 import express from 'express';
-import { getUsers, createUser, updateUser, updateUserRole, resetUserPassword } from './user.controller.js';
+import {
+  getUsers, createUser, updateUser, updateUserRole, resetUserPassword, updateUserAccess,
+} from './user.controller.js';
 import { protect } from '../../middlewares/auth.js';
 import { authorize, PERMISSIONS } from '../../middlewares/rbac.js';
 import { auditLogger } from '../../middlewares/auditLogger.js';
@@ -28,5 +30,8 @@ router.patch('/:id', auditLogger('Update User'), updateUser);
 // Changing a role is Admin-only; the handler refuses anyone else outright.
 router.put('/:id/roles', auditLogger('Update User Role'), updateUserRole);
 router.put('/:id/password', auditLogger('Reset User Password'), resetUserPassword);
+// Extra per-account access. Admin-only, and the handler refuses anyone else
+// outright - handing out permissions is not part of managing customers.
+router.put('/:id/access', auditLogger('Update User Access'), updateUserAccess);
 
 export default router;

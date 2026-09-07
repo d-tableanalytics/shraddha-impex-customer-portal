@@ -6,7 +6,7 @@ import { onStockUpdated } from '../../services/socketService';
 import { useUserStore } from '../../store/userStore';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
 import { allowedBrands } from '../../utils/brandAccess';
-import { canViewBoxNo } from '../../utils/permissions';
+import { canViewBoxNo, isSuperAdmin} from '../../utils/permissions';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { SkuLookupModal } from '../../components/inventory/SkuLookupModal';
@@ -20,7 +20,7 @@ const PAGE_SIZE = 12;
 export const Inventory = () => {
   const { inventory, inventoryLoading, fetchInventory, exportInventory } = useProductStore();
   const { user } = useUserStore();
-  const isAdmin = user?.role === "Admin";
+  const isAdmin = isSuperAdmin(user);
   const showMsilCode = useShowMsilCode();
   // This screen serves customers as well as staff. A box number is an internal
   // picking location, so it is shown to the people who pick and quote against

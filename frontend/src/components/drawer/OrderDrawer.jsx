@@ -28,7 +28,7 @@ import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
-import { canViewLineItemBoxNo, canEditBookingQuantity, hasPermission, PERMISSIONS } from "../../utils/permissions";
+import { canViewLineItemBoxNo, canEditBookingQuantity, hasPermission, PERMISSIONS, isSuperAdmin} from "../../utils/permissions";
 import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
 import { PackageX } from "lucide-react";
@@ -66,7 +66,7 @@ export const OrderDrawer = () => {
   // This drawer is also the customer's own order-history view, so the box
   // number is limited to the desk that acts on the booking.
   const showBoxNo = canViewLineItemBoxNo(user);
-  const isAdmin = user?.role === "Admin";
+  const isAdmin = isSuperAdmin(user);
 
   const [busy, setBusy] = useState(false);
   const [isEditingPO, setIsEditingPO] = useState(false);

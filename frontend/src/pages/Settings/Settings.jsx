@@ -6,11 +6,12 @@ import { useUserStore } from '../../store/userStore';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 
+import { isSuperAdmin } from '../../utils/permissions';
 export const Settings = () => {
   const { user, updateProfile, changePassword } = useUserStore();
   const [activeTab, setActiveTab] = useState('profile');
 
-  const isAdmin = user?.role === 'Admin';
+  const isAdmin = isSuperAdmin(user);
 
   // The Security (change password) tab is available to admins only.
   const tabs = [

@@ -8,6 +8,7 @@ import Reservation from '../models/Reservation.js';
 import { protect } from '../middlewares/auth.js';
 import { allowedBrandModels, brandFilter } from '../utils/brandAccess.js';
 
+import { isSuperAdmin } from '../middlewares/rbac.js';
 const router = express.Router();
 
 // Helper to match brand parameter to correct Mongoose model
@@ -210,7 +211,7 @@ router.post('/auth/login', async (req, res, next) => {
 router.get('/dashboard/stats', protect, async (req, res, next) => {
   try {
     let orderQuery = {};
-    if (req.user && req.user.role !== 'Admin') {
+    if (req.user && !isSuperAdmin(req.user)) {
       orderQuery.user = req.user._id;
     }
 
@@ -249,7 +250,7 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
     // Pending backorders (unfulfilled reservation quantities). Admin sees all;
     // customers see only their own.
     const pendingReservationFilter = { status: { $in: ['Pending', 'Partially Confirmed'] } };
-    if (req.user && req.user.role !== 'Admin') {
+    if (req.user && !isSuperAdmin(req.user)) {
       pendingReservationFilter.customerId = req.user._id;
     }
     const [pendingBackorders, pendingBackorderAgg, indentAgg] = await Promise.all([
@@ -299,7 +300,7 @@ router.get('/dashboard/stats', protect, async (req, res, next) => {
     //  so we add only fully-Pending reservations to it, never the partial remainder.)
     const reservedFilter = { status: 'Reserved' };
     const fullyPendingFilter = { status: 'Pending' };
-    if (req.user && req.user.role !== 'Admin') {
+    if (req.user && !isSuperAdmin(req.user)) {
       reservedFilter.customerId = req.user._id;
       fullyPendingFilter.customerId = req.user._id;
     }

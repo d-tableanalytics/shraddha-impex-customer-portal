@@ -16,8 +16,8 @@ export const Admin = () => {
       path: "/admin/users",
     },
     {
-      name: "Access Permissions",
-      desc: "Manage role-based access via the permission matrix.",
+      name: "Roles & Permissions",
+      desc: "Create roles and grant module access: view, create, edit, delete, approve.",
       icon: Key,
       path: "/admin/permissions",
     },

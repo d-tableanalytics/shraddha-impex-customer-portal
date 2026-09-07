@@ -21,13 +21,14 @@ import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
 import { IndentScheduleSection } from "./IndentScheduleSection";
 
+import { isSuperAdmin } from "../../utils/permissions";
 const PAGE_SIZE = 10;
 
 export const IndentDrawer = () => {
   const { selectedIndent, setSelectedIndent, fetchIndents } = useIndentHistoryStore();
   const { user } = useUserStore();
   const showMsilCode = useShowMsilCode();
-  const isAdmin = user?.role === "Admin";
+  const isAdmin = isSuperAdmin(user);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [busy, setBusy] = useState(false);
 

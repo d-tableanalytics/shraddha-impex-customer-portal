@@ -15,7 +15,7 @@ import { recordAudit } from '../../utils/auditLog.js';
 import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
-import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
+import { hasPermission, PERMISSIONS, isSuperAdmin} from '../../middlewares/rbac.js';
 import { enforceMoq, moqError } from '../../utils/moq.js';
 import { sendIndentRaisedMails, sendBookingMails } from '../../utils/indentMail.js';
 
@@ -257,7 +257,7 @@ const isScheduledForLater = (date) => {
  */
 export const scheduleIndent = async (req, res, next) => {
   try {
-    if (req.user.role !== 'Admin') {
+    if (!isSuperAdmin(req.user)) {
       return res.status(403).json({ success: false, message: 'Only an admin can schedule an indent.' });
     }
 
@@ -422,7 +422,7 @@ export const scheduleIndent = async (req, res, next) => {
 
 export const restoreBackorder = async (req, res, next) => {
   try {
-    if (req.user.role !== 'Admin') {
+    if (!isSuperAdmin(req.user)) {
       return res.status(403).json({ success: false, message: 'Only an admin can move a indent to the selection list.' });
     }
 
@@ -681,7 +681,7 @@ export const cancelReservation = async (req, res, next) => {
     // cancelBooking applies. Answer 404 rather than 403 so this endpoint
     // cannot be used to probe which reservation ids exist.
     const isOwner = String(reservation.customerId) === String(req.user._id);
-    const canActForOthers = req.user.role === 'Admin'
+    const canActForOthers = isSuperAdmin(req.user)
       || hasPermission(req.user, PERMISSIONS.MANAGE_ORDERS);
     if (!isOwner && !canActForOthers) {
       return res.status(404).json({ success: false, message: 'Reservation not found.' });

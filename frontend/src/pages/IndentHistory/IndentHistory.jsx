@@ -7,9 +7,10 @@ import { IndentDrawer } from "../../components/drawer/IndentDrawer";
 import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
 
+import { isSuperAdmin } from "../../utils/permissions";
 export const IndentHistory = () => {
   const { fetchIndents } = useIndentHistoryStore();
-  const isAdmin = useUserStore((s) => s.user?.role === "Admin");
+  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
 
   useEffect(() => {
     fetchIndents();

@@ -8,7 +8,7 @@ import { io } from '../../server.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { allowedBrandModels, canAccessBrand, brandFilter } from '../../utils/brandAccess.js';
 import { isBookingLocked, canOverrideLock } from '../../utils/bookingLock.js';
-import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
+import { hasPermission, PERMISSIONS, isSuperAdmin} from '../../middlewares/rbac.js';
 import { withBoxNoVisibility } from '../../utils/boxNoVisibility.js';
 import { attachCustomerDetails } from '../../utils/customerContact.js';
 import { findProductBySku, consumeStock, releaseStock } from '../../utils/stockLedger.js';
@@ -602,7 +602,7 @@ export const cancelBooking = async (req, res, next) => {
     // request gets actioned.
     const owner = String(rows[0].user);
     const isOwner = owner === String(req.user._id);
-    const canActForOthers = req.user.role === 'Admin'
+    const canActForOthers = isSuperAdmin(req.user)
       || hasPermission(req.user, PERMISSIONS.MANAGE_ORDERS);
     if (!isOwner && !canActForOthers) {
       return res.status(403).json({ success: false, message: 'This booking belongs to another customer.' });

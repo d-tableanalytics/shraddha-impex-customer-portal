@@ -9,12 +9,13 @@ import { useUserStore } from "../../store/userStore";
 import { BOOKING_LIFECYCLE } from "../../constants/bookingLifecycle";
 import toast from "react-hot-toast";
 
+import { isSuperAdmin } from "../../utils/permissions";
 export const OrderToolbar = () => {
   const { searchQuery, setSearchQuery, filters, setFilters, selectedIds } =
     useOrderHistoryStore();
   const [showFilters, setShowFilters] = useState(false);
   const [companies, setCompanies] = useState([]);
-  const isAdmin = useUserStore((s) => s.user?.role === "Admin");
+  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
 
   // Bookings to export: the selected ones, or the full filtered list.
   const selectedBookings = () => {

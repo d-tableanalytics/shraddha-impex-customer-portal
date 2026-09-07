@@ -31,6 +31,52 @@ export const adminApi = {
     return response.data.data;
   },
 
+  /**
+   * The module catalogue the permission matrix is drawn from.
+   *
+   * Fetched rather than bundled: the screen must offer exactly the cells the
+   * server will honour, and a copy compiled into the frontend is a copy that
+   * can be out of date. It also means a module added to the backend registry
+   * shows up on this screen with no frontend release.
+   */
+  getModuleRegistry: async () => {
+    const response = await api.get('/roles/registry');
+    return response.data.data;
+  },
+
+  createRole: async (payload) => {
+    const response = await api.post('/roles', payload);
+    return response.data.data;
+  },
+
+  updateRole: async (roleId, updates) => {
+    const response = await api.patch(`/roles/${roleId}`, updates);
+    return response.data.data;
+  },
+
+  deleteRole: async (roleId) => {
+    const response = await api.delete(`/roles/${roleId}`);
+    return response.data;
+  },
+
+  /**
+   * Extra access for one account, on top of its role. Admin-only server-side.
+   * Returns the account WITH its resolved permissions, so the caller can show
+   * the result rather than only the delta it sent.
+   */
+  updateUserAccess: async (userId, extraGrants) => {
+    const response = await api.put(`/users/${userId}/access`, { extraGrants });
+    return response.data.data;
+  },
+
+  /** The signed-in user's own access, for refreshing it after a change. */
+  getMyAccess: async () => {
+    const response = await api.get('/roles/my-access');
+    return response.data.data;
+  },
+
+  // Legacy flat-permission save. Still served by the API - see the note on the
+  // handler - and kept here for anything that has not moved to grants.
   updateRolePermissions: async (roleId, permissions) => {
     const response = await api.put(`/roles/${roleId}/permissions`, { permissions });
     return response.data.data;
