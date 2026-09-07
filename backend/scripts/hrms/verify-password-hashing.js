@@ -22,7 +22,16 @@ import { isHashed } from '../../utils/password.js';
 dotenv.config();
 
 const summarise = async (Model, label) => {
-  const docs = await Model.find({}).select('+password email lastLogin').lean();
+  /**
+   * `+password` alone, not mixed with plain inclusions.
+   *
+   * `password` is `select: false`, and combining `+password` with bare field
+   * names in one string makes Mongoose build an INCLUSION projection from the
+   * bare names - which drops `password` again. Every account then reads as
+   * unhashed, and this script reported 28 legacy accounts on a database that
+   * had 15 hashed ones. The other fields come back by default anyway.
+   */
+  const docs = await Model.find({}).select('+password').lean();
   const legacy = docs.filter((d) => !isHashed(d.password));
   const hashed = docs.length - legacy.length;
 
