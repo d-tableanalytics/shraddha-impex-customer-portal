@@ -34,7 +34,12 @@ import { useUserStore } from "../../store/userStore";
 import { homePathFor } from "../../utils/permissions";
 import { buildNavigation } from "../../utils/navigation";
 import { useHrmsPermissions } from "../../hooks/useHrmsPermissions";
-import { visibleHrmsNavItems, hrmsSidebarGroup } from "../hrms/navItems";
+import {
+  visibleHrmsNavItems,
+  groupHrmsNavItems,
+  HRMS_SIDEBAR_GROUP_KEY,
+  HRMS_SIDEBAR_GROUP_LABEL,
+} from "../hrms/navItems";
 
 /**
  * Icon names travel from the backend registry as strings; this is where they
@@ -100,10 +105,13 @@ export const Sidebar = () => {
    *
    * This used to append one top-level group PER HRMS group - HRMS, My Work,
    * People & Org and HRMS Admin, four headings deep in a rail that already has
-   * the ERP's own modules in it. They are now a single "HRMS" group, so the
-   * whole system is one thing the user opens rather than four they have to
-   * recognise as related. The item ORDER is unchanged: hrmsSidebarGroup walks
-   * the same four groups in the same order and only drops the headings.
+   * the ERP's own modules in it. They are now a single "HRMS" group the user
+   * opens once, with the four sections rendered INSIDE it as quiet uppercase
+   * labels rather than as four more collapsible trees.
+   *
+   * `sections` is what the rail draws; `items` is the same list flattened, and
+   * exists so the active-item contest below stays one comparison over every
+   * item in the menu rather than a special case for HRMS.
    *
    * Visibility comes from the HRMS evaluator, never from a portal permission -
    * the portal's Roles & Permissions matrix decides which HRMS ROLES an account
@@ -113,29 +121,42 @@ export const Sidebar = () => {
    * - gets null back and sees no trace of HRMS, not even a heading (AD-4).
    */
   const { can, implementedModules, hasAccess: hasHrmsAccess } = useHrmsPermissions();
-  const hrmsGroup = hasHrmsAccess
-    ? hrmsSidebarGroup(visibleHrmsNavItems(can, implementedModules))
-    : null;
 
-  const erpGroups = buildNavigation(user);
-
-  const hrmsGroups = hrmsGroup
-    ? [{
-        key: hrmsGroup.key,
-        label: hrmsGroup.label,
-        icon: "Users",
-        // Always a heading, even at one item: an HRMS entry loose among the
-        // ERP modules would read as an ERP module.
-        alwaysGrouped: true,
-        items: hrmsGroup.items.map((item) => ({
+  const hrmsSections = hasHrmsAccess
+    ? groupHrmsNavItems(visibleHrmsNavItems(can, implementedModules)).map((section) => ({
+        key: section.group,
+        // The first section is the module's own core links (Dashboard, Inbox,
+        // My Profile). They sit directly under the HRMS heading with no label
+        // of their own — a heading above three links that are already under
+        // "HRMS" would be a label for the thing you just read.
+        label: section.group === "core" ? null : section.label,
+        items: section.items.map((item) => ({
           id: `hrms:${item.key}`,
           key: item.key,
           label: item.label,
           path: item.path,
           icon: item.icon,
         })),
-      }]
+      }))
     : [];
+
+  const erpGroups = buildNavigation(user);
+
+  const hrmsGroups =
+    hrmsSections.length > 0
+      ? [
+          {
+            key: HRMS_SIDEBAR_GROUP_KEY,
+            label: HRMS_SIDEBAR_GROUP_LABEL,
+            icon: "Users",
+            // Always a heading, even at one item: an HRMS entry loose among the
+            // ERP modules would read as an ERP module.
+            alwaysGrouped: true,
+            sections: hrmsSections,
+            items: hrmsSections.flatMap((s) => s.items),
+          },
+        ]
+      : [];
 
   /**
    * Administration sits at the BOTTOM of the rail, under everything it
@@ -198,16 +219,26 @@ export const Sidebar = () => {
   // having lost your place.
   const activeGroupKey = groups.find((g) => g.items.some((i) => i.id === activeItemId))?.key;
 
-  const linkClass = (isActive, indented) =>
-    `group relative flex items-center gap-3.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
-      indented && sidebarOpen ? "pl-9 pr-3 py-2" : "px-3 py-2.5"
-    } ${
+  /**
+   * One row of the rail.
+   *
+   * Flat, not nested: every item sits at the same left edge whether it belongs
+   * to an ERP module or to an HRMS section, so the rail reads as one navigation
+   * system rather than an application inside an application. Section membership
+   * is carried by the heading above the group, which is what a heading is for —
+   * it does not need to be restated as indentation on every child.
+   *
+   * `py-2` on `text-sm` gives a ~36px row; `px-3` is the 12px gutter the rest of
+   * the shell uses; `rounded-lg` is 8px.
+   */
+  const linkClass = (isActive) =>
+    `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors duration-150 ${
       isActive
-        ? "nav-active bg-white text-primary-800 shadow-md shadow-primary-950/30 border border-transparent"
-        : "text-primary-100 border border-transparent hover:bg-primary-400/20 hover:text-white hover:border-primary-400/30 hover:translate-x-1 hover:shadow-[0_0_15px_rgba(96,165,250,0.3)]"
+        ? "nav-active bg-white/10 text-white font-semibold"
+        : "text-primary-100/90 font-medium hover:bg-white/[0.07] hover:text-white"
     }`;
 
-  const renderItem = (item, indented) => {
+  const renderItem = (item) => {
     const Icon = iconFor(item.icon);
     const isActive = item.id === activeItemId;
     const badge =
@@ -218,14 +249,20 @@ export const Sidebar = () => {
         key={item.id}
         to={item.path}
         title={sidebarOpen ? undefined : item.label}
-        className={() => linkClass(isActive, indented)}
+        className={() => linkClass(isActive)}
       >
         {() => (
           <>
+            {/* The accent sits INSIDE the row's left edge, so it reads as a
+                border on the item rather than a marker floating in the gutter.
+                Rounded on the right only, like a tab stop. */}
             {isActive && (
-              <span className="absolute -left-3 top-1/2 -translate-y-1/2 h-6 w-1 rounded-full bg-white" />
+              <span
+                aria-hidden="true"
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-primary-300"
+              />
             )}
-            <Icon size={indented && sidebarOpen ? 16 : 20} className="shrink-0" />
+            <Icon size={18} className="shrink-0" />
             {sidebarOpen && <span className="flex-1 truncate">{item.label}</span>}
             {sidebarOpen && badge !== undefined && (
               <span
@@ -255,11 +292,18 @@ export const Sidebar = () => {
         {sidebarOpen ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
       </button>
 
-      <div className={`py-6 flex flex-col items-center overflow-hidden ${sidebarOpen ? "px-4" : "justify-center"}`}>
+      {/* Logo, then a rule. The same mark and the same link as before — only
+          the block around it is tighter, so the rail starts with navigation
+          rather than with a large empty band. */}
+      <div
+        className={`py-4 flex flex-col items-center overflow-hidden border-b border-white/10 ${
+          sidebarOpen ? "px-4" : "justify-center"
+        }`}
+      >
         <NavLink
           to={homePath}
           className={`bg-white rounded-xl flex items-center justify-center transition-all duration-300 ${
-            sidebarOpen ? "w-48 h-16 p-2" : "w-11 h-11 p-1"
+            sidebarOpen ? "w-44 h-14 p-2" : "w-11 h-11 p-1"
           }`}
         >
           <img
@@ -270,18 +314,33 @@ export const Sidebar = () => {
         </NavLink>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-6 px-3 space-y-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent]">
+      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent]">
         {groups.map((group) => {
           // A module with a single destination is rendered as a plain link.
           // A disclosure triangle that opens to reveal one row is a control
           // that costs a click and tells the user nothing.
           if (group.items.length === 1 && !group.alwaysGrouped) {
-            return renderItem({ ...group.items[0], label: group.label, icon: group.icon }, false);
+            return renderItem({ ...group.items[0], label: group.label, icon: group.icon });
           }
 
           const GroupIcon = iconFor(group.icon);
           const holdsActive = group.key === activeGroupKey;
-          const collapsed = !holdsActive && collapsedNavGroups.includes(group.key);
+
+          /**
+           * An explicit collapse is honoured, even for the group you are in.
+           *
+           * This used to read `!holdsActive && collapsedNavGroups.includes(...)`,
+           * so the group containing the current screen could never be shut. The
+           * intent was that a collapsed group must not hide your place — but the
+           * effect was a chevron that rendered, accepted the click, wrote it to
+           * the store, and then did nothing, which is the one thing a control
+           * must never do.
+           *
+           * The intent is kept a better way: a collapsed group that holds the
+           * current page carries the same accent an active row does (below), so
+           * you can still see where you are without the menu overriding you.
+           */
+          const collapsed = collapsedNavGroups.includes(group.key);
 
           // Collapsed rail: the group header has nowhere to put a label and its
           // children have no room to indent, so the items are shown flat.
@@ -289,36 +348,59 @@ export const Sidebar = () => {
             return (
               <div key={group.key} className="space-y-1">
                 <div className="h-px bg-white/10 my-2" />
-                {group.items.map((item) => renderItem(item, false))}
+                {group.items.map((item) => renderItem(item))}
               </div>
             );
           }
 
           return (
-            <div key={group.key} className="space-y-1">
+            <div key={group.key} className="space-y-0.5">
               <button
                 type="button"
                 onClick={() => toggleNavGroup(group.key)}
                 aria-expanded={!collapsed}
-                className={`w-full flex items-center gap-3.5 px-3 py-2.5 rounded-lg text-sm font-bold transition-all duration-200 focus:outline-none ${
+                className={`relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-bold transition-colors duration-150 focus:outline-none ${
                   holdsActive
-                    ? "text-white bg-white/10"
-                    : "text-primary-100 hover:bg-primary-400/20 hover:text-white"
+                    ? "text-white"
+                    : "text-primary-100 hover:bg-white/[0.07] hover:text-white"
                 }`}
               >
-                <GroupIcon size={20} className="shrink-0" />
+                {/* Shut, but this is where you are. The accent says so, so
+                    collapsing the group never costs you your place. */}
+                {holdsActive && collapsed && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-primary-300"
+                  />
+                )}
+                <GroupIcon size={18} className="shrink-0" />
                 <span className="flex-1 truncate text-left">{group.label}</span>
                 <ChevronDown
                   size={14}
-                  className={`shrink-0 transition-transform duration-200 ${collapsed ? "-rotate-90" : ""}`}
+                  className={`shrink-0 opacity-70 transition-transform duration-200 ${collapsed ? "-rotate-90" : ""}`}
                 />
               </button>
 
-              {!collapsed && (
-                <div className="space-y-1">
-                  {group.items.map((item) => renderItem(item, true))}
-                </div>
-              )}
+              {!collapsed &&
+                (group.sections
+                  ? /* Sectioned group (HRMS). The headings are quiet labels, not
+                       controls and not cards — they name the run of links under
+                       them and carry no interaction of their own. */
+                    group.sections.map((section) => (
+                      <div key={section.key} className="space-y-0.5 pt-2 first:pt-0.5">
+                        {section.label && (
+                          <p className="px-3 pt-1 pb-1 text-[10.5px] font-bold uppercase tracking-[0.08em] text-primary-200/55">
+                            {section.label}
+                          </p>
+                        )}
+                        {section.items.map((item) => renderItem(item))}
+                      </div>
+                    ))
+                  : (
+                      <div className="space-y-0.5">
+                        {group.items.map((item) => renderItem(item))}
+                      </div>
+                    ))}
             </div>
           );
         })}
