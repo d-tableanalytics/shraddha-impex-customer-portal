@@ -111,6 +111,36 @@ export const PERMISSIONS = {
   VIEW_PROFILE: 'view_profile',           // own profile and settings
   EDIT_PROFILE: 'edit_profile',           // change own profile and settings
   VIEW_HELP: 'view_help',                 // help and support
+
+  // ── HRMS ────────────────────────────────────────────────────────────────
+  //
+  // HRMS enforces module x action x scope, not these flat strings, so these
+  // keys authorise NOTHING inside HRMS by themselves. Each one is a way for the
+  // Super Admin to say "this role holds that HRMS role", and
+  // utils/hrmsAccessBridge.js is where the sentence is translated. The HRMS
+  // guard, the scopes and the matrix in shared/permissions/ are untouched.
+  //
+  // WHY A TIER PER HRMS ROLE, RATHER THAN ONE `access_hrms` SWITCH
+  //
+  // HRMS already models eight roles whose grants were ported wholesale from the
+  // reference and reviewed as a set - a payroll admin sees bank details, a
+  // recruiter sees candidates, an auditor sees everything and writes nothing.
+  // Re-deriving those distinctions as portal cells would be inventing a second,
+  // worse copy of a matrix that already exists. So the portal grants ENTRY at
+  // the granularity HRMS itself is built on, and HRMS keeps deciding what each
+  // tier means.
+  //
+  // None of these may begin with `hrms_`: that prefix is what isHrmsRoleKey()
+  // uses to recognise a role key inside User.roles[], and user.controller.js
+  // refuses extra grants that compile to one.
+  ACCESS_HRMS: 'access_hrms',                       // employee self-service
+  MANAGE_HRMS_TEAM: 'manage_hrms_team',             // reporting manager
+  MANAGE_HRMS_PEOPLE: 'manage_hrms_people',         // HR admin
+  MANAGE_HRMS_PAYROLL: 'manage_hrms_payroll',       // payroll admin
+  MANAGE_HRMS_HIRING: 'manage_hrms_hiring',         // recruiter
+  MANAGE_HRMS_ASSETS: 'manage_hrms_assets',         // IT / asset admin
+  AUDIT_HRMS: 'audit_hrms',                         // auditor, read-only
+  ADMINISTER_HRMS: 'administer_hrms',               // the whole of HRMS
 };
 
 /**
@@ -169,6 +199,40 @@ export const BASELINE_ROLE_PERMISSIONS = {
    */
   'Super Admin': ['*'],
   Admin: ['*'],
+
+  /**
+   * HR - the whole of HRMS, and the ordinary portal screens.
+   *
+   * The one new role. It holds ADMINISTER_HRMS, which the bridge reads as
+   * `hrms_super_admin`, so "full access to the HRMS module" is a single grant
+   * rather than eight that have to be kept in step.
+   *
+   * It deliberately holds NO sales, inventory or user-administration
+   * permission. HR is not a portal administrator: someone who needs both is
+   * given both, which is what the matrix is for.
+   *
+   * Note what this means for Super Admin and Admin, and that it is a DELIBERATE
+   * REVERSAL - of the stance in shared/permissions/matrix.js, which held that
+   * the portal's `Admin: ['*']` wildcard must not reach HRMS because it would
+   * silently hand every portal administrator payroll, PAN and bank-detail
+   * access. The requirement now asks for exactly that: "HR, Admin, and Super
+   * Admin should be able to access and use the complete HRMS functionality". So
+   * the wildcard satisfies ADMINISTER_HRMS like any other key, and all three
+   * roles come away with the same HRMS access.
+   *
+   * It is no longer SILENT, which was the actual objection: HRMS is a visible
+   * block of cells in the permission matrix, and an admin who does not want a
+   * role to have it can build a role without it.
+   *
+   * This is not a reversal of AD-3 itself. That decision record specifies
+   * effective permissions as the "union of all entries in roles[] PLUS role" -
+   * the implementation is what narrowed it to roles[] alone. The bridge
+   * restores the union AD-3 described.
+   */
+  HR: [
+    ...PORTAL_BASICS,
+    PERMISSIONS.ADMINISTER_HRMS,
+  ],
 
   Sales: [
     ...PORTAL_BASICS,

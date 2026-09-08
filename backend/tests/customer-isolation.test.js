@@ -95,7 +95,13 @@ test('AD-4: a Customer who has somehow been given HRMS role keys still gets noth
 });
 
 test('AD-4: portal staff without an HRMS role are refused too', async () => {
-  for (const role of ['Admin', 'Sales', 'Inventory Manager', 'Warehouse User', 'Management']) {
+  // 'Admin' was on this list and has been removed deliberately: HRMS is now
+  // grantable from the portal's Roles & Permissions matrix, and the wildcard
+  // roles - Admin and Super Admin - hold every tier, which is the requirement.
+  // The roles below hold no HRMS tier in their baseline, so the AD-4 choke
+  // point refuses them exactly as it always did. 'Import Team' is included
+  // because it was not covered before and is in the same position.
+  for (const role of ['Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Import Team']) {
     const staff = { _id: 'u-1', role, roles: [], status: 'Active' };
     await withServer(hrmsAppFor(staff), async (url) => {
       const res = await get(url, '/api/v1/hrms/me');
@@ -142,7 +148,13 @@ test('an employee reaches /me and their own module, but not org-wide routes', as
 });
 
 test('HR admin reaches the employee directory; payroll admin reaches payroll runs', async () => {
-  const hr = { _id: 'u-4', role: 'Admin', roles: [R.HR_ADMIN], status: 'Active' };
+  // The portal role here is deliberately NOT 'Admin'. Since HRMS was wired into
+  // the portal's Roles & Permissions matrix, a wildcard portal role implies
+  // every HRMS role (see utils/hrmsAccessBridge.js), which would hand this
+  // account payroll and make the separation-of-duties assertion below vacuous.
+  // 'Management' is a portal role that implies no HRMS access, so what is being
+  // tested is the HRMS role, which is the point of the test.
+  const hr = { _id: 'u-4', role: 'Management', roles: [R.HR_ADMIN], status: 'Active' };
   await withServer(hrmsAppFor(hr), async (url) => {
     assert.equal((await get(url, '/api/v1/hrms/employees')).status, 200);
     // Separation of duties: HR views payroll but never runs it.
@@ -159,7 +171,12 @@ test('HR admin reaches the employee directory; payroll admin reaches payroll run
 });
 
 test('/me reports the actor the frontend authorization layer needs', async () => {
-  const hr = { _id: 'u-6', role: 'Admin', roles: [R.HR_ADMIN, 'Admin'], status: 'Active' };
+  // 'Management' rather than 'Admin' for the same reason as the test above: a
+  // wildcard portal role now implies every HRMS role, and the assertion this
+  // test exists for is that a PORTAL key sitting in roles[] is filtered out of
+  // the actor. Keeping the portal role narrow is what keeps that assertion
+  // about filtering rather than about the bridge.
+  const hr = { _id: 'u-6', role: 'Management', roles: [R.HR_ADMIN, 'Admin'], status: 'Active' };
   await withServer(hrmsAppFor(hr), async (url) => {
     const { body } = await get(url, '/api/v1/hrms/me');
     const d = body.data;
@@ -172,6 +189,56 @@ test('/me reports the actor the frontend authorization layer needs', async () =>
     for (const g of d.permissions) {
       assert.ok(g.module && g.action && g.scope);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HRMS access granted through the portal's Roles & Permissions matrix
+//
+// The requirement that HR, Admin and Super Admin hold complete HRMS access, and
+// that an Admin can grant HRMS to any other role from the matrix. The grant is
+// translated into HRMS role keys by utils/hrmsAccessBridge.js and then behaves
+// exactly like a key written on the account, so these go over the same HTTP
+// chain as everything else in this file.
+// ---------------------------------------------------------------------------
+
+test('HR, Admin and Super Admin reach HRMS with no hrms_ key on the account', async () => {
+  for (const role of ['HR', 'Admin', 'Super Admin']) {
+    const user = { _id: `u-${role}`, role, roles: [], status: 'Active' };
+    await withServer(hrmsAppFor(user), async (url) => {
+      const me = await get(url, '/api/v1/hrms/me');
+      assert.equal(me.status, 200, `${role} must reach HRMS`);
+
+      // Every key the bridge supplies is an HRMS key. A portal role name must
+      // never leak into the actor - that rule is structural in buildHrmsActor
+      // and the bridge must not have found a way around it.
+      for (const key of me.body.data.roleKeys) {
+        assert.match(key, /^hrms_/, `${role} actor holds a non-HRMS key: ${key}`);
+      }
+
+      // "Complete HRMS functionality": the widest reads and the payroll run,
+      // which is the grant the HR_ADMIN role deliberately does NOT hold.
+      assert.equal((await get(url, '/api/v1/hrms/employees')).status, 200, `${role} directory`);
+      assert.equal((await get(url, '/api/v1/hrms/payroll/runs')).status, 200, `${role} payroll`);
+    });
+  }
+});
+
+test('a matrix grant cannot smuggle HRMS to a Customer (AD-4 holds)', async () => {
+  // The portal fence filters a portal-only role's permissions down to the
+  // customer_portal module before the bridge ever reads them, so there is no
+  // grant - role, matrix cell or per-user extra - that resolves an HRMS tier
+  // for a Customer.
+  const customer = {
+    _id: 'u-fenced',
+    role: 'Customer',
+    roles: [],
+    status: 'Active',
+    extraGrants: [{ module: 'hrms', submodule: 'administration', actions: ['view'] }],
+  };
+  await withServer(hrmsAppFor(customer), async (url) => {
+    assert.equal((await get(url, '/api/v1/hrms/me')).status, 403);
+    assert.equal((await get(url, '/api/v1/hrms/employees')).status, 403);
   });
 });
 

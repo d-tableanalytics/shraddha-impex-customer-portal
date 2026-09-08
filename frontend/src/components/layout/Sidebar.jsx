@@ -34,7 +34,7 @@ import { useUserStore } from "../../store/userStore";
 import { homePathFor } from "../../utils/permissions";
 import { buildNavigation } from "../../utils/navigation";
 import { useHrmsPermissions } from "../../hooks/useHrmsPermissions";
-import { visibleHrmsNavItems, groupHrmsNavItems } from "../hrms/navItems";
+import { visibleHrmsNavItems, hrmsSidebarGroup } from "../hrms/navItems";
 
 /**
  * Icon names travel from the backend registry as strings; this is where they
@@ -91,38 +91,74 @@ export const Sidebar = () => {
    * sidebar - the cart badge, which group is open - stay here.
    */
   /**
-   * HRMS navigation.
+   * HRMS navigation - ONE dropdown.
    *
    * Appended to the SAME group list the ERP menu produces, not rendered as a
    * second rail: HRMS items then take part in the same active-item contest,
    * the same collapse behaviour and the same renderer, so exactly one row is
    * ever lit and the two halves cannot drift apart visually.
    *
-   * Visibility comes from the HRMS evaluator, never from a portal permission.
-   * A group with no visible items is dropped by groupHrmsNavItems, so an
-   * account with no HRMS access - a customer, or a portal Admin who was never
-   * given an HRMS role - sees no trace of HRMS, not even a heading (AD-4).
+   * This used to append one top-level group PER HRMS group - HRMS, My Work,
+   * People & Org and HRMS Admin, four headings deep in a rail that already has
+   * the ERP's own modules in it. They are now a single "HRMS" group, so the
+   * whole system is one thing the user opens rather than four they have to
+   * recognise as related. The item ORDER is unchanged: hrmsSidebarGroup walks
+   * the same four groups in the same order and only drops the headings.
+   *
+   * Visibility comes from the HRMS evaluator, never from a portal permission -
+   * the portal's Roles & Permissions matrix decides which HRMS ROLES an account
+   * holds (see backend/utils/hrmsAccessBridge.js), and the evaluator then
+   * decides what those roles can see, exactly as it did before. An account with
+   * no HRMS access - a customer, or an admin on a role without the HRMS module
+   * - gets null back and sees no trace of HRMS, not even a heading (AD-4).
    */
   const { can, implementedModules, hasAccess: hasHrmsAccess } = useHrmsPermissions();
-  const hrmsGroups = hasHrmsAccess
-    ? groupHrmsNavItems(visibleHrmsNavItems(can, implementedModules)).map((group) => ({
-        key: `hrms:${group.group}`,
-        label: group.label,
+  const hrmsGroup = hasHrmsAccess
+    ? hrmsSidebarGroup(visibleHrmsNavItems(can, implementedModules))
+    : null;
+
+  const erpGroups = buildNavigation(user);
+
+  const hrmsGroups = hrmsGroup
+    ? [{
+        key: hrmsGroup.key,
+        label: hrmsGroup.label,
         icon: "Users",
         // Always a heading, even at one item: an HRMS entry loose among the
         // ERP modules would read as an ERP module.
         alwaysGrouped: true,
-        items: group.items.map((item) => ({
+        items: hrmsGroup.items.map((item) => ({
           id: `hrms:${item.key}`,
           key: item.key,
           label: item.label,
           path: item.path,
           icon: item.icon,
         })),
-      }))
+      }]
     : [];
 
-  const groups = [...buildNavigation(user), ...hrmsGroups];
+  /**
+   * Administration sits at the BOTTOM of the rail, under everything it
+   * administers.
+   *
+   * It has to be done here rather than with the registry's `order`, because the
+   * two halves of this menu are ordered by different things. The ERP groups
+   * arrive from the server already sorted by `order`; the HRMS group is built
+   * on the client from the HRMS actor and knows nothing about that scale, so it
+   * can only ever be concatenated - which put it after Administration however
+   * the registry was numbered.
+   *
+   * Moving the one group by key is therefore the honest fix: it says what it
+   * means, it survives a renumbering, and it does nothing at all for an account
+   * that cannot see Administration in the first place.
+   */
+  const isAdministration = (group) => group.key === "administration";
+
+  const groups = [
+    ...erpGroups.filter((g) => !isAdministration(g)),
+    ...hrmsGroups,
+    ...erpGroups.filter(isAdministration),
+  ];
 
   // Import Team's home is the inventory dashboard, so "/" only ever redirects
   // for them. Every flat path below is the one the user is actually taken to.

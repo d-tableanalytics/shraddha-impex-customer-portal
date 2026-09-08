@@ -68,17 +68,19 @@ const slugify = (name) =>
 const ORDER = {
   'Super Admin': 0,
   Admin: 1,
-  Sales: 2,
-  'Inventory Manager': 3,
-  'Warehouse User': 4,
-  Management: 5,
-  'Import Team': 6,
-  Customer: 7,
+  HR: 2,
+  Sales: 3,
+  'Inventory Manager': 4,
+  'Warehouse User': 5,
+  Management: 6,
+  'Import Team': 7,
+  Customer: 8,
 };
 
 const DESCRIPTIONS = {
   'Super Admin': 'Full, permanent access to the entire ERP. Cannot be restricted.',
   Admin: 'Full, permanent access to the entire ERP. The original name for Super Admin.',
+  HR: 'The whole of HRMS - employees, attendance, leave, payroll, hiring, performance and HR settings. Holds no sales, inventory or user-administration access.',
   Sales: 'Works the sales desk: reviews bookings, amends them before the PO, raises the PO, onboards customers.',
   'Inventory Manager': 'Owns stock: master data, receipts, issues, counts, transfers and adjustments.',
   'Warehouse User': 'Floor operator: receives and counts stock at their own site.',
@@ -129,7 +131,14 @@ export const seedDefaultRoles = async () => {
       if (!existing.isSystem) patch.isSystem = true;
       if (existing.isSuperAdmin !== isSuperAdmin) patch.isSuperAdmin = isSuperAdmin;
       if (name === 'Customer' && !existing.portalOnly) patch.portalOnly = true;
-      if (existing.order == null || existing.order === 100) patch.order = ORDER[name] ?? 100;
+      // Display order is kept in step with the table above rather than only
+      // filled in when missing. Inserting HR renumbered the roles below it, and
+      // a database seeded before that would otherwise sort two roles into the
+      // same slot. Safe to overwrite because `order` is presentation only and
+      // no API path lets anyone set it - see role.controller.js, which reads it
+      // and never writes it. Nothing a Super Admin configured is lost.
+      const desiredOrder = ORDER[name] ?? 100;
+      if (existing.order !== desiredOrder) patch.order = desiredOrder;
       if (!existing.description) patch.description = DESCRIPTIONS[name] || '';
 
       // Rule 2: only a role with an empty matrix gets one written.

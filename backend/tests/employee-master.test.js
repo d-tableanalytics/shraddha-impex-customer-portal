@@ -472,7 +472,19 @@ function employeesAppFor(user) {
 }
 
 const CUSTOMER = { _id: oid(), role: 'Customer', roles: [], status: 'Active' };
-const PORTAL_ADMIN = { _id: oid(), role: 'Admin', roles: [], status: 'Active' };
+/**
+ * A portal account holding no HRMS access.
+ *
+ * This was `role: 'Admin'`. It cannot be any more: HRMS is wired into the
+ * portal's Roles & Permissions matrix, and the wildcard roles - Admin and Super
+ * Admin - now imply every HRMS role, which is the requirement. 'Warehouse User'
+ * is a portal role whose baseline holds no HRMS tier, so it still tests the
+ * thing this fixture was for: an authenticated portal account that the AD-4
+ * choke point must refuse.
+ *
+ * That a portal Admin now DOES reach HRMS is asserted in customer-isolation.test.js.
+ */
+const PORTAL_NON_HRMS = { _id: oid(), role: 'Warehouse User', roles: [], status: 'Active' };
 const EMPLOYEE_USER = { _id: oid(), role: 'Management', roles: [R.EMPLOYEE], status: 'Active' };
 
 test('a Customer cannot reach any Employee endpoint', async () => {
@@ -487,8 +499,8 @@ test('a Customer cannot reach any Employee endpoint', async () => {
   });
 });
 
-test('a portal Admin with no HRMS role is refused too', async () => {
-  await withServer(employeesAppFor(PORTAL_ADMIN), async (url) => {
+test('a portal account with no HRMS access is refused too', async () => {
+  await withServer(employeesAppFor(PORTAL_NON_HRMS), async (url) => {
     assert.equal((await get(url, '/api/v1/hrms/employees')).status, 403);
   });
 });

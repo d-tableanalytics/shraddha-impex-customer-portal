@@ -160,19 +160,38 @@ test('the schema hook refuses a portal-only account holding an HRMS role', async
 // ---------------------------------------------------------------------------
 
 test('extraGrants cannot carry an HRMS role, structurally', async () => {
-  const { validateGrants, compileGrants, allRegistryKeys } = await import(
+  const { validateGrants, compileGrants, allRegistryKeys, keysForGrant } = await import(
     '../config/moduleRegistry.js'
   );
 
-  // Nothing in the ERP registry compiles to an hrms_ key, so the matrix has no
-  // vocabulary for HRMS at all. That is what makes updateUserAccess safe.
+  /**
+   * THE INVARIANT, WHICH IS UNCHANGED.
+   *
+   * Nothing in the ERP registry compiles to an `hrms_` key. That is what makes
+   * updateUserAccess safe: it refuses any grant compiling to a role key, and
+   * this is the property that stops the matrix ever producing one.
+   *
+   * The registry DOES now carry an `hrms` module - that is how a Super Admin
+   * grants HRMS access. Its cells compile to portal permission strings
+   * (`access_hrms`, `administer_hrms`, ...), never to role keys. The
+   * translation from those strings to `hrms_*` roles happens in
+   * utils/hrmsAccessBridge.js, behind the portal fence, and not here.
+   */
   for (const key of allRegistryKeys()) {
     assert.doesNotMatch(String(key), /^hrms_/, `the registry must not expose ${key}`);
   }
 
-  // And a hand-crafted grant naming an HRMS module is rejected outright.
-  const { error } = validateGrants([{ module: 'hrms', submodule: 'payroll', actions: ['view'] }]);
+  // The HRMS cells exist, and every one of them compiles to portal strings.
+  const hrmsKeys = keysForGrant('hrms', 'administration', 'view');
+  assert.ok(hrmsKeys.length > 0, 'the hrms module must be grantable');
+  for (const key of hrmsKeys) assert.doesNotMatch(String(key), /^hrms_/);
+
+  // A grant naming a module that is not in the registry is still rejected
+  // outright, rather than silently dropped.
+  const { error } = validateGrants([{ module: 'not_a_module', submodule: 'x', actions: ['view'] }]);
   assert.ok(error, 'a grant outside the registry must be refused');
+  // As is a real module with a sub-module that does not exist on it.
+  assert.ok(validateGrants([{ module: 'hrms', submodule: 'nope', actions: ['view'] }]).error);
   assert.deepEqual([...compileGrants([])], []);
 });
 

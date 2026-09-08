@@ -415,6 +415,89 @@ export const MODULES = [
    * permission cannot express. Granting the module here is granting entry to
    * the screen, not blanket authority over every account in it.
    */
+  /**
+   * HRMS.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * EVERY SUB-MODULE HERE IS `path: null`, AND THAT IS THE WHOLE DESIGN
+   * ─────────────────────────────────────────────────────────────────────────
+   *
+   * HRMS has its own navigation, driven by its own evaluator against the actor
+   * the server resolves - twenty-odd screens whose visibility depends on
+   * module x action x scope, which a portal `view` cell cannot express. Giving
+   * these cells a path would put a SECOND set of HRMS links in the sidebar,
+   * computed a different way, free to disagree with the first.
+   *
+   * So they are capabilities, exactly as stock receipts and box numbers are:
+   * the matrix grants ENTRY, and the HRMS nav decides what entry shows you.
+   *
+   * `view` is the only action offered. Ticking a tier means "this role holds
+   * that HRMS role"; what the tier may then create, edit, delete or approve is
+   * already written down in shared/permissions/matrix.js and is not the
+   * portal's to re-decide. Offering the other four here would be four checkboxes
+   * that change nothing - the lie the header of this file warns about.
+   *
+   * Sub-modules are ordered by breadth: self-service, then the four functional
+   * administrations, then read-only oversight, then everything.
+   */
+  {
+    key: 'hrms',
+    label: 'HRMS',
+    description: 'Human resources: self-service, people operations, payroll, hiring and HR administration.',
+    icon: 'Users',
+    order: 45,
+    submodules: [
+      {
+        key: 'access',
+        label: 'HRMS Access (Employee Self-Service)',
+        path: null,
+        actions: { view: ['access_hrms'] },
+      },
+      {
+        key: 'team',
+        label: 'Team Management (Reporting Manager)',
+        path: null,
+        actions: { view: ['manage_hrms_team'] },
+      },
+      {
+        key: 'people',
+        label: 'People Operations (HR Admin)',
+        path: null,
+        actions: { view: ['manage_hrms_people'] },
+      },
+      {
+        key: 'payroll',
+        label: 'Payroll Administration',
+        path: null,
+        actions: { view: ['manage_hrms_payroll'] },
+      },
+      {
+        key: 'hiring',
+        label: 'Recruitment',
+        path: null,
+        actions: { view: ['manage_hrms_hiring'] },
+      },
+      {
+        key: 'assets',
+        label: 'IT & Asset Administration',
+        path: null,
+        actions: { view: ['manage_hrms_assets'] },
+      },
+      {
+        key: 'audit',
+        label: 'HR Audit (read-only)',
+        path: null,
+        actions: { view: ['audit_hrms'] },
+      },
+      {
+        key: 'administration',
+        label: 'Full HRMS Administration',
+        path: null,
+        actions: { view: ['administer_hrms'] },
+      },
+    ],
+  },
+
   {
     key: 'administration',
     label: 'Administration',

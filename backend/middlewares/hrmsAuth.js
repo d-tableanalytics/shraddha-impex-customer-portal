@@ -22,7 +22,8 @@ import {
   hasHrmsPermission,
   ANONYMOUS_HRMS_ACTOR,
 } from '../shared/permissions/has-permission.js';
-import { hasHrmsRole } from '../shared/permissions/assignment.js';
+import { effectiveHrmsRoleKeys } from '../utils/hrmsAccessBridge.js';
+import { isHrmsRoleKey } from '../shared/permissions/constants.js';
 
 // ---------------------------------------------------------------------------
 // Extension points
@@ -73,6 +74,20 @@ export function __resetHrmsAuthRegistry() {
  * - and the reason portal traffic pays nothing for HRMS being installed.
  * (documentation/architecture-decisions.md AD-3 assumed one extra lookup per
  * request; making it conditional removes that cost from the portal entirely.)
+ *
+ * ---------------------------------------------------------------------------
+ * WHERE THE ROLE KEYS NOW COME FROM
+ * ---------------------------------------------------------------------------
+ * `effectiveHrmsRoleKeys` replaces the bare `user.roles` this used to pass: the
+ * explicit keys on the account, UNIONED with the ones the portal's Roles &
+ * Permissions matrix implies. The union is what makes the matrix able to grant
+ * HRMS access without touching the employee record, and what makes it unable to
+ * take away access the employee record already gave.
+ *
+ * Everything below this line is unchanged. The keys still reach the same
+ * `buildHrmsActor`, which still filters them with `isHrmsRoleKey` and still
+ * resolves them against the same matrix, so no HRMS grant, scope or guard means
+ * anything different than it did before. See utils/hrmsAccessBridge.js.
  */
 export async function attachHrmsActor(req, res, next) {
   try {
@@ -83,8 +98,14 @@ export async function attachHrmsActor(req, res, next) {
       return next();
     }
 
-    if (!hasHrmsRole(user)) {
-      // No HRMS role -> no grants, and no employee lookup.
+    // Resolved ONCE and reused below. The gate and the actor need the same
+    // answer, and asking twice would put the tier scan on every HRMS request
+    // for no benefit.
+    const roleKeys = effectiveHrmsRoleKeys(user);
+
+    if (!roleKeys.some(isHrmsRoleKey)) {
+      // No HRMS role, and none implied by their portal access -> no grants,
+      // and no employee lookup.
       req.hrmsActor = buildHrmsActor({
         userId: user._id ?? user.id,
         roles: [],
@@ -100,7 +121,7 @@ export async function attachHrmsActor(req, res, next) {
 
     req.hrmsActor = buildHrmsActor({
       userId: user._id ?? user.id,
-      roles: user.roles,
+      roles: roleKeys,
       legacyRole: user.role,
       employee,
     });

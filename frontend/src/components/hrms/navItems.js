@@ -343,6 +343,58 @@ export function groupHrmsNavItems(items) {
   })).filter((g) => g.items.length > 0);
 }
 
+/** The key the sidebar identifies the single HRMS group by. */
+export const HRMS_SIDEBAR_GROUP_KEY = "hrms";
+
+/** What the single HRMS dropdown is called. */
+export const HRMS_SIDEBAR_GROUP_LABEL = "HRMS";
+
+/**
+ * The visible items as ONE sidebar group, or null when there are none.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS ALONGSIDE groupHrmsNavItems RATHER THAN REPLACING IT
+ * ---------------------------------------------------------------------------
+ * `groupHrmsNavItems` returns the reference's four functional groups - Core,
+ * My Work, People & Org, Admin - and the sidebar used to render each as its own
+ * top-level entry. Four HRMS headings competing with the ERP's own modules made
+ * HRMS read as four unrelated features rather than one system, which is what the
+ * requirement to put it behind a single dropdown is about.
+ *
+ * The four-group function stays exactly as it was: it is exported from
+ * `components/hrms/index.js`, it is what the nav tests exercise, and the
+ * grouping is still the right shape for any screen that wants to SHOW the
+ * distinction between "my own records" and "other people's". Only the sidebar's
+ * presentation changes, so this is a second view over the same filtered list
+ * rather than an edit to the first.
+ *
+ * ---------------------------------------------------------------------------
+ * ORDER IS PRESERVED, THE HEADINGS ARE NOT
+ * ---------------------------------------------------------------------------
+ * Items come out in HRMS_NAV_GROUP_ORDER - dashboard and inbox first, then the
+ * self-service block, then people and org, then the admin screens - so the
+ * dropdown reads in the same sequence the four groups did. What is gone is the
+ * four headings, not the thinking behind them.
+ *
+ * Returns null rather than an empty group so an account with no HRMS access
+ * shows no trace of HRMS, not even a collapsed heading (AD-4).
+ *
+ * @param {Array} items  from visibleHrmsNavItems
+ */
+export function hrmsSidebarGroup(items) {
+  const ordered = HRMS_NAV_GROUP_ORDER.flatMap((group) =>
+    items.filter((i) => i.group === group),
+  );
+
+  if (ordered.length === 0) return null;
+
+  return {
+    key: HRMS_SIDEBAR_GROUP_KEY,
+    label: HRMS_SIDEBAR_GROUP_LABEL,
+    items: ordered,
+  };
+}
+
 /**
  * Modules the actor is entitled to but which are not built yet.
  *

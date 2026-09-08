@@ -66,6 +66,23 @@ export const PERMISSIONS = {
   VIEW_PROFILE: "view_profile",
   EDIT_PROFILE: "edit_profile",
   VIEW_HELP: "view_help",
+
+  // HRMS entry tiers. MIRRORS backend/config/permissions.js.
+  //
+  // These decide which HRMS ROLES an account holds, not what it may do once it
+  // holds them - that stays with the HRMS evaluator in @shared/permissions,
+  // which useHrmsPermissions reads from the actor the server resolved. So no
+  // HRMS screen should ever ask about a key below; ask `can(module, action,
+  // scope)` instead. They are here so the permission matrix and the role
+  // fallback can name them.
+  ACCESS_HRMS: "access_hrms",
+  MANAGE_HRMS_TEAM: "manage_hrms_team",
+  MANAGE_HRMS_PEOPLE: "manage_hrms_people",
+  MANAGE_HRMS_PAYROLL: "manage_hrms_payroll",
+  MANAGE_HRMS_HIRING: "manage_hrms_hiring",
+  MANAGE_HRMS_ASSETS: "manage_hrms_assets",
+  AUDIT_HRMS: "audit_hrms",
+  ADMINISTER_HRMS: "administer_hrms",
 };
 
 /** Open to any signed-in account. Mirrors PORTAL_BASICS on the server. */
@@ -85,6 +102,15 @@ const PORTAL_BASICS = [
 const FALLBACK_ROLE_PERMISSIONS = {
   "Super Admin": ["*"],
   Admin: ["*"],
+  /**
+   * HR - the whole of HRMS, and the ordinary portal screens.
+   *
+   * ADMINISTER_HRMS is the only non-basic key: the HRMS nav and every HRMS
+   * screen are driven by the HRMS actor, not by this list, so mirroring the
+   * eight tiers here would add nothing the sidebar can use. Mirrors
+   * backend/config/permissions.js, where the reasoning is written out.
+   */
+  HR: [...PORTAL_BASICS, PERMISSIONS.ADMINISTER_HRMS],
   Sales: [
     ...PORTAL_BASICS,
     PERMISSIONS.VIEW_ORDERS,

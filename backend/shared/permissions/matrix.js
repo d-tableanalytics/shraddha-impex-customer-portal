@@ -18,14 +18,33 @@
  * Customer holds none of them.
  *
  * ---------------------------------------------------------------------------
- * Portal roles are deliberately absent
+ * Portal roles are deliberately absent FROM THIS TABLE
  * ---------------------------------------------------------------------------
  * Admin, Sales, Inventory Manager, Warehouse User, Management and Customer are
- * NOT in this table and receive NO HRMS permissions. In particular the portal's
- * `Admin: ['*']` wildcard does not reach HRMS: mapping it across would silently
- * hand every portal administrator full payroll, PAN and bank-detail access.
+ * not keys here, and this file maps nothing but `hrms_*` roles. That has not
+ * changed and should not: what an HRMS role may do is decided here, in one
+ * reviewed table, in HRMS's own vocabulary.
  *
- * HRMS access requires an explicit `hrms_*` entry in `User.roles[]` (AD-3).
+ * WHAT HAS CHANGED IS HOW AN ACCOUNT COMES TO HOLD ONE.
+ *
+ * This header used to add that the portal's `Admin: ['*']` wildcard "does not
+ * reach HRMS", because mapping it across would silently hand every portal
+ * administrator full payroll, PAN and bank-detail access. That is no longer
+ * true, and the requirement it answered has been superseded: HR, Admin and
+ * Super Admin are now required to hold complete HRMS access.
+ *
+ * They acquire it the same way anyone does - by holding `hrms_*` role keys.
+ * `backend/utils/hrmsAccessBridge.js` derives those keys from the portal's
+ * Roles & Permissions matrix and unions them into `User.roles[]` before
+ * `buildHrmsActor` ever sees them, so every grant still comes from this table
+ * and nothing downstream can tell an implied role key from an explicit one.
+ *
+ * The objection that comment recorded was to access granted SILENTLY. It is not
+ * silent now: HRMS is a labelled block of cells in the permission matrix that a
+ * Super Admin ticks deliberately and can withhold.
+ *
+ * AD-4 is untouched. A portal-only role still resolves no permission outside
+ * the customer portal, so no Customer can reach a key the bridge reads.
  */
 
 import { HRMS_MODULES as M, HRMS_ACTIONS as A, SCOPES as S, HRMS_ROLES as R, permission as p } from './constants.js';

@@ -24,5 +24,8 @@ export {
   HRMS_NAV_GROUP_ORDER,
   visibleHrmsNavItems,
   groupHrmsNavItems,
+  hrmsSidebarGroup,
+  HRMS_SIDEBAR_GROUP_KEY,
+  HRMS_SIDEBAR_GROUP_LABEL,
   plannedHrmsNavItems,
 } from "./navItems";
