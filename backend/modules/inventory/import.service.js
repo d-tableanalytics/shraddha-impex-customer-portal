@@ -22,6 +22,7 @@ import { readerFor, MAX_ROWS } from './import.parser.js';
 import { postBatch } from './ledger.service.js';
 import { applyMovements, syncLegacyStock } from './balance.service.js';
 import { recomputeHealthForSkus } from './health.service.js';
+import { registerMsilCodes } from '../../utils/msilRegistry.js';
 import { processAvailableIndents } from './indentAvailability.service.js';
 import { resolveConfig } from './config.service.js';
 import { DEFAULT_REASON_CODE } from './adjustment.service.js';
@@ -993,6 +994,23 @@ const processMaster = async ({ rows, job, chunkIndex, actor, req }) => {
   if (affectedSkus.length) await recomputeHealthForSkus(affectedSkus);
 
   const landedRows = new Set(successes.map((s) => s.rowNumber));
+
+  /**
+   * MSIL codes this chunk put on a SKU have to reach the allowlist too.
+   *
+   * Booking checks `msilcodes`, not the product, so a sheet that introduces a
+   * new MSIL code leaves those SKUs unorderable by the customers the code is
+   * for — failing with "MSIL Code ... is inactive or does not exist" long after
+   * the import reported success. Registering only ADDS a code; one set to
+   * Inactive on purpose stays that way. See utils/msilRegistry.js.
+   *
+   * Read off the rows that actually LANDED, so a failed row never registers a
+   * code for a SKU that was not written.
+   */
+  const importedMsilCodes = rows
+    .filter((r) => landedRows.has(r.rowNumber) && r.data?.msilCode)
+    .map((r) => r.data.msilCode);
+  if (importedMsilCodes.length) await registerMsilCodes(importedMsilCodes);
 
   // NEW SKUs this chunk created that were NOT configured before the import ran.
   // `isNewSku` was decided during validation, against the catalogue as it stood

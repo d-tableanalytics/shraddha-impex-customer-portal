@@ -10,6 +10,7 @@ import InventoryAlert from '../../models/InventoryAlert.js';
 import ProductDetail from '../../models/ProductDetail.js';
 import { removeImageFile } from '../../middlewares/productImageUpload.js';
 import { ALL_BRANDS } from '../../utils/brandAccess.js';
+import { registerMsilCode } from '../../utils/msilRegistry.js';
 
 /**
  * SKU lifecycle — creating a catalogue entry and removing one.
@@ -225,7 +226,22 @@ export const createSku = async ({ payload = {}, actor, allowedBrandList }) => {
     throw error;
   }
 
-  return { product: created.toObject(), brand, warnings: availability.otherBrands.map((o) =>
+  /**
+   * A new MSIL code has to be registered, or the SKU is born unbookable.
+   *
+   * Booking checks the `msilcodes` allowlist, not the product — so a SKU
+   * created with a code nobody has registered fails with "MSIL Code ... is
+   * inactive or does not exist" the first time an MSIL customer orders it. The
+   * SKU is fine; the allowlist has never heard of the code. See
+   * utils/msilRegistry.js.
+   *
+   * After the product is created, and never fatal: the SKU exists either way,
+   * and scripts/sync-msil.js repairs a gap. Before it would have meant
+   * registering a code for a SKU that then failed its unique index.
+   */
+  const msil = await registerMsilCode(created.msilCode);
+
+  return { product: created.toObject(), brand, msilRegistered: msil.added, warnings: availability.otherBrands.map((o) =>
     `${o.skuCode} also exists under ${o.brand}. A sheet that names this SKU without a brand `
     + 'cannot say which is meant, and the import will report it as ambiguous.') };
 };

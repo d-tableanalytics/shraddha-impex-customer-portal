@@ -4,6 +4,7 @@ import StockHealth from '../../models/StockHealth.js';
 import { allowedBrands, canAccessBrand } from '../../utils/brandAccess.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { recordAudit } from '../../utils/auditLog.js';
+import { registerMsilCode } from '../../utils/msilRegistry.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
 import { prefixMatch } from '../../utils/searchQuery.js';
 import { recomputeHealthForSkus } from './health.service.js';
@@ -695,6 +696,12 @@ export const updatePlanning = async (req, res, next) => {
       { $set: updates },
       { new: true, runValidators: true },
     ).lean();
+
+    // A code moved onto this SKU has to be on the allowlist booking checks, or
+    // the edit leaves the SKU unorderable by the very customers the code is
+    // for. Registering only ADDS: a code somebody deliberately set to Inactive
+    // stays Inactive. See utils/msilRegistry.js.
+    if (updates.msilCode) await registerMsilCode(updated.msilCode);
 
     await recordAudit(
       req.user,
