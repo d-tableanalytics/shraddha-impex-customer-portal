@@ -24,6 +24,33 @@ import { LoadingSpinner } from "../ui/LoadingSpinner";
  * Loading and error are handled here rather than in each page because every
  * page needs them and each would otherwise invent its own.
  */
+
+/**
+ * A breadcrumb is shown only once it says something the page does not.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THERE IS A THRESHOLD AT ALL
+ * ---------------------------------------------------------------------------
+ * No other module in the portal has a breadcrumb. On a TOP-LEVEL HRMS page the
+ * trail reads "HRMS > Assets" directly above a title that reads "Assets",
+ * beside a sidebar already highlighting Assets - three statements of the same
+ * fact, and the one visible thing that made HRMS pages not look like Sales,
+ * Inventory or Reports pages.
+ *
+ * On a nested page it is doing real work: "HRMS > Employees > Priya Sharma >
+ * Edit" is the only way back up, and the portal has no equivalent screen to be
+ * inconsistent with.
+ *
+ * So the trail earns its place by DEPTH rather than being all-or-nothing. That
+ * keeps the reasoning recorded on Breadcrumb.jsx - HRMS is a section inside a
+ * larger portal, so a user needs to see where they are - exactly where that
+ * reasoning still applies, and drops it where it had become decoration.
+ *
+ * Two crumbs is the redundant case: every one of them is
+ * `[{ HRMS }, { <this module> }]`. Pages pass their trail unconditionally and
+ * need no edit; deepening a page's trail turns its breadcrumb on by itself.
+ */
+const MIN_MEANINGFUL_CRUMBS = 3;
 export function HrmsPageLayout({
   title,
   subtitle,
@@ -40,7 +67,7 @@ export function HrmsPageLayout({
 }) {
   return (
     <div className={twMerge("flex flex-col", className)}>
-      <Breadcrumb items={breadcrumbs} />
+      {breadcrumbs.length >= MIN_MEANINGFUL_CRUMBS && <Breadcrumb items={breadcrumbs} />}
 
       <PageHeader title={title} subtitle={subtitle} actions={actions} />
 

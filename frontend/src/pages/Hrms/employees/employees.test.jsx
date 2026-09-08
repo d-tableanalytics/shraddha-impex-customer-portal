@@ -501,6 +501,18 @@ describe("employee profile", () => {
     return screen.findAllByText("Priya Sharma");
   };
 
+  it("keeps its breadcrumb — a nested page is the case that needs one", async () => {
+    await open([R.HR_ADMIN]);
+
+    // The other half of the rule in HrmsPageLayout. Top-level HRMS pages drop
+    // the trail because it only repeated the title (see assets.test.jsx), but
+    // "HRMS > Employees > Priya Sharma" is the only way back up from here and
+    // the portal has no equivalent screen to be inconsistent with.
+    const trail = screen.getByRole("navigation", { name: /breadcrumb/i });
+    expect(trail).toBeTruthy();
+    expect(within(trail).getByText("Employees")).toBeTruthy();
+  });
+
   it("shows the job, contact and family details", async () => {
     await open([R.HR_ADMIN]);
 

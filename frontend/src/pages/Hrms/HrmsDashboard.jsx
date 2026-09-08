@@ -151,8 +151,15 @@ export function HrmsDashboard() {
       <div className="flex flex-col gap-6">
         {/* ---------------------------------------------------------------
             Hero. Local time and the viewer's own calendar — never UTC.
+
+            The gradient stops are the SIDEBAR's, copied from
+            components/layout/Sidebar.jsx. This banner used to run
+            `primary-800 -> primary-700 -> primary-500`, finishing on #3b82f6,
+            a much brighter blue than anything else on screen — and it sits
+            directly beside the rail, which made the two read as two different
+            blues instead of one brand colour. Same stops, same material.
         ---------------------------------------------------------------- */}
-        <section className="relative overflow-hidden rounded-2xl px-6 py-6 sm:px-8 sm:py-7 bg-gradient-to-br from-primary-800 via-primary-700 to-primary-500 text-white shadow-enterprise">
+        <section className="relative overflow-hidden rounded-2xl px-6 py-6 sm:px-8 sm:py-7 bg-gradient-to-br from-slate-800 via-primary-900 to-slate-900 text-white shadow-enterprise">
           <div className="relative flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0">
               <span className="shrink-0 inline-flex items-center justify-center w-14 h-14 rounded-full bg-white/15 border-2 border-white/25 text-xl font-bold">

@@ -138,12 +138,17 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("the exits page", () => {
-  it("renders its title and breadcrumb", async () => {
+  it("renders its title, and no breadcrumb - a top-level page needs none", async () => {
     signIn([R.EMPLOYEE]);
     at("/hrms/exits/mine");
 
     expect(await screen.findByRole("heading", { name: "Exits" })).toBeTruthy();
-    expect(screen.getByText("HRMS")).toBeTruthy();
+    // A top-level HRMS page carries no breadcrumb: "HRMS > X" above a heading
+    // that already reads "X", beside a sidebar already highlighting X, is the
+    // same fact three times - and no other module in the portal has one.
+    // HrmsPageLayout renders the trail only once it goes deeper than
+    // "HRMS > <module>"; the nested employee pages still get theirs.
+    expect(screen.queryByRole("navigation", { name: /breadcrumb/i })).toBeNull();
   });
 
   it("an employee gets My Exit and the Clearance Queue only", async () => {

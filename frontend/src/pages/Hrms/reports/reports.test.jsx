@@ -173,12 +173,17 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("the reports page", () => {
-  it("renders its title and breadcrumb", async () => {
+  it("renders its title, and no breadcrumb - a top-level page needs none", async () => {
     signIn([R.SUPER_ADMIN]);
     at("/hrms/reports");
 
     expect(await screen.findByRole("heading", { name: "Reports" })).toBeTruthy();
-    expect(screen.getByText("HRMS")).toBeTruthy();
+    // A top-level HRMS page carries no breadcrumb: "HRMS > X" above a heading
+    // that already reads "X", beside a sidebar already highlighting X, is the
+    // same fact three times - and no other module in the portal has one.
+    // HrmsPageLayout renders the trail only once it goes deeper than
+    // "HRMS > <module>"; the nested employee pages still get theirs.
+    expect(screen.queryByRole("navigation", { name: /breadcrumb/i })).toBeNull();
   });
 
   it("groups the catalogue by category, as the reference does", async () => {

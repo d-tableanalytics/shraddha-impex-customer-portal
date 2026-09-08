@@ -117,13 +117,18 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("the page shell", () => {
-  it("renders the title, subtitle and breadcrumb", async () => {
+  it("renders the title and subtitle, and no breadcrumb", async () => {
     signIn([R.HR_ADMIN]);
     at("/hrms/org/departments");
 
     expect(await screen.findByRole("heading", { name: "Org Structure" })).toBeTruthy();
     expect(screen.getByText(/Reporting hierarchy and organizational configuration/i)).toBeTruthy();
-    expect(screen.getByText("HRMS")).toBeTruthy();
+    // A top-level HRMS page carries no breadcrumb: "HRMS > X" above a heading
+    // that already reads "X", beside a sidebar already highlighting X, is the
+    // same fact three times - and no other module in the portal has one.
+    // HrmsPageLayout renders the trail only once it goes deeper than
+    // "HRMS > <module>"; the nested employee pages still get theirs.
+    expect(screen.queryByRole("navigation", { name: /breadcrumb/i })).toBeNull();
   });
 
   it("shows all four tabs an editor gets, in the reference's order", async () => {

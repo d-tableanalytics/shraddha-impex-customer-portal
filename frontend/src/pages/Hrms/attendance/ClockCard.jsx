@@ -146,12 +146,29 @@ export function ClockCard({ record, consent, onPunched, onError }) {
   const inLocation = formatLocation(record?.clockInCapture);
   const outLocation = formatLocation(record?.clockOutCapture);
 
+  /**
+   * The idle (ready-to-clock-in) blue is the SIDEBAR's blue, stop for stop.
+   *
+   * It used to run `primary-800 -> primary-600 -> primary-400`, ending on
+   * #60a5fa - a vivid mid-blue several steps lighter than anything else in the
+   * portal. Against the rail's deep navy immediately to its left it read as a
+   * different blue rather than the same brand colour, which is what it is.
+   *
+   * `from-slate-800 via-primary-900 to-slate-900` is copied from
+   * components/layout/Sidebar.jsx. Keeping the stops identical is the point:
+   * the card and the rail are then the same material, and a change to the
+   * brand's deep blue is a change to both.
+   *
+   * The other two states keep their own hues because they are SEMANTIC, not
+   * decorative - green means clocked in, grey means the day is closed - and
+   * flattening them to navy would remove the fastest read on this card.
+   */
   const gradient =
     state === "in"
       ? "from-emerald-800 to-emerald-500"
       : state === "done"
         ? "from-slate-700 to-slate-500"
-        : "from-primary-800 via-primary-600 to-primary-400";
+        : "from-slate-800 via-primary-900 to-slate-900";
 
   const dot =
     state === "in" ? "bg-emerald-300" : state === "done" ? "bg-slate-300" : "bg-amber-300";

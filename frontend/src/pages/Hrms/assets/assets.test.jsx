@@ -171,12 +171,18 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("the assets page", () => {
-  it("renders its title and breadcrumb", async () => {
+  it("renders its title, and no breadcrumb — a top-level page needs none", async () => {
     signIn([R.EMPLOYEE]);
     at("/hrms/assets/mine");
 
     expect(await screen.findByRole("heading", { name: "Assets" })).toBeTruthy();
-    expect(screen.getByText("HRMS")).toBeTruthy();
+
+    // "HRMS > Assets" above a heading that reads "Assets", beside a sidebar
+    // already highlighting Assets, is the same fact three times - and no other
+    // module in the portal carries a breadcrumb. HrmsPageLayout renders the
+    // trail only once it is deeper than "HRMS > <module>"; the nested employee
+    // pages still get theirs.
+    expect(screen.queryByRole("navigation", { name: /breadcrumb/i })).toBeNull();
   });
 
   it("an employee gets My Assets and Requests only", async () => {
