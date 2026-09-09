@@ -5,6 +5,9 @@ import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
 import { Pagination } from "../ui/Pagination";
 import { TableSkeleton } from "../ui/TableSkeleton";
+import {
+  CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
+} from "../../utils/historyExportColumns";
 
 import { isSuperAdmin } from "../../utils/permissions";
 export const OrderHistoryTable = () => {
@@ -23,11 +26,26 @@ export const OrderHistoryTable = () => {
     toggleSelectAll,
   } = useOrderHistoryStore();
 
-  // PO numbers that have unfulfilled indents — used to flag rows.
+  /* Bookings with unfulfilled indents against them — the "Indent" badge.
+     Matched on the BOOKING ID the server reports for each indent, with the PO
+     number as a secondary key for rows that predate it.
+
+     It used to match on PO number alone, and an indent with no PO carries the
+     placeholder '-' rather than a number: '-' passed the truthiness filter, so
+     every booking that had no PO raised — also stored as '-' — matched every
+     other one and wore the badge whether or not it had an indent. The server
+     now normalises that placeholder away, which is what makes the ids here the
+     only thing being compared. */
   const pendingItems = useCartStore((s) => s.pendingItems);
+  const indentBookingIds = new Set(
+    pendingItems.map((p) => p.bookingId).filter(Boolean),
+  );
   const indentPOs = new Set(
     pendingItems.map((p) => p.poNumber).filter(Boolean),
   );
+  const hasIndent = (order) =>
+    indentBookingIds.has(order.orderNumber)
+    || (Boolean(order.poNumber) && indentPOs.has(order.poNumber));
 
   const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
 
@@ -45,13 +63,38 @@ export const OrderHistoryTable = () => {
     }
   };
 
+  /* One booking's lines, carrying the same customer and transaction block the
+     whole-history export does. The fields repeat down the sheet because a row
+     of a flat export has to stand on its own — and because a single-booking
+     export and a filtered one should not be two different documents. */
+  const rowExportBlock = (order) => ({
+    ...customerExportRow({
+      name: order.customer,
+      profile: order.customerProfile,
+      shopNumber: order.shopNumber,
+      location: order.customerLocation || order.shippingAddress || order.location,
+    }),
+    bookingId: order.orderNumber,
+    date: order.date,
+    poNumber: order.poNumber,
+  });
+
+  const ROW_EXPORT_COLS = [
+    { key: "bookingId", label: "Booking ID" },
+    ...CUSTOMER_EXPORT_COLS,
+    { key: "date", label: "Booking Date", format: exportDate },
+    { key: "poNumber", label: "PO Number", format: poNumberValue },
+  ];
+
   const handleRowPDF = (order) => {
     import("../../utils/exportUtils").then(({ exportToPDF }) => {
       const cols = [
+        ...ROW_EXPORT_COLS,
         { key: "sku", label: "SKU Code" },
         { key: "quantity", label: "Quantity" },
       ];
       const items = (order.items || []).map((it) => ({
+        ...rowExportBlock(order),
         sku: it.product?.code || it.product?.name || "-",
         quantity: it.orderQuantity ?? it.quantity ?? 0,
       }));
@@ -68,13 +111,13 @@ export const OrderHistoryTable = () => {
   const handleRowExcel = (order) => {
     import("../../utils/exportUtils").then(({ exportToExcel }) => {
       const cols = [
-        { key: "bookingId", label: "Booking ID" },
+        ...ROW_EXPORT_COLS,
         { key: "sku", label: "SKU Code" },
         { key: "productName", label: "Product Name" },
         { key: "quantity", label: "Quantity" },
       ];
       const items = (order.items || []).map((it) => ({
-        bookingId: order.orderNumber,
+        ...rowExportBlock(order),
         sku: it.product?.code || "-",
         productName: it.product?.name || "-",
         quantity: it.orderQuantity ?? it.quantity ?? 0,
@@ -156,7 +199,7 @@ export const OrderHistoryTable = () => {
                   <td className="px-5 py-4 font-bold text-slate-800">
                     <div className="flex items-center gap-2">
                       <span>{order.orderNumber}</span>
-                      {indentPOs.has(order.poNumber) && (
+                      {hasIndent(order) && (
                         <span
                           className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded-full uppercase tracking-wide"
                           title="This booking has items to raise an indent for"

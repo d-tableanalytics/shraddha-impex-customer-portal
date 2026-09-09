@@ -5,6 +5,9 @@ import { ERPButton } from "../ui/ERPButton";
 import { DateField } from "../ui/DateField";
 import { useIndentHistoryStore, INDENT_STATUSES } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
+import {
+  CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
+} from "../../utils/historyExportColumns";
 
 import { isSuperAdmin } from "../../utils/permissions";
 export const IndentToolbar = () => {
@@ -25,16 +28,20 @@ export const IndentToolbar = () => {
   };
 
   // Flatten indents into one row per SKU line, matching how Booking History
-  // exports one row per line item rather than one per booking.
+  // exports one row per line item rather than one per booking — same columns,
+  // same order, same helper (utils/historyExportColumns.js).
   const exportData = () =>
     selectedIndents().flatMap((r) =>
       r.lines.map((l) => ({
+        ...customerExportRow({ profile: r.customerProfile }),
         indentNumber: r.indentNumber || "—",
         bookingId: r.bookingId || "—",
-        poNumber: r.poNumber || "—",
-        customer: r.customer,
+        poNumber: r.poNumber,
         status: l.status,
         date: r.date,
+        // The booking's date where there is a booking; a standalone indent has
+        // none, and prints N/A rather than borrowing the indent's own date.
+        bookingDate: r.bookingDate,
         skuCode: l.product?.code || "—",
         msilCode: l.product?.msilCode || "—",
         pendingQty: l.pendingQuantity || 0,
@@ -42,13 +49,18 @@ export const IndentToolbar = () => {
       })),
     );
 
+  /* The customer block is offered to everyone, not only an admin. A customer
+     exporting their own indents gets their own name, shop and location — their
+     own data, on a sheet of their own records — and the two histories stay the
+     same shape, which is the point of sharing the column list at all. */
   const exportCols = [
     { key: "indentNumber", label: "Indent No" },
     { key: "bookingId", label: "Booking ID" },
-    { key: "poNumber", label: "PO Number" },
-    ...(isAdmin ? [{ key: "customer", label: "Customer" }] : []),
+    ...CUSTOMER_EXPORT_COLS,
+    { key: "bookingDate", label: "Booking Date", format: exportDate },
+    { key: "poNumber", label: "PO Number", format: poNumberValue },
     { key: "status", label: "Status" },
-    { key: "date", label: "Indent Date", format: (v) => (v ? new Date(v).toLocaleDateString() : "N/A") },
+    { key: "date", label: "Indent Date", format: exportDate },
     { key: "skuCode", label: "SKU Details" },
     { key: "msilCode", label: "MSIL Code" },
     { key: "pendingQty", label: "Indent Quantity" },

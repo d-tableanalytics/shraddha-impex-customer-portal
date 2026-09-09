@@ -22,7 +22,10 @@ import mongoose from 'mongoose';
  * already go?" is answered by the database and not by a timer.
  */
 
-export const REPORT_TYPES = ['weekly-inventory-health'];
+export const REPORT_TYPES = [
+  'weekly-inventory-health',
+  'weekly-booking-indent-history',
+];
 
 /**
  * Lifecycle.
@@ -76,6 +79,17 @@ const reportRunSchema = new mongoose.Schema(
       overstock: { type: Number, default: 0 },
       unknown: { type: Number, default: 0 },
     },
+
+    /**
+     * Counts for report types whose figures are not the inventory bands above.
+     *
+     * A free-form Map rather than more named fields: `summary` is the inventory
+     * report's shape and means something precise there, and widening it with
+     * `bookings` and `indents` would leave every inventory run carrying two
+     * permanent zeroes and every history run carrying seven. Both are counts on
+     * a log row; neither is queried by name.
+     */
+    metrics: { type: Map, of: Number, default: undefined },
 
     // ── What it produced ────────────────────────────────────────────────────
     // The files themselves are attached to the mail and then discarded — this

@@ -160,7 +160,16 @@ export const getPendingReservations = async (req, res, next) => {
       // `user` is the customer's display name on this schema; `name` does not
       // exist, so the drawer and the tables were showing the company or the
       // email in its place.
-      .populate('customerId', 'user name email company customerCategory')
+      //
+      // The master details ride along for the History export, which has to name
+      // the customer, their shop, their location and their type on every row.
+      // Read from the user record rather than stamped on the reservation for
+      // the same reason attachCustomerDetails() does it on bookings: a detail
+      // filled in after the indent was raised still appears on it.
+      .populate(
+        'customerId',
+        'user name email company customerCategory customerName shopNumber location',
+      )
       .sort({ updatedAt: -1 });
 
     // WHICH INDENTS ACTUALLY HAVE A BOOKING.
@@ -180,9 +189,32 @@ export const getPendingReservations = async (req, res, next) => {
         .filter(Boolean)
         .map((id) => id.replace(/^PI-/, 'BO-')),
     )];
-    const realBookingIds = candidateBookingIds.length
-      ? new Set(await Order.distinct('orderId', { orderId: { $in: candidateBookingIds } }))
-      : new Set();
+    // One row per booking, not per line: an Order document is a single line, so
+    // the ids are grouped here rather than fetched and de-duplicated in memory.
+    // This replaces a distinct() that answered only "does it exist" — the same
+    // one query now also carries the booking's DATE and PO number, which the
+    // Indent History export needs and the reservation itself does not hold.
+    const bookingRows = candidateBookingIds.length
+      ? await Order.aggregate([
+        { $match: { orderId: { $in: candidateBookingIds } } },
+        {
+          $group: {
+            _id: '$orderId',
+            date: { $first: '$date' },
+            createdAt: { $first: '$createdAt' },
+            poNumber: { $first: '$poNumber' },
+          },
+        },
+      ])
+      : [];
+    const bookingById = new Map(bookingRows.map((b) => [b._id, b]));
+    const realBookingIds = new Set(bookingById.keys());
+
+    /** A PO number that was actually raised. '-' and blanks are not. */
+    const realPo = (value) => {
+      const s = String(value ?? '').trim();
+      return s === '' || s === '-' ? null : s;
+    };
 
     const populated = await Promise.all(reservations.map(async r => {
       const obj = r.toObject();
@@ -192,12 +224,26 @@ export const getPendingReservations = async (req, res, next) => {
       // every brand by design. Customers stay brand-scoped.
       const { product } = await findProductWithBrand(r.productId, seesEverything ? null : req.user);
       const derived = r.indentNumber ? r.indentNumber.replace(/^PI-/, 'BO-') : null;
+      const booking = derived ? bookingById.get(derived) : null;
       return {
         ...obj,
         productId: product,
         // null when this indent stands alone — the client must not invent one.
         bookingId: derived && realBookingIds.has(derived) ? derived : null,
         standalone: !derived || !realBookingIds.has(derived),
+        // When this indent was raised alongside a booking. Distinct from the
+        // reservation's own updatedAt, which moves every time a line is
+        // touched — it is not the date anything was ordered on.
+        bookingDate: booking ? (booking.date || booking.createdAt || null) : null,
+        // The indent carries its own PO number once one is raised; the
+        // booking's is the fallback for rows stamped before that, so the export
+        // shows a PO wherever one actually exists.
+        //
+        // '-' is how "no PO" is stored on BOTH, and it has to be normalised on
+        // the indent's own value before the fallback is considered — a literal
+        // '-' is truthy, so leaving it in place would shadow the booking's real
+        // PO number with a placeholder.
+        poNumber: realPo(obj.poNumber) || realPo(booking?.poNumber),
       };
     }));
     // Brand-scoped: an indent for a brand this user cannot access is omitted.

@@ -42,3 +42,10 @@ documentation/import-reports/
 # leaves ignored files alone, so the gallery survives every deploy. Set
 # PRODUCT_IMAGE_DIR in backend/.env to move the store off the repo tree.
 backend/uploads/
+
+# Locally generated report files (scripts/send-*-report.js --dry-run)
+backend/tmp/
+backend/Inventory_Health_*.xlsx
+backend/Inventory_Health_*.pdf
+backend/Booking_Indent_History_*.xlsx
+backend/Booking_Indent_History_*.pdf

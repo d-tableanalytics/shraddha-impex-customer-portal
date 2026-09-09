@@ -4,6 +4,9 @@ import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
 import { Pagination } from "../ui/Pagination";
 import { TableSkeleton } from "../ui/TableSkeleton";
+import {
+  CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
+} from "../../utils/historyExportColumns";
 
 import { isSuperAdmin } from "../../utils/permissions";
 export const IndentHistoryTable = () => {
@@ -34,11 +37,15 @@ export const IndentHistoryTable = () => {
     else setSort(field, "desc");
   };
 
-  // One row per SKU line, so a single-indent export matches the bulk export shape.
+  // One row per SKU line, so a single-indent export matches the bulk export
+  // shape — same customer block, same helper as Booking History.
   const rowsFor = (indent) =>
     indent.lines.map((l) => ({
+      ...customerExportRow({ profile: indent.customerProfile }),
       indentNumber: indent.indentNumber || "—",
       bookingId: indent.bookingId || "—",
+      bookingDate: indent.bookingDate,
+      poNumber: indent.poNumber,
       sku: l.product?.code || "—",
       msilCode: l.product?.msilCode || "—",
       quantity: l.pendingQuantity || 0,
@@ -48,6 +55,9 @@ export const IndentHistoryTable = () => {
   const rowCols = [
     { key: "indentNumber", label: "Indent No" },
     { key: "bookingId", label: "Booking ID" },
+    ...CUSTOMER_EXPORT_COLS,
+    { key: "bookingDate", label: "Booking Date", format: exportDate },
+    { key: "poNumber", label: "PO Number", format: poNumberValue },
     { key: "sku", label: "SKU Code" },
     { key: "msilCode", label: "MSIL Code" },
     { key: "quantity", label: "Indent Qty" },

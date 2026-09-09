@@ -25,7 +25,11 @@
     "report:check": "node scripts/send-inventory-report.js --check",
     "report:dry-run": "node scripts/send-inventory-report.js --dry-run",
     "report:history": "node scripts/send-inventory-report.js --history",
-    "report:send": "node scripts/send-inventory-report.js"
+    "report:send": "node scripts/send-inventory-report.js",
+    "history:check": "node scripts/send-history-report.js --check",
+    "history:dry-run": "node scripts/send-history-report.js --dry-run",
+    "history:history": "node scripts/send-history-report.js --history",
+    "history:send": "node scripts/send-history-report.js"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1123.0",

@@ -17,6 +17,8 @@ import { bootstrapHrms } from './modules/hrms/hrms.bootstrap.js';
 import { runHrmsRetentionSweep } from './modules/hrms/retention/retention.sweep.js';
 import { runWeeklyInventoryReport } from './modules/inventory/inventoryReport.job.js';
 import { readInventoryReportConfig, describeInventoryReportConfig } from './config/inventoryReport.js';
+import { runWeeklyHistoryReport } from './modules/orders/historyReport.job.js';
+import { readHistoryReportConfig, describeHistoryReportConfig } from './config/historyReport.js';
 import cron from 'node-cron';
 
 import { isSuperAdmin } from './middlewares/rbac.js';
@@ -167,6 +169,31 @@ const startServer = async () => {
         runWeeklyInventoryReport({ trigger: 'schedule' });
       },
       { timezone: reportConfig.timezone },
+    );
+  }
+
+  /**
+   * Weekly Booking & Indent History report.
+   *
+   * A second, independent schedule rather than a passenger on the inventory
+   * one: different audience question, different window, and a configuration an
+   * operator can move without touching the other. Each job claims its own
+   * period in ReportRun, so neither can send twice and neither can block the
+   * other.
+   *
+   * Like the inventory report, this callback never throws — see the note at the
+   * top of historyReport.job.js.
+   */
+  const historyConfig = readHistoryReportConfig();
+  describeHistoryReportConfig(historyConfig);
+  if (historyConfig.usable) {
+    cron.schedule(
+      historyConfig.schedule,
+      () => {
+        console.log('[Cron] Running the weekly booking & indent history report...');
+        runWeeklyHistoryReport({ trigger: 'schedule' });
+      },
+      { timezone: historyConfig.timezone },
     );
   }
   

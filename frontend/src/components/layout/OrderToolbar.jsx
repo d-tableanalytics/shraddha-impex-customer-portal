@@ -7,6 +7,9 @@ import { useState, useEffect } from "react";
 import { api } from "../../services/api";
 import { useUserStore } from "../../store/userStore";
 import { BOOKING_LIFECYCLE } from "../../constants/bookingLifecycle";
+import {
+  CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
+} from "../../utils/historyExportColumns";
 import toast from "react-hot-toast";
 
 import { isSuperAdmin } from "../../utils/permissions";
@@ -26,6 +29,11 @@ export const OrderToolbar = () => {
 
   // Flatten bookings into one row per SKU line item with the required columns.
   // Available Quantity comes from live product stock (SKU → availableStock).
+  //
+  // The customer block repeats on every line of a booking. That is what a flat
+  // sheet is for: each row has to stand on its own once it is sorted, filtered
+  // or pivoted in Excel, and a name printed once at the top of a group does not
+  // survive any of that.
   const exportData = () => {
     const bookings = selectedBookings();
     const products = useProductStore.getState().products || [];
@@ -36,6 +44,15 @@ export const OrderToolbar = () => {
       const lines = b.lineItems?.length ? b.lineItems : [{ skuCode: '—', bookedQty: b.totalQuantity, confirmedQty: b.totalQuantity, pendingQty: 0 }];
       for (const li of lines) {
         rows.push({
+          // Shared with Indent History — see utils/historyExportColumns.js.
+          ...customerExportRow({
+            name: b.customer,
+            profile: b.customerProfile,
+            // The booking's own stamp first, the customer's registered details
+            // as the fallback: a PO may quote a different address on purpose.
+            shopNumber: b.shopNumber,
+            location: b.customerLocation || b.shippingAddress || b.location,
+          }),
           orderNumber: b.orderNumber,
           poNumber: b.poNumber,
           status: b.status,
@@ -52,9 +69,12 @@ export const OrderToolbar = () => {
 
   const exportCols = [
     { key: 'orderNumber', label: 'Booking ID' },
-    { key: 'poNumber', label: 'PO Number' },
+    ...CUSTOMER_EXPORT_COLS,
+    { key: 'date', label: 'Booking Date', format: exportDate },
+    // N/A rather than blank when no PO has been raised, and '-' — which is how
+    // an unraised PO is stored — reads as no PO rather than as a number.
+    { key: 'poNumber', label: 'PO Number', format: poNumberValue },
     { key: 'status', label: 'Status' },
-    { key: 'date', label: 'Booking Date', format: (v) => (v ? new Date(v).toLocaleDateString() : 'N/A') },
     { key: 'skuCode', label: 'SKU Details' },
     { key: 'available', label: 'Available Quantity' },
     { key: 'bookedQty', label: 'Booked Quantity' },

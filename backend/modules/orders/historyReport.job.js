@@ -1,54 +1,38 @@
-import { readInventoryReportConfig } from '../../config/inventoryReport.js';
+import { readHistoryReportConfig } from '../../config/historyReport.js';
 import {
   claimReportRun, describeRefusal, sendReportWithRetries, alertReportFailure, listRunsOfType,
 } from '../../utils/reportRun.js';
-import { gatherInventoryHealthReport, occurrenceOf } from './inventoryReport.service.js';
-import {
-  buildInventoryHealthXlsx, buildInventoryHealthPdf, buildInventoryHealthEmail,
-} from './inventoryReport.render.js';
+import { gatherHistoryReport, periodFor } from './historyReport.service.js';
+import { buildHistoryXlsx, buildHistoryPdf, buildHistoryEmail } from './historyReport.render.js';
 
 /**
- * The weekly inventory health report, end to end.
+ * The weekly Booking & Indent History report, end to end.
  *
- *   claim the week → gather → render → email → record the outcome
+ *   claim the period → gather → render → email → record the outcome
  *
- * THE CLAIM COMES FIRST, and it is the part worth reading twice. Every attempt
- * at a given week derives the same `runKey`, and claiming is an INSERT of that
- * key against a unique index — so a second attempt loses on the index rather
- * than on a check-then-act two processes can both pass. That is what makes
- * "the same weekly report is not accidentally sent multiple times" a property
- * of the database rather than a hope about timing.
- *
- * There are more ways to get a second attempt than there look to be: PM2
- * restarting the process across the scheduled minute, a deploy landing on it, an
- * operator running the manual script on the same day, two instances if this is
- * ever scaled out. None are exotic and all are covered by the same one line.
- *
- * The claim, the send-with-retries and the failure alert live in
- * utils/reportRun.js, shared with the weekly booking & indent history report:
- * one implementation of a concurrency guard is one place to get it right.
+ * THE CLAIM COMES FIRST. Every attempt at a given period derives the same
+ * `runKey` from the period's dates, and claiming is an INSERT of that key
+ * against a unique index — so a restart across the scheduled minute, a deploy
+ * landing on it, or an operator running the script the same morning all lose on
+ * the index rather than sending a second copy. The mechanics are in
+ * utils/reportRun.js, shared with the inventory report.
  *
  * NOTHING HERE THROWS AT ITS CALLER. The cron has nobody to catch for it, and an
  * unhandled rejection in a detached job takes the whole process down under this
  * app's `unhandledRejection` handler — a failed spreadsheet would restart the
  * portal. Every path returns a result object instead, and every failure is on
- * the run record.
+ * the run record as well as in the log.
  */
 
-const TAG = '[InventoryReport]';
-const REPORT_TYPE = 'weekly-inventory-health';
+const TAG = '[HistoryReport]';
+export const REPORT_TYPE = 'weekly-booking-indent-history';
 
-/**
- * Run the report for whichever week `now` falls in.
- *
- * @returns {{ ok: boolean, status: string, reason?: string, runKey: string, summary?: object }}
- */
-export const runWeeklyInventoryReport = async ({
+export const runWeeklyHistoryReport = async ({
   now = new Date(),
   trigger = 'schedule',
   triggeredBy = null,
   force = false,
-  config = readInventoryReportConfig(),
+  config = readHistoryReportConfig(),
 } = {}) => {
   const started = Date.now();
 
@@ -60,13 +44,17 @@ export const runWeeklyInventoryReport = async ({
     return { ok: false, status: 'Failed', reason: 'invalid-config', errors: config.problems };
   }
 
-  const occurrence = occurrenceOf(now, config.timezone);
-  const runKey = `${REPORT_TYPE}:${occurrence.label}`;
+  // The period is worked out BEFORE the claim and the rows are read after it:
+  // gathering first would have every racing process query a week of orders only
+  // to discover the period had already been claimed.
+  const period = periodFor(now, config.timezone, config.days);
+
+  const runKey = `${REPORT_TYPE}:${period.label}`;
 
   let claim;
   try {
     claim = await claimReportRun({
-      reportType: REPORT_TYPE, runKey, periodLabel: occurrence.label, trigger, triggeredBy, force,
+      reportType: REPORT_TYPE, runKey, periodLabel: period.label, trigger, triggeredBy, force,
     });
   } catch (error) {
     console.error(`${TAG} Could not claim ${runKey}: ${error.message}`);
@@ -76,46 +64,40 @@ export const runWeeklyInventoryReport = async ({
   if (!claim.claimed) {
     // Not an error. This is the guard doing its job, and saying so plainly is
     // what makes the log readable when a restart lands on the scheduled minute.
-    console.log(`${TAG} ${occurrence.label} not run — ${describeRefusal(claim)}.`);
+    console.log(`${TAG} ${period.label} not run — ${describeRefusal(claim)}.`);
     return { ok: true, status: 'Skipped', reason: claim.reason, runKey, run: claim.run };
   }
 
   const { run } = claim;
-  console.log(`${TAG} ${occurrence.label} starting (${trigger}${claim.retry ? ', retry' : ''}).`);
+  console.log(`${TAG} ${period.label} starting (${trigger}${claim.retry ? ', retry' : ''}).`);
 
   try {
     // ── Gather ────────────────────────────────────────────────────────────
-    const report = await gatherInventoryHealthReport({
-      brands: config.brands,
-      thresholdOverrides: config.thresholdOverrides,
-      timezone: config.timezone,
-      generatedAt: now,
+    const report = await gatherHistoryReport({
+      now, timezone: config.timezone, days: config.days,
     });
 
-    run.summary = {
-      total: report.summary.total,
-      healthy: report.summary.healthy,
-      low: report.summary.low,
-      critical: report.summary.critical,
-      outOfStock: report.summary.outOfStock,
-      overstock: report.summary.overstock,
-      unknown: report.summary.unknown,
-    };
+    run.metrics = report.summary;
     console.log(
-      `${TAG} ${occurrence.label}: ${report.summary.total} product(s) — `
-      + `${report.summary.outOfStock} out of stock, ${report.summary.critical} critical, `
-      + `${report.summary.low} low, ${report.summary.healthy} healthy.`,
+      `${TAG} ${period.label}: ${report.summary.bookings} booking(s) / `
+      + `${report.summary.bookingLines} line(s), ${report.summary.indents} indent(s) / `
+      + `${report.summary.indentLines} line(s), ${report.summary.customers} customer(s).`,
     );
 
     // ── Render ────────────────────────────────────────────────────────────
+    // A QUIET WEEK STILL GETS A REPORT. An empty period is information — it says
+    // nothing was booked — and skipping the send would leave the recipient
+    // unable to tell "nothing happened" from "the job is broken", which is the
+    // failure mode a weekly report exists to rule out.
+    //
     // One format failing does not sink the run: a PDF that will not draw is no
     // reason to withhold the spreadsheet, and the email says what it has.
     const attachments = [];
     for (const format of config.formats) {
       try {
         const built = format === 'xlsx'
-          ? await buildInventoryHealthXlsx(report)
-          : await buildInventoryHealthPdf(report);
+          ? await buildHistoryXlsx(report)
+          : await buildHistoryPdf(report, { maxRows: config.pdfMaxRows });
         attachments.push(built);
       } catch (error) {
         const message = `Could not generate the ${format.toUpperCase()}: ${error.message}`;
@@ -125,9 +107,7 @@ export const runWeeklyInventoryReport = async ({
     }
 
     if (attachments.length === 0) {
-      throw new Error(
-        `No attachment could be generated in ${config.formats.join(' or ')} format.`,
-      );
+      throw new Error(`No attachment could be generated in ${config.formats.join(' or ')} format.`);
     }
 
     run.attachments = attachments.map((a) => ({
@@ -135,8 +115,7 @@ export const runWeeklyInventoryReport = async ({
     }));
 
     // ── Send ──────────────────────────────────────────────────────────────
-    const subject = `Weekly Inventory Health Report – ${occurrence.label} `
-      + `(${report.occurrence.weekStart.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })})`;
+    const subject = `Weekly Booking & Indent History – ${report.period.title}`;
 
     run.recipients = [config.to];
     run.cc = config.cc;
@@ -145,7 +124,7 @@ export const runWeeklyInventoryReport = async ({
       to: config.to,
       cc: config.cc,
       subject,
-      html: buildInventoryHealthEmail(report, attachments),
+      html: buildHistoryEmail(report, attachments),
       attachments: attachments.map((a) => ({
         filename: a.fileName, content: a.content, contentType: a.contentType,
       })),
@@ -160,16 +139,16 @@ export const runWeeklyInventoryReport = async ({
     if (!delivery.sent) {
       run.status = 'Failed';
       await run.save();
-      console.error(`${TAG} ${occurrence.label} FAILED after ${delivery.attempts} send attempt(s).`);
+      console.error(`${TAG} ${period.label} FAILED after ${delivery.attempts} send attempt(s).`);
       await alertReportFailure({
-      alertTo: config.alertTo,
-      subject: `ACTION NEEDED: weekly inventory report failed — ${occurrence.label}`,
-      reportName: 'weekly inventory health report',
-      periodLabel: occurrence.label,
-      retryCommand: 'node scripts/send-inventory-report.js --force',
-      errors: run.failures,
-      tag: TAG,
-    });
+        alertTo: config.alertTo,
+        subject: `ACTION NEEDED: weekly booking & indent report failed — ${period.label}`,
+        reportName: 'weekly Booking & Indent History report',
+        periodLabel: period.label,
+        retryCommand: 'node scripts/send-history-report.js --force',
+        errors: run.failures,
+        tag: TAG,
+      });
       return {
         ok: false, status: 'Failed', reason: 'email-failed', runKey,
         summary: report.summary, errors: run.failures,
@@ -181,7 +160,7 @@ export const runWeeklyInventoryReport = async ({
     await run.save();
 
     console.log(
-      `${TAG} ${occurrence.label} sent to ${config.to}`
+      `${TAG} ${period.label} sent to ${config.to}`
       + `${config.cc.length ? ` (cc ${config.cc.join(', ')})` : ''} — `
       + `${attachments.map((a) => `${a.fileName} ${Math.round(a.content.length / 1024)}KB`).join(', ')}`
       + ` in ${(run.durationMs / 1000).toFixed(1)}s.`,
@@ -197,7 +176,7 @@ export const runWeeklyInventoryReport = async ({
     // away, a rendering library throwing, a bug. Recorded, alerted, and NOT
     // rethrown — see the note at the top about unhandledRejection.
     const message = error?.message || String(error);
-    console.error(`${TAG} ${occurrence.label} failed: ${message}`);
+    console.error(`${TAG} ${period.label} failed: ${message}`);
     run.failures.push(message);
     run.status = 'Failed';
     run.finishedAt = new Date();
@@ -205,10 +184,10 @@ export const runWeeklyInventoryReport = async ({
     await run.save().catch((e) => console.error(`${TAG} Could not even record the failure: ${e.message}`));
     await alertReportFailure({
       alertTo: config.alertTo,
-      subject: `ACTION NEEDED: weekly inventory report failed — ${occurrence.label}`,
-      reportName: 'weekly inventory health report',
-      periodLabel: occurrence.label,
-      retryCommand: 'node scripts/send-inventory-report.js --force',
+      subject: `ACTION NEEDED: weekly booking & indent report failed — ${period.label}`,
+      reportName: 'weekly Booking & Indent History report',
+      periodLabel: period.label,
+      retryCommand: 'node scripts/send-history-report.js --force',
       errors: run.failures,
       tag: TAG,
     });
@@ -217,7 +196,7 @@ export const runWeeklyInventoryReport = async ({
 };
 
 /** The most recent runs, newest first — for the log and for a retry decision. */
-export const listReportRuns = async ({ limit = 20 } = {}) =>
+export const listHistoryReportRuns = async ({ limit = 20 } = {}) =>
   listRunsOfType(REPORT_TYPE, { limit });
 
-export default { runWeeklyInventoryReport, listReportRuns };
+export default { runWeeklyHistoryReport, listHistoryReportRuns, REPORT_TYPE };

@@ -45,7 +45,10 @@ const groupIndents = (items) => {
       bookingId: primary.bookingId || null,
       standalone: lines.every((l) => l.standalone),
       date: primary.updatedAt || null,
+      // The booking behind this indent, for the export's Booking Date column.
+      bookingDate: primary.bookingDate || null,
       customer: primary.customer?.name || "—",
+      customerProfile: primary.customerProfile || null,
       status: primary.status,
       lines,
       itemCount: lines.length,
@@ -115,6 +118,25 @@ export const useIndentHistoryStore = create((set, get) => ({
             typeof c === "object"
               ? { name: c.name || c.company || c.email || "—" }
               : { name: "—" },
+          // The customer's master details, in the same shape a booking's
+          // `customerProfile` arrives in — so the History exports can read both
+          // through one helper. Display is untouched: the tables and the drawer
+          // still show `customer.name`.
+          customerProfile:
+            typeof c === "object"
+              ? {
+                customerName: c.customerName || null,
+                company: c.company || null,
+                contactName: c.user || null,
+                shopNumber: c.shopNumber || null,
+                location: c.location || null,
+                customerCategory: c.customerCategory || null,
+              }
+              : null,
+          // The date of the BOOKING this indent was raised alongside, reported
+          // by the server. Null for a standalone indent, and never the same
+          // thing as `updatedAt`, which moves whenever a line is touched.
+          bookingDate: r.bookingDate || null,
           product: {
             id: p._id || r.productId,
             code: r.skuCode,

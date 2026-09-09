@@ -80,7 +80,11 @@ export const useCartStore = create((set, get) => ({
           id: r.reservationId,
           status: r.status,
           indentNumber: r.indentNumber || null, // PI-YYYY-###### (display id)
-          poNumber: r.poNumber || null,          // links this indent to its booking
+          poNumber: r.poNumber || null,          // once a PO exists for it
+          // The booking this indent came from, reported by the server (null for
+          // a standalone indent). The reliable link: a PO number only exists
+          // once one has been raised.
+          bookingId: r.bookingId || null,
           pendingQuantity: r.quantity,
           updatedAt: r.updatedAt,
           customer:

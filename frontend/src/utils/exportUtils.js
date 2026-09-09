@@ -43,9 +43,20 @@ export const exportToExcel = (data, columns, filename = 'export', meta = []) => 
 // `meta` is an optional list of reference lines ("Location: Manesar",
 // "Phone: …") printed under the title — the pick list carries them so the
 // person holding the sheet does not have to look anything up.
+/**
+ * A table wider than this does not fit A4 portrait at a readable size.
+ *
+ * The History exports carry the customer block — name, shop, location, type —
+ * on top of the transaction columns, which puts them well past it. Rather than
+ * shrink twelve columns into 182mm and hand back a wall of wrapped fragments,
+ * the page turns.
+ */
+const WIDE_TABLE_COLUMNS = 7;
+
 export const exportToPDF = (data, columns, title = 'Report', filename = 'export', meta = []) => {
   try {
-    const doc = new jsPDF();
+    const wide = columns.length > WIDE_TABLE_COLUMNS;
+    const doc = new jsPDF({ orientation: wide ? 'landscape' : 'portrait' });
 
     // Add Title
     doc.setFontSize(18);
@@ -64,9 +75,21 @@ export const exportToPDF = (data, columns, title = 'Report', filename = 'export'
       head: [tableColumn],
       body: tableRows,
       startY: 40 + meta.length * 6,
+      margin: { left: 14, right: 14 },
       theme: 'grid',
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [30, 58, 138] }, // primary-900 color
+      // `linebreak` wraps a long cell instead of letting it run under its
+      // neighbour: a customer location is prose, and it is the one column here
+      // that will not fit on a line of its own.
+      styles: {
+        fontSize: wide ? 7 : 8,
+        cellPadding: wide ? 1.5 : 2,
+        overflow: 'linebreak',
+        valign: 'middle',
+      },
+      headStyles: { fillColor: [30, 58, 138], valign: 'middle' }, // primary-900 color
+      // Widths are shared out by content rather than split evenly, so a Shop
+      // No. column does not take the same space as an address.
+      tableWidth: 'auto',
     });
 
     doc.save(`${filename}_${new Date().getTime()}.pdf`);
@@ -89,6 +112,8 @@ export const printData = (data, columns, title = 'Report', meta = []) => {
     // <, > and &, and unescaped they are parsed as markup — the printed cell
     // then shows something other than the value it came from.
     const safeTitle = escapeHtml(title);
+    // Same threshold the PDF turns the page at, for the same reason.
+    const wide = columns.length > WIDE_TABLE_COLUMNS;
     const metaLines = meta
       .map((line) => `<p class="meta">${escapeHtml(line)}</p>`)
       .join('');
@@ -112,7 +137,12 @@ export const printData = (data, columns, title = 'Report', meta = []) => {
             th { background-color: #f8fafc; font-weight: bold; color: #0f172a; }
             tr:nth-child(even) { background-color: #f8fafc; }
             @media print {
-              @page { margin: 1cm; }
+              @page { margin: 1cm; ${wide ? 'size: landscape;' : ''} }
+              /* A row split across a page break is unreadable in a sheet this
+                 wide — the customer block ends up on one page and its
+                 quantities on the next. */
+              tr { break-inside: avoid; page-break-inside: avoid; }
+              thead { display: table-header-group; }
             }
           </style>
         </head>
