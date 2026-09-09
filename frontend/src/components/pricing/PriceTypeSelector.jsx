@@ -154,49 +154,75 @@ export const PriceTypeSelector = ({
           price type and the corresponding price" half of the requirement —
           a total alone does not let anyone check a quote. */}
       {value && (
+        /* A booking can carry a hundred SKUs, and this table used to render
+           every one of them at full height — pushing the Confirm & Lock
+           buttons off the bottom of a dialog that already scrolls, so the
+           person pricing the order had to scroll past the whole catalogue to
+           reach the action.
+
+           Capped and scrolled instead. The column headers and the TOTAL are
+           sticky to the top and bottom of that scroller: a running total that
+           scrolls out of sight is the one number you always want on screen
+           while checking a long list.
+
+           The dividers on the sticky cells are inset box-shadows rather than
+           borders. A table defaults to `border-collapse: collapse`, and a
+           collapsed border does not travel with a sticky cell — it stays
+           behind and the header loses its underline the moment you scroll.
+           A shadow paints with the cell. */
         <div className="border border-slate-200 rounded-lg overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50">
-              <tr className="text-[10px] font-bold text-slate-500 uppercase">
-                <th className="px-3 py-2">SKU</th>
-                <th className="px-3 py-2 text-right">Qty</th>
-                <th className="px-3 py-2 text-right">Rate</th>
-                <th className="px-3 py-2 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {lines.map((line) => (
-                <tr key={line.id} className="text-xs">
-                  <td className="px-3 py-1.5 font-mono font-semibold text-slate-700">
-                    {line.skuCode}
+          {/* No `overscroll-contain`: this list sits inside the Sales Desk
+               drawer, whose body is the page scroller. Containing the
+               overscroll here would stop the drawer dead whenever the
+               pointer happened to be over these rows. Reaching the end of
+               the list now carries on scrolling the panel, as it should. */}
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-[10px] font-bold text-slate-500 uppercase">
+                  <th className="px-3 py-2 sticky top-0 z-10 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">SKU</th>
+                  <th className="px-3 py-2 text-right sticky top-0 z-10 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Qty</th>
+                  <th className="px-3 py-2 text-right sticky top-0 z-10 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Rate</th>
+                  <th className="px-3 py-2 text-right sticky top-0 z-10 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {lines.map((line) => (
+                  <tr key={line.id} className="text-xs">
+                    <td className="px-3 py-1.5 font-mono font-semibold text-slate-700">
+                      {line.skuCode}
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-slate-600">{line.quantity}</td>
+                    <td className="px-3 py-1.5 text-right text-slate-600">
+                      {formatRupees(line.prices?.[value])}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-bold text-slate-800">
+                      {formatRupees(line.amounts?.[value])}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="text-xs">
+                  {/* Just "Total". The chosen schedule is already named on the
+                      selected card above and on the label beside the heading, so
+                      repeating it here only crowds the row. */}
+                  <td
+                    colSpan={3}
+                    className="px-3 py-2 text-right font-bold text-slate-600 sticky bottom-0 bg-slate-50 shadow-[inset_0_1px_0_0_rgb(226_232_240)]"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <IndianRupee size={12} />
+                      Total
+                    </span>
                   </td>
-                  <td className="px-3 py-1.5 text-right text-slate-600">{line.quantity}</td>
-                  <td className="px-3 py-1.5 text-right text-slate-600">
-                    {formatRupees(line.prices?.[value])}
-                  </td>
-                  <td className="px-3 py-1.5 text-right font-bold text-slate-800">
-                    {formatRupees(line.amounts?.[value])}
+                  <td className="px-3 py-2 text-right font-black text-slate-900 sticky bottom-0 bg-slate-50 shadow-[inset_0_1px_0_0_rgb(226_232_240)]">
+                    {formatRupees(selectedTotal?.amount)}
                   </td>
                 </tr>
-              ))}
-            </tbody>
-            <tfoot className="bg-slate-50">
-              <tr className="text-xs">
-                {/* Just "Total". The chosen schedule is already named on the
-                    selected card above and on the label beside the heading, so
-                    repeating it here only crowds the row. */}
-                <td colSpan={3} className="px-3 py-2 text-right font-bold text-slate-600">
-                  <span className="inline-flex items-center gap-1">
-                    <IndianRupee size={12} />
-                    Total
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-right font-black text-slate-900">
-                  {formatRupees(selectedTotal?.amount)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+              </tfoot>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -46,9 +46,10 @@ export const SalesBookingDrawer = () => {
   const [showPoBox, setShowPoBox] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showPicklist, setShowPicklist] = useState(false);
-  // Re-pricing a booking whose PO is already raised. Closed by default: the
-  // ordinary path is to choose the rate in the PO dialog, and this is the
-  // correction for the ones that were raised before the choice existed.
+  // Whether the tier picker is open. Closed by default on both sides of the PO:
+  // before it, because the ordinary path is still to choose the rate in the PO
+  // dialog and this is the desk checking what each tier totals; after it,
+  // because a raised PO is priced already and this is the correction.
   const [repricing, setRepricing] = useState(false);
 
   // `selected` is only replaced on an explicit select / save / raise-PO, so this
@@ -252,8 +253,17 @@ export const SalesBookingDrawer = () => {
             </button>
           </div>
 
-          {/* Body */}
-          <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+          {/* Body — the one scroller in the drawer.
+
+              BLOCK FLOW, NOT A FLEX COLUMN, and that is load-bearing. As a
+              flex column every card here was a flex item free to SHRINK, and a
+              flex item whose own overflow is hidden has an automatic minimum
+              size of zero — so the Customer Pricing card (the only card in here
+              carrying `overflow-hidden`) absorbed the whole overflow and was
+              squeezed to a sliver, its tier picker clipped out of existence
+              rather than missing. `space-y-6` gives the same rhythm with every
+              child at its natural height, and the scroller does the rest. */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {!locked && selected.poDueAt && (
               <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-200 bg-amber-50/60">
                 <Timer size={18} className="text-amber-600 mt-0.5 shrink-0" />
@@ -333,12 +343,22 @@ export const SalesBookingDrawer = () => {
               </div>
             </div>
 
-            {/* Customer pricing.
-                Shown only to a view_pricing holder, and only for a booking whose
-                PO exists — before that the choice is made in the PO dialog,
-                where it belongs, and duplicating it here would be two ways to
-                set one thing. */}
-            {mayPrice && locked && (
+            {/* Customer pricing. Shown to every view_pricing holder, on every
+                booking — PO raised or not.
+
+                It used to carry `&& locked` as well, on the reasoning that the
+                rate is chosen in the PO dialog and a second control would be two
+                ways to set one thing. In practice that hid the section on the
+                bookings people most wanted it on: the ones still waiting for a
+                PO, where the desk is quoting the customer and wants to see what
+                each tier totals BEFORE committing to the PO.
+
+                Nothing behind it needed the lock either. PUT .../pricing is
+                deliberately not blocked by the PO lock (see the note on
+                setBookingPricing), and shapeBooking sends `pricing` on any
+                booking whose reader holds view_pricing. The PO dialog still
+                offers the same choice and opens on whatever is set here. */}
+            {mayPrice && (
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
@@ -348,7 +368,9 @@ export const SalesBookingDrawer = () => {
                       <p className="text-[11px] text-slate-500">
                         {pricing?.priceType
                           ? `${pricing.priceTypeLabel} rate · ${pricing.pricedLines} of ${pricing.pricedLines + pricing.unpricedLines} line(s) rated`
-                          : "This purchase order has no pricing on it."}
+                          : locked
+                            ? "This purchase order has no pricing on it."
+                            : "No rate on this booking yet — set it here, or when the PO is raised."}
                       </p>
                     </div>
                   </div>
@@ -358,9 +380,16 @@ export const SalesBookingDrawer = () => {
                         {formatRupees(pricing.totalAmount)}
                       </span>
                     )}
+                    {/* Locked out while there are unsaved line edits, the same
+                        rule Raise PO follows. Pricing is applied to the SAVED
+                        lines, and the response replaces `selected`, which resyncs
+                        the draft — so pricing mid-edit would have quietly thrown
+                        the edits away AND rated the old quantities. */}
                     <button
                       onClick={() => setRepricing((v) => !v)}
-                      className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-700 bg-primary-50 border border-primary-200 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition-all"
+                      disabled={dirty}
+                      title={dirty ? "Save your line changes before pricing this booking" : undefined}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-700 bg-primary-50 border border-primary-200 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Pencil size={13} /> {repricing ? "Close" : pricing?.priceType ? "Change" : "Set price"}
                     </button>
@@ -369,15 +398,17 @@ export const SalesBookingDrawer = () => {
                 {repricing && (
                   <div className="p-5">
                     <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
-                      The customer sees only the rate chosen here. Changing it rewrites what this
-                      purchase order shows them, and is recorded in the audit trail.
+                      The customer sees only the rate chosen here.{" "}
+                      {locked
+                        ? "Changing it rewrites what this purchase order shows them, and is recorded in the audit trail."
+                        : "It is carried onto the purchase order when it is raised, and every change is recorded in the audit trail."}
                     </p>
                     <PriceTypeSelector
                       orderId={selected.orderId}
                       value={pricing?.priceType ?? null}
                       onChange={handleSetPrice}
                       customerCategory={selected.customerProfile?.customerCategory}
-                      disabled={saving}
+                      disabled={saving || dirty}
                     />
                   </div>
                 )}
@@ -385,7 +416,7 @@ export const SalesBookingDrawer = () => {
             )}
 
             {/* Lines */}
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Package size={18} className="text-primary-600" />
@@ -440,15 +471,34 @@ export const SalesBookingDrawer = () => {
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
+              {/* The lines flow at full height on purpose: the drawer body is
+                  the ONE scroller in here. This used to be a capped
+                  `overscroll-contain` box of its own, and because it covered
+                  most of the panel the wheel landed on it almost every time —
+                  the table moved, the detail page behind it did not, and the
+                  drawer read as unscrollable. Nothing above or below it is
+                  clipped either (no `overflow-hidden` on the card, no
+                  `overflow-x-auto` here), which is what lets the header row
+                  below stay sticky against that body scroller instead of
+                  against a container that never moves.
+
+                  A booking of a hundred SKUs therefore makes a long page, which
+                  is fine: the column headers pin to the top of the panel while
+                  it scrolls, and the footer actions are outside the scroller
+                  and stay put. */}
+              <div>
                 <table className="w-full text-left">
                   <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                     <tr>
-                      <th className="px-5 py-3 w-[45%]">SKU / Product</th>
-                      <th className="px-5 py-3">MSIL Code</th>
-                      {showBoxNo && <th className="px-5 py-3">Box No</th>}
-                      <th className="px-5 py-3 text-center w-[18%]">Quantity</th>
-                      {editable && <th className="px-5 py-3 text-center">Remove</th>}
+                      {/* The inset shadow stands in for the header's border: a
+                          collapsed table does not carry a border along with a
+                          sticky cell, so the underline would be left behind the
+                          moment the list scrolls. */}
+                      <th className="px-5 py-3 w-[45%] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">SKU / Product</th>
+                      <th className="px-5 py-3 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">MSIL Code</th>
+                      {showBoxNo && <th className="px-5 py-3 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Box No</th>}
+                      <th className="px-5 py-3 text-center w-[18%] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Quantity</th>
+                      {editable && <th className="px-5 py-3 text-center sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Remove</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
@@ -515,7 +565,7 @@ export const SalesBookingDrawer = () => {
               </div>
 
               {editable && (
-                <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 text-xs text-slate-500">
+                <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 rounded-b-xl text-xs text-slate-500">
                   Saving adjusts inventory immediately: raising a quantity reserves more stock,
                   lowering it or removing a line returns the difference.
                   {showBoxNo && (

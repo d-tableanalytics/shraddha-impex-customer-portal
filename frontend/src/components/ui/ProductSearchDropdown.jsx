@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Search, Loader2 } from "lucide-react";
 import { useProductStore } from "../../store/productStore";
 import { useUserStore } from "../../store/userStore";
@@ -33,6 +34,77 @@ export const ProductSearchDropdown = ({
 
   const containerRef = useRef(null);
   const listRef = useRef(null);
+  // The input the suggestion panel is anchored to, and the panel itself. The
+  // panel lives in a portal on document.body — see the note where it renders —
+  // so it needs its own ref for the click-outside test.
+  const anchorRef = useRef(null);
+
+  /**
+   * Where to draw the suggestion panel.
+   *
+   * IT IS RENDERED IN A PORTAL, POSITIONED FIXED, because the panel used to be
+   * an absolutely positioned child of this component and was therefore clipped
+   * by any scrolling ancestor. That is not hypothetical: it is what stopped the
+   * Sales Desk booking-items table from being given a max height at all — a
+   * capped, scrolling table would have swallowed the suggestions the moment a
+   * row near the bottom was edited. Taking the panel out of the flow means a
+   * container can scroll without the picker paying for it.
+   *
+   * Measured from the input's viewport rect, and re-measured on any scroll
+   * (capture phase, so an ancestor scrolling counts) and on resize. Fixed
+   * coordinates are viewport coordinates, so a panel that does not follow its
+   * input would simply detach and hang in mid-air.
+   */
+  const [menuStyle, setMenuStyle] = useState(null);
+  const open = isOpen && inputValue.trim().length > 0;
+
+  useLayoutEffect(() => {
+    if (!open) { setMenuStyle(null); return undefined; }
+
+    const place = () => {
+      const el = anchorRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const MAX_H = 300;
+      const GAP = 4;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      // Flip above only when below genuinely cannot hold it AND above is
+      // roomier — otherwise a panel near the bottom of a tall window jumps
+      // upward for no gain.
+      const flip = spaceBelow < 200 && rect.top > spaceBelow;
+      const next = {
+        position: "fixed",
+        left: rect.left,
+        width: rect.width,
+        // Never smaller than a couple of rows: an input scrolled almost out of
+        // view would otherwise compute a sliver, or a negative height.
+        maxHeight: Math.max(140, Math.min(MAX_H, (flip ? rect.top : spaceBelow) - GAP * 2)),
+        ...(flip
+          ? { bottom: window.innerHeight - rect.top + GAP }
+          : { top: rect.bottom + GAP }),
+      };
+      // Only write when something actually moved. The capture listener also
+      // hears the PANEL's own scroll, and a fresh object on every one of those
+      // events would re-render the list mid-scroll — exactly while someone is
+      // reading it and the next page is loading.
+      setMenuStyle((prev) => {
+        if (!prev) return next;
+        const same = Object.keys(next).length === Object.keys(prev).length
+          && Object.keys(next).every((k) => prev[k] === next[k]);
+        return same ? prev : next;
+      });
+    };
+
+    place();
+    // `true` = capture, so scrolling ANY ancestor repositions the panel, not
+    // just the window. Passive: this never cancels the scroll.
+    window.addEventListener("scroll", place, { capture: true, passive: true });
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, { capture: true });
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
 
   // Pull the next page when the list is scrolled near its end. A one-character
   // term matches thousands of SKUs; rendering them all at once would freeze the
@@ -49,12 +121,13 @@ export const ProductSearchDropdown = ({
 
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target)
-      ) {
-        setIsOpen(false);
-      }
+      // The panel is a portal on document.body, so it is NOT inside
+      // containerRef. Without the second test, clicking a suggestion would
+      // count as clicking outside and close the list before the selection
+      // registered — the picker would look broken rather than clipped.
+      const insideField = containerRef.current?.contains(event.target);
+      const insidePanel = listRef.current?.contains(event.target);
+      if (!insideField && !insidePanel) setIsOpen(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
@@ -103,7 +176,7 @@ export const ProductSearchDropdown = ({
   return (
     <div ref={containerRef} className="relative w-full flex flex-col gap-1.5">
 
-      <div className="relative">
+      <div className="relative" ref={anchorRef}>
         <input
           type="text"
           value={inputValue}
@@ -132,11 +205,18 @@ export const ProductSearchDropdown = ({
         <span className="text-xs text-error-500 font-medium">{error}</span>
       )}
 
-      {isOpen && inputValue.trim().length > 0 && (
+      {/* Rendered on document.body rather than here. z-9999 because it now
+          sits above every stacking context in the app — the sales drawer is
+          z-50, the PO dialog z-[60], the picklist preview z-[70] — and a picker
+          drawn under the dialog that opened it is no better than a clipped one.
+          The panel is only mounted once its position is known, so it can never
+          flash at the top-left corner before being placed. */}
+      {open && menuStyle && createPortal(
         <div
           ref={listRef}
           onScroll={handleListScroll}
-          className="absolute top-full left-0 right-0 z-50 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-[300px] overflow-y-auto"
+          style={menuStyle}
+          className="z-9999 bg-white border border-slate-200 rounded-lg shadow-xl overflow-y-auto overscroll-contain"
         >
           {searching && searchResults.length === 0 ? (
             <div className="px-4 py-3 text-sm text-slate-500 flex items-center gap-2">
@@ -201,7 +281,8 @@ export const ProductSearchDropdown = ({
               )}
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
