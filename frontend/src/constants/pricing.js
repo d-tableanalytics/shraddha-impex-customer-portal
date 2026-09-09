@@ -54,6 +54,46 @@ export const formatRupees = (value, { dash = "—" } = {}) => {
   });
 };
 
+/**
+ * GST on a picklist / purchase order.
+ *
+ * ONE RATE FOR THE WHOLE DOCUMENT, applied to the subtotal rather than per
+ * line. The portal holds no HSN code and no per-SKU tax rate — only the
+ * customer's GSTIN, which is an identifier — so a line-level rate would be an
+ * invention. A single document-level rate is not: it is the rate the business
+ * bills at, stated once here so the on-screen document, the printed page and
+ * the PDF cannot quote three different numbers.
+ */
+export const GST_RATE = 0.18;
+
+/** How the rate is named on the paper. Derived, so it can never contradict it. */
+export const GST_LABEL = `GST @ ${Math.round(GST_RATE * 1000) / 10}%`;
+
+/**
+ * A subtotal, its GST and the payable total.
+ *
+ * GST is rounded to paise BEFORE being added, so the printed grand total is
+ * exactly subtotal + the printed GST. Computing the total from the unrounded
+ * tax would leave a document whose own three numbers do not add up.
+ *
+ * A null subtotal — nothing on this document has a rate — yields nulls rather
+ * than zeroes: no tax is due on an amount that does not exist, and every
+ * formatter here prints null as an em dash.
+ */
+export const withGst = (subtotal) => {
+  const base = asPrice(subtotal);
+  if (base === null) {
+    return { subtotal: null, gstRate: GST_RATE, gstAmount: null, grandTotal: null };
+  }
+  const gstAmount = Math.round(base * GST_RATE * 100) / 100;
+  return {
+    subtotal: base,
+    gstRate: GST_RATE,
+    gstAmount,
+    grandTotal: Math.round((base + gstAmount) * 100) / 100,
+  };
+};
+
 /** Rate x quantity, or null when there is no rate. */
 export const lineAmount = (unitPrice, quantity) => {
   const price = asPrice(unitPrice);
@@ -69,4 +109,7 @@ export default {
   asPrice,
   formatRupees,
   lineAmount,
+  GST_RATE,
+  GST_LABEL,
+  withGst,
 };

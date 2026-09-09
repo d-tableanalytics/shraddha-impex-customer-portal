@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 
 import { ERPButton } from "../ui/ERPButton";
 import { COMPANY } from "../../constants/company";
-import { formatRupees } from "../../constants/pricing";
+import { formatRupees, GST_LABEL } from "../../constants/pricing";
 
 /**
  * The picklist / purchase-order preview — the document itself.
@@ -17,11 +17,16 @@ import { formatRupees } from "../../constants/pricing";
  * box numbers, the customer's carries neither — so nothing here has to remember
  * who is looking, and the two cannot drift into different documents.
  *
- * NO TAX COLUMN. The reference invoice this is modelled on carries GST, and the
- * portal holds no tax rate for any SKU — only the customer's GSTIN, which is an
- * identifier rather than a rate. A GST column computed from a rate nobody
- * entered would be a number on a commercial document that no data supports, so
- * the document prices the goods and says so.
+ * NO TAX COLUMN, BUT A TAX LINE. There is still no per-SKU tax rate in the
+ * portal — no HSN code, only the customer's GSTIN, which is an identifier — so
+ * a per-line tax column would be a number no data supports. GST is instead one
+ * rate on the whole subtotal, defined once in constants/pricing.js, shown as
+ * its own row and added into the payable total.
+ *
+ * The columns are not fixed either: `showMsilCode` on the document decides
+ * whether the MSIL code column appears, and it is the CUSTOMER's category that
+ * decides that, not the reader's. Both are settled by the adapter, so this
+ * component still renders whatever it is handed and asks nothing.
  */
 
 const fmtDate = (d) => {
@@ -45,7 +50,10 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
   if (!doc) return null;
 
   const money = doc.totals.pricedLines > 0;
-  const columns = 3 + (doc.showBoxNo ? 1 : 0) + 1 + (money ? 2 : 0);
+  // Cells to the left of Qty, and to the left of the amount — the two spans the
+  // totals rows need. Counted, because the MSIL code column is optional.
+  const labelSpan = 2 + (doc.showMsilCode ? 1 : 0);
+  const moneySpan = labelSpan + 2;
 
   const handleDownload = async () => {
     if (!onDownload) return;
@@ -168,7 +176,10 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
               <thead>
                 <tr className="bg-slate-100 text-[10px] font-bold uppercase text-slate-600">
                   <th className="px-2 py-2 border border-slate-300 w-10 text-center">Sr.</th>
-                  <th className="px-2 py-2 border border-slate-300">Item Code</th>
+                  {/* MSIL customers only — see the note at the top. */}
+                  {doc.showMsilCode && (
+                    <th className="px-2 py-2 border border-slate-300">MSIL Code</th>
+                  )}
                   <th className="px-2 py-2 border border-slate-300">Ko-ken Code</th>
                   <th className="px-2 py-2 border border-slate-300 w-16 text-right">Qty</th>
                   {money && <th className="px-2 py-2 border border-slate-300 w-24 text-right">Price</th>}
@@ -182,9 +193,11 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
                     <td className="px-2 py-1.5 border border-slate-300 text-center text-slate-600">
                       {line.sr}
                     </td>
-                    <td className="px-2 py-1.5 border border-slate-300 font-mono text-slate-700">
-                      {line.itemCode || "—"}
-                    </td>
+                    {doc.showMsilCode && (
+                      <td className="px-2 py-1.5 border border-slate-300 font-mono text-slate-700">
+                        {line.msilCode || "—"}
+                      </td>
+                    )}
                     <td className="px-2 py-1.5 border border-slate-300 font-mono font-semibold text-slate-800">
                       {line.skuCode}
                     </td>
@@ -211,8 +224,8 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
               </tbody>
               <tfoot>
                 <tr className="bg-slate-50 text-xs">
-                  <td colSpan={3} className="px-2 py-2 border border-slate-300 text-right font-bold text-slate-600">
-                    Total
+                  <td colSpan={labelSpan} className="px-2 py-2 border border-slate-300 text-right font-bold text-slate-600">
+                    {money ? "Subtotal" : "Total"}
                   </td>
                   <td className="px-2 py-2 border border-slate-300 text-right font-black text-slate-900">
                     {doc.totals.quantity}
@@ -225,6 +238,31 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
                   )}
                   {doc.showBoxNo && <td className="px-2 py-2 border border-slate-300" />}
                 </tr>
+                {/* The tax, then what is payable. Stated as two rows rather than
+                    one net figure, because a document that only shows the total
+                    cannot be checked against the rate it was charged at. */}
+                {money && (
+                  <tr className="bg-slate-50 text-xs">
+                    <td colSpan={moneySpan} className="px-2 py-2 border border-slate-300 text-right font-bold text-slate-600">
+                      {GST_LABEL}
+                    </td>
+                    <td className="px-2 py-2 border border-slate-300 text-right font-bold text-slate-800">
+                      {formatRupees(doc.totals.gstAmount)}
+                    </td>
+                    {doc.showBoxNo && <td className="px-2 py-2 border border-slate-300" />}
+                  </tr>
+                )}
+                {money && (
+                  <tr className="bg-slate-200 text-xs">
+                    <td colSpan={moneySpan} className="px-2 py-2 border border-slate-300 text-right font-black text-slate-800">
+                      Grand Total
+                    </td>
+                    <td className="px-2 py-2 border border-slate-300 text-right font-black text-slate-900">
+                      {formatRupees(doc.totals.grandTotal)}
+                    </td>
+                    {doc.showBoxNo && <td className="px-2 py-2 border border-slate-300" />}
+                  </tr>
+                )}
               </tfoot>
             </table>
 
@@ -245,7 +283,7 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
 
             <p className="mt-4 pt-3 border-t border-slate-200 text-[10px] text-slate-400 leading-relaxed">
               {money
-                ? "Amounts are in Indian Rupees and exclude any applicable taxes."
+                ? `Amounts are in Indian Rupees. ${GST_LABEL} is charged on the subtotal and included in the grand total.`
                 : "This document lists the items on the order. No pricing has been applied to it."}
               {" "}Generated from the Shraddha Impex customer portal on {fmtDate(new Date())}.
             </p>

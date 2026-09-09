@@ -1,4 +1,5 @@
-import { asPrice, lineAmount, labelForPriceType } from "../constants/pricing";
+import { asPrice, lineAmount, labelForPriceType, withGst } from "../constants/pricing";
+import { isMsilCustomer } from "./moq";
 
 /**
  * The picklist / PO document, as one shape.
@@ -22,6 +23,22 @@ import { asPrice, lineAmount, labelForPriceType } from "../constants/pricing";
  *
  * Neither adapter can invent a price: both read a rate that is already on the
  * data they were handed, and the server decides what that contains.
+ *
+ * WHAT BOTH ADAPTERS DECIDE THE SAME WAY:
+ *
+ *   showMsilCode     whether the document carries a code column at all. An MSIL
+ *                    customer's paper quotes the MSIL code, because that is the
+ *                    code their own systems file it under. Everyone else's
+ *                    quotes none — an MSIL code means nothing to a customer who
+ *                    is not on the MSIL schedule, and before this it printed as
+ *                    a column of em dashes on every one of their documents. The
+ *                    Ko-ken code stays on both: it is the only identification
+ *                    of the goods a line carries.
+ *
+ *   GST              18% of the subtotal, on any document that has money on it.
+ *                    Computed HERE rather than in each renderer so the preview,
+ *                    the printed page and the PDF cannot quote three different
+ *                    totals — the reason this file exists at all.
  */
 
 const asText = (v) => {
@@ -36,13 +53,16 @@ const poRaised = (booking) =>
 /** Rows to a document. Shared tail of both adapters. */
 const assemble = ({
   audience, orderId, poNumber, poDate, date, status, customer,
-  lines, priceTypeLabel, paymentTerm, promiseDate, showBoxNo,
+  lines, priceTypeLabel, paymentTerm, promiseDate, showBoxNo, showMsilCode,
 }) => {
   const totalQuantity = lines.reduce((n, l) => n + (l.quantity || 0), 0);
   const priced = lines.filter((l) => l.unitPrice !== null);
   const totalAmount = priced.length
     ? Math.round(lines.reduce((n, l) => n + (l.amount || 0), 0) * 100) / 100
     : null;
+  // Tax on the subtotal, not per line — see the note on withGst(). An unpriced
+  // document gets nulls, not zeroes, and prints no tax section at all.
+  const { gstRate, gstAmount, grandTotal } = withGst(totalAmount);
 
   return {
     audience,
@@ -57,10 +77,16 @@ const assemble = ({
     // Named only on the internal copy — see the note at the top of this file.
     priceTypeLabel: audience === "internal" ? priceTypeLabel : null,
     showBoxNo,
+    showMsilCode,
     lines: lines.map((l, i) => ({ ...l, sr: i + 1 })),
     totals: {
       quantity: totalQuantity,
+      // `amount` is the SUBTOTAL — goods only, before tax. It keeps its name
+      // because that is what every caller already reads it as.
       amount: totalAmount,
+      gstRate,
+      gstAmount,
+      grandTotal,
       pricedLines: priced.length,
       unpricedLines: lines.length - priced.length,
     },
@@ -82,7 +108,7 @@ export const picklistFromSalesBooking = (booking, { showBoxNo = false } = {}) =>
     const quantity = l.confirmedQty ?? 0;
     const unitPrice = asPrice(l.unitPrice);
     return {
-      itemCode: asText(l.msilCode),
+      msilCode: asText(l.msilCode),
       skuCode: l.skuCode,
       boxNo: asText(l.boxNo),
       quantity,
@@ -116,6 +142,11 @@ export const picklistFromSalesBooking = (booking, { showBoxNo = false } = {}) =>
     paymentTerm: booking.paymentTerm || null,
     promiseDate: booking.promiseDate || null,
     showBoxNo,
+    // Read from the customer this booking BELONGS TO, never from whoever is
+    // looking at it. The desk previews the same paper the customer receives,
+    // and a Sales user's own category would put an MSIL column on a document
+    // for a customer who has nothing to do with MSIL.
+    showMsilCode: isMsilCustomer(profile),
   });
 };
 
@@ -137,7 +168,7 @@ export const picklistFromCustomerOrder = (order) => {
     const quantity = l.confirmedQty ?? l.orderQuantity ?? l.quantity ?? 0;
     const unitPrice = asPrice(l.unitPrice ?? l.product?.unitPrice);
     return {
-      itemCode: asText(l.msilCode || l.product?.msilCode),
+      msilCode: asText(l.msilCode || l.product?.msilCode),
       skuCode,
       boxNo: null, // never on a customer's copy
       quantity,
@@ -168,6 +199,7 @@ export const picklistFromCustomerOrder = (order) => {
     paymentTerm: order.paymentTerm || null,
     promiseDate: order.promiseDate || order.supplyByDate || null,
     showBoxNo: false,
+    showMsilCode: isMsilCustomer(order.customerProfile),
   });
 };
 

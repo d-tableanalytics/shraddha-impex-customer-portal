@@ -2,7 +2,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import { COMPANY } from "../constants/company";
-import { formatRupees } from "../constants/pricing";
+import { formatRupees, GST_LABEL } from "../constants/pricing";
 
 /**
  * The picklist / PO document as a PDF.
@@ -14,7 +14,9 @@ import { formatRupees } from "../constants/pricing";
  *
  * It renders what it is given and decides nothing: if the document has no
  * rates — because the PO was never priced, or because the reader was not
- * entitled to them — the price columns are simply absent.
+ * entitled to them — the price columns are simply absent. Which code column
+ * appears, and the tax on the total, are likewise decided by the adapter in
+ * utils/picklistDocument.js and merely drawn here.
  */
 
 const BRAND_BLUE = [30, 58, 138];
@@ -101,29 +103,88 @@ export const downloadPicklistPdf = async (docModel) => {
     });
 
     /* ── Lines ────────────────────────────────────────────────────────────── */
+    /* THE CODE COLUMN BELONGS TO THE CUSTOMER, not to the document: an MSIL
+       customer's paper carries their MSIL code, everyone else's carries no code
+       column at all. The Ko-ken code stays on both — a line has no other
+       identification of the goods on it, so dropping that too would leave a
+       priced document that does not say what was bought.
+
+       Every column index below is COUNTED rather than written out. autoTable
+       addresses columns by position, and a literal `4:` in columnStyles starts
+       styling the wrong column the moment a column ahead of it disappears —
+       which, with an optional column on the left, is half the documents. */
+    const showMsil = Boolean(docModel.showMsilCode);
     const head = [
-      "Sr.", "Item Code", "Ko-ken Code", "Qty",
-      ...(hasMoney ? ["Price", "Total"] : []),
+      "Sr.",
+      ...(showMsil ? ["MSIL Code"] : []),
+      "Ko-ken Code", "Qty",
+      ...(hasMoney ? ["Rate", "Amount"] : []),
       ...(docModel.showBoxNo ? ["Box"] : []),
     ];
     const body = docModel.lines.map((l) => [
       l.sr,
-      l.itemCode || "—",
+      ...(showMsil ? [l.msilCode || "—"] : []),
       l.skuCode,
       l.quantity,
       ...(hasMoney ? [money(l.unitPrice), money(l.amount)] : []),
       ...(docModel.showBoxNo ? [l.boxNo || "—"] : []),
     ]);
 
+    const columnStyles = {};
+    let col = 0;
+    columnStyles[col++] = { cellWidth: 10, halign: "right" };                // Sr.
+    if (showMsil) columnStyles[col++] = { cellWidth: 34, font: "courier" };  // MSIL Code
+    columnStyles[col++] = { cellWidth: 34, font: "courier" };                // Ko-ken Code
+    columnStyles[col++] = { cellWidth: 16, halign: "right" };                // Qty
+    if (hasMoney) {
+      columnStyles[col++] = { halign: "right" };                            // Rate
+      columnStyles[col++] = { halign: "right" };                            // Amount
+    }
+    if (docModel.showBoxNo) columnStyles[col++] = { cellWidth: 20 };         // Box
+
+    /* The totals block. Every row must add up to the same cell count as the
+       table or autoTable drops it, so both spans and the trailing pad are
+       derived from the columns that were actually built. */
+    const labelSpan = 2 + (showMsil ? 1 : 0);   // Sr. through the last code column
+    const moneySpan = labelSpan + 2;            // ...and on through Qty and Rate
+    const boxPad = docModel.showBoxNo ? [{ content: "", styles: {} }] : [];
+    const GRAND_FILL = [226, 232, 240];
+
     const foot = [[
-      { content: "Total", colSpan: 3, styles: { halign: "right", fontStyle: "bold" } },
+      {
+        content: hasMoney ? "Subtotal" : "Total",
+        colSpan: labelSpan,
+        styles: { halign: "right", fontStyle: "bold" },
+      },
       { content: String(docModel.totals.quantity), styles: { halign: "right", fontStyle: "bold" } },
       ...(hasMoney ? [
         { content: "", styles: {} },
         { content: money(docModel.totals.amount), styles: { halign: "right", fontStyle: "bold" } },
       ] : []),
-      ...(docModel.showBoxNo ? [{ content: "", styles: {} }] : []),
+      ...boxPad,
     ]];
+
+    // Tax on its own line rather than folded into the total: a commercial
+    // document has to say what the tax WAS, not only what it came to.
+    if (hasMoney) {
+      foot.push([
+        { content: GST_LABEL, colSpan: moneySpan, styles: { halign: "right" } },
+        { content: money(docModel.totals.gstAmount), styles: { halign: "right" } },
+        ...boxPad,
+      ]);
+      foot.push([
+        {
+          content: "Grand Total",
+          colSpan: moneySpan,
+          styles: { halign: "right", fontStyle: "bold", fillColor: GRAND_FILL },
+        },
+        {
+          content: money(docModel.totals.grandTotal),
+          styles: { halign: "right", fontStyle: "bold", fillColor: GRAND_FILL },
+        },
+        ...boxPad.map(() => ({ content: "", styles: { fillColor: GRAND_FILL } })),
+      ]);
+    }
 
     autoTable(pdf, {
       startY: pdf.lastAutoTable.finalY + 4,
@@ -135,13 +196,7 @@ export const downloadPicklistPdf = async (docModel) => {
       styles: { fontSize: 8, cellPadding: 2, valign: "middle" },
       headStyles: { fillColor: BRAND_BLUE, fontSize: 7.5 },
       footStyles: { fillColor: [244, 246, 248], textColor: [15, 23, 42] },
-      columnStyles: {
-        0: { cellWidth: 10, halign: "right" },
-        1: { cellWidth: 34, font: "courier" },
-        2: { cellWidth: 34, font: "courier" },
-        3: { cellWidth: 14, halign: "right" },
-        ...(hasMoney ? { 4: { halign: "right" }, 5: { halign: "right" } } : {}),
-      },
+      columnStyles,
       didDrawPage: () => {
         const pageH = pdf.internal.pageSize.getHeight();
         pdf.setDrawColor(226, 232, 240).setLineWidth(0.3);
@@ -149,7 +204,7 @@ export const downloadPicklistPdf = async (docModel) => {
         pdf.setFont("helvetica", "normal").setFontSize(7).setTextColor(...SLATE);
         pdf.text(
           hasMoney
-            ? "Amounts are in Indian Rupees and exclude any applicable taxes."
+            ? `Amounts are in Indian Rupees. ${GST_LABEL} is charged on the subtotal and included in the grand total.`
             : "No pricing has been applied to this order.",
           margin, pageH - 11,
         );
