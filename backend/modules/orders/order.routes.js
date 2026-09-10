@@ -10,6 +10,7 @@ import {
   updateOrderPO,
   cancelBooking,
   getBookingQuantityHistory,
+  scheduleBooking,
 } from './order.controller.js';
 import { updateBookingItems } from '../sales/sales.controller.js';
 import { protect } from '../../middlewares/auth.js';
@@ -42,6 +43,29 @@ router.get('/booking/:orderId/timeline', protect, getBookingStatusTimeline);
 // Who changed the quantities, when, and to what. Same ownership rule as the
 // timeline above — the handler applies it.
 router.get('/booking/:orderId/quantity-history', protect, getBookingQuantityHistory);
+
+/*
+ * Set the expected availability date on a booking's SKU lines, and email the
+ * customer their delivery schedule.
+ *
+ * `manage_orders` — the same permission that advances the booking lifecycle
+ * above, because both are the desk making a commitment to the customer about
+ * goods. Deliberately NOT `view_all_bookings`: seeing every booking is not the
+ * same authority as promising a date on one.
+ *
+ * The indent equivalent (`PATCH /reservations/schedule`) is admin-only via
+ * isSuperAdmin. This is a narrower, permission-based gate rather than a role
+ * check, which is the direction the rest of this router already went — and
+ * anyone holding the wildcard satisfies it anyway, so no existing admin loses
+ * access.
+ */
+router.put(
+  '/booking/:orderId/schedule',
+  protect,
+  authorize('manage_orders'),
+  auditLogger('Schedule Booking'),
+  scheduleBooking,
+);
 
 // AMEND QUANTITIES ON A BOOKING. ADMIN AND SALES ONLY.
 //

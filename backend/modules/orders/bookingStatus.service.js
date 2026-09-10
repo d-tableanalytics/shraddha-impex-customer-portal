@@ -26,7 +26,7 @@
  * admin bell, which is what makes it actionable rather than merely logged.
  */
 
-import Order from '../../models/Order.js';
+import Order, { LINE_ORDER } from '../../models/Order.js';
 import User from '../../models/User.js';
 import BookingStatusEvent from '../../models/BookingStatusEvent.js';
 import { io } from '../../server.js';
@@ -181,7 +181,7 @@ export const applyBookingStatus = async ({ orderId, status, remarks, actor = nul
     return { ok: false, code: 400, message: `Invalid status. Allowed: ${allowed.join(', ')}` };
   }
 
-  const rows = await Order.find({ orderId });
+  const rows = await Order.find({ orderId }).sort(LINE_ORDER);
   if (!rows.length) {
     return { ok: false, code: 404, message: 'Booking not found.' };
   }
@@ -274,7 +274,7 @@ export const applyBookingStatus = async ({ orderId, status, remarks, actor = nul
 export const recordExternalStatusChange = async ({
   orderId, status, previousStatus, rows, actor = null, remarks = null, changedAt = new Date(),
 }) => {
-  const lines = rows?.length ? rows : await Order.find({ orderId });
+  const lines = rows?.length ? rows : await Order.find({ orderId }).sort(LINE_ORDER);
   if (!lines.length) return null;
   return recordEvent({ orderId, rows: lines, status, previousStatus, actor, remarks, changedAt });
 };
@@ -301,7 +301,7 @@ export const recordExternalStatusChange = async ({
 export const getBookingTimeline = async (orderId, rows = null) => {
   const [events, lines] = await Promise.all([
     BookingStatusEvent.find({ orderId }).sort({ changedAt: 1 }).lean(),
-    rows || Order.find({ orderId }).lean(),
+    rows || Order.find({ orderId }).sort(LINE_ORDER).lean(),
   ]);
 
   if (!lines.length) return events;
@@ -370,7 +370,7 @@ export const resendStatusMail = async ({ eventId, actor = null, req = null }) =>
     };
   }
 
-  const rows = await Order.find({ orderId: event.orderId });
+  const rows = await Order.find({ orderId: event.orderId }).sort(LINE_ORDER);
   if (!rows.length) return { ok: false, code: 404, message: 'Booking not found.' };
 
   const notification = await notifyCustomer({

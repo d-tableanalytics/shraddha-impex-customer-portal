@@ -135,6 +135,34 @@ export const picklistFromSalesBooking = (booking, { showBoxNo = false } = {}) =>
       gstNumber: booking.gstCode || profile.gstNumber || null,
       shopNumber: booking.shopNumber || profile.shopNumber || null,
       vendorCode: booking.vendorCode || profile.vendorNumber || null,
+      /*
+       * Shipping and billing, as two separate facts.
+       *
+       * They used to be collapsed into the single `location` above and printed
+       * under one "Place of supply" heading, because no address existed on a
+       * customer record at all — see models/User.js.
+       *
+       * Order of preference, and each step is deliberate:
+       *   1. the value SNAPSHOTTED on the booking, which is the address the
+       *      goods were actually committed against;
+       *   2. the customer's CURRENT profile address, for the ~165 bookings that
+       *      predate the snapshot — friendlier than printing nothing, and the
+       *      only address the system knows for them;
+       *   3. `location`, the delivery town, which is what the picklist showed
+       *      before this change and so is never a regression;
+       *   4. null, which the renderers print as an em dash.
+       *
+       * Billing falls back to SHIPPING last of all: most customers bill where
+       * they receive, and an invoice address of "—" is worse than a correct
+       * guess. The two headings stay separate either way, so the reader can see
+       * that they are the same rather than having to infer it.
+       */
+      shippingAddress:
+        booking.shippingAddress || profile.shippingAddress || booking.location || profile.location || null,
+      billingAddress:
+        booking.billingAddress || profile.billingAddress
+        || booking.shippingAddress || profile.shippingAddress
+        || booking.location || profile.location || null,
     },
     lines,
     priceTypeLabel: booking.pricing?.priceTypeLabel
@@ -193,6 +221,15 @@ export const picklistFromCustomerOrder = (order) => {
       gstNumber: order.gstCode || order.customerProfile?.gstNumber || null,
       shopNumber: order.shopNumber || order.customerProfile?.shopNumber || null,
       vendorCode: order.vendorCode || order.customerProfile?.vendorNumber || null,
+      // Same fallback ladder as the internal adapter above — the two documents
+      // are the same paper and must never disagree about where goods are going.
+      shippingAddress:
+        order.shippingAddress || order.customerProfile?.shippingAddress
+        || order.customerLocation || order.location || null,
+      billingAddress:
+        order.billingAddress || order.customerProfile?.billingAddress
+        || order.shippingAddress || order.customerProfile?.shippingAddress
+        || order.customerLocation || order.location || null,
     },
     lines: source,
     priceTypeLabel: null,

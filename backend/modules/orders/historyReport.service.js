@@ -1,4 +1,4 @@
-import Order from '../../models/Order.js';
+import Order, { LINE_ORDER } from '../../models/Order.js';
 import Reservation from '../../models/Reservation.js';
 import User from '../../models/User.js';
 import { isMsilCustomer } from '../../utils/moq.js';
@@ -145,8 +145,8 @@ export const gatherBookingRows = async ({ from, to }) => {
   const orders = await Order.find(
     { createdAt: { $gte: from, $lt: to } },
     'orderId user company poNumber status date createdAt location shopNumber skuCode msilCode '
-    + 'brand bookedQty confirmedQty pendingQty requestedQty',
-  ).sort({ createdAt: 1, orderId: 1 }).lean();
+    + 'brand bookedQty confirmedQty pendingQty requestedQty lineSeq',
+  ).sort({ createdAt: 1, orderId: 1, ...LINE_ORDER }).lean();
 
   const byId = await customerIndex(orders.map((o) => o.user));
 

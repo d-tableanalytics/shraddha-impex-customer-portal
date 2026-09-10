@@ -131,6 +131,13 @@ const groupIntoBookings = (rawOrders) => {
       bookedQty: r.bookedQty ?? r.requestedQty ?? 0,   // originally booked
       confirmedQty: r.confirmedQty ?? r.requestedQty ?? 0, // fulfilled from stock
       pendingQty: r.pendingQty ?? 0,                    // indent (unfulfilled)
+      // Per-line status. The booking-level `status` above is derived from the
+      // primary row and cannot answer "does THIS line still have a delivery
+      // ahead of it" for a booking whose lines have diverged.
+      status: r.status,
+      // The delivery schedule an admin sets and the customer is emailed.
+      scheduledDate: r.scheduledDate || null,
+      scheduleNote: r.scheduleNote || null,
       unitPrice: asPrice(r.unitPrice),
       amount: lineAmount(r.unitPrice, r.confirmedQty ?? r.requestedQty ?? 0),
     }));
@@ -217,6 +224,21 @@ export const ordersApi = {
   },
 
   /** Who changed the quantities on this booking, when, and to what. */
+  /**
+   * Set or clear the expected availability date on a booking's SKU lines.
+   *
+   * Sends a LIST, mirroring the indent equivalent: several dates set against one
+   * inbound delivery are ONE decision, and the server sends the customer one
+   * delivery schedule email for it rather than one per line.
+   */
+  scheduleBooking: async (orderId, items) => {
+    const res = await api.put(
+      `/orders/booking/${encodeURIComponent(orderId)}/schedule`,
+      { items },
+    );
+    return res.data;
+  },
+
   getQuantityHistory: async (orderId) => {
     const res = await api.get(
       `/orders/booking/${encodeURIComponent(orderId)}/quantity-history`,

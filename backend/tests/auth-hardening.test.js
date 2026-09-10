@@ -50,6 +50,9 @@ const code = async (rel) =>
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
+/** Same thing under a name that reads at the call site. */
+const stripped = code;
+
 // ---------------------------------------------------------------------------
 // Password hashing (AD-10)
 // ---------------------------------------------------------------------------
@@ -351,14 +354,92 @@ test('changing or resetting a password revokes existing sessions', async () => {
   );
 });
 
-test('refresh reuse revokes every session rather than refusing one request', async () => {
+/**
+ * THIS TEST WAS INVERTED ON PURPOSE, AND HERE IS WHY.
+ *
+ * It used to assert that reuse detection nulls the account-wide
+ * `refreshTokenHash` — i.e. that ONE bad token signs the account out of every
+ * device. That was the intended design, and in production it was the bug:
+ *
+ *   auth.refresh                  69
+ *   auth.refresh.reuse_detected   27   ← 28% of all refresh attempts
+ *
+ * with one admin force-signed-out 13 times in five hours. Two ordinary things
+ * are indistinguishable from a replayed token under an account-wide hash — a
+ * second browser TAB (same cookie, both expire together, both refresh at once)
+ * and a second DEVICE (signing in overwrote the one hash).
+ *
+ * Detection is now scoped to the SESSION that presented the token, so a replay
+ * still fails and is still audited — it just cannot take the account's other
+ * devices with it. The assertions below pin the properties that make that safe.
+ */
+test('refresh reuse refuses one session without revoking the account', async () => {
   const code = await src('../modules/auth/auth.controller.js');
+
+  // Still a constant-time comparison, still in this controller.
   assert.match(code, /refreshHashMatches/);
+  // Still audited, so a real attack remains visible.
   assert.match(code, /AUTH_REFRESH_REUSE_DETECTED/);
+
+  // The blast radius is gone: the refuse branch must clear the cookie and
+  // return, and must NOT null the account-wide hash on its way out.
+  assert.doesNotMatch(
+    code,
+    /AUTH_REFRESH_REUSE_DETECTED[\s\S]{0,400}?\$set: \{ refreshTokenHash: null \}/,
+    'reuse detection must no longer revoke every session for the account',
+  );
+
+  // Sessions are per device.
+  assert.match(code, /refreshSessions/, 'sessions must be stored per device');
+  // Rotation is a compare-and-swap on ONE element, not a blind overwrite.
   assert.match(
     code,
-    /\$set: \{ refreshTokenHash: null \} \}\);\s*\n\s*res\.clearCookie/,
-    'reuse detection must null the stored hash',
+    /\$elemMatch: \{ hash: currentHash \}/,
+    'rotation must be a compare-and-swap against the presented session',
+  );
+  // The grace window is what makes two racing tabs survive.
+  assert.match(code, /REFRESH_GRACE_MS/, 'a rotation grace window must exist');
+  assert.match(
+    code,
+    /prevHash/,
+    'the just-superseded token must remain acceptable inside the window',
+  );
+});
+
+/**
+ * The grace branch must not touch the cookie.
+ *
+ * The losing tab's response used to `res.clearCookie(...)`, which deleted the
+ * refresh cookie the WINNING tab had just been issued — so even the tab that
+ * won the race was signed out at its next refresh. Serving a bare access token
+ * with no Set-Cookie and no clearCookie is what keeps the winner alive.
+ */
+test('a racing tab is served without rotating or touching the cookie', async () => {
+  // Comments stripped: the branch EXPLAINS that it must not set or clear the
+  // cookie, so matching the prose would fail on its own rationale.
+  const code = await stripped('../modules/auth/auth.controller.js');
+  const graceBranch = /if \(onGrace\) \{[\s\S]*?token = signAccessToken\(user\._id\);/;
+  assert.match(code, graceBranch, 'the grace branch must mint a bare access token');
+
+  const branch = code.match(graceBranch)?.[0] ?? '';
+  assert.doesNotMatch(branch, /res\.cookie\(/, 'the grace branch must not re-issue a cookie');
+  assert.doesNotMatch(branch, /clearCookie/, 'the grace branch must not clear the winner\'s cookie');
+});
+
+/**
+ * A deploy must not sign out everyone holding a valid cookie.
+ *
+ * Every existing account has a `refreshTokenHash` string and an empty
+ * `refreshSessions`, so without an adoption path their first refresh after this
+ * ships would find no session and 401.
+ */
+test('a session issued under the old single-hash model is adopted, not rejected', async () => {
+  const code = await src('../modules/auth/auth.controller.js');
+  assert.match(code, /adoptLegacySession/, 'legacy cookies must be adopted');
+  assert.match(
+    code,
+    /refreshHashMatches\(presentedHash, user\.refreshTokenHash\)/,
+    'adoption must verify the legacy hash before trusting it',
   );
 });
 

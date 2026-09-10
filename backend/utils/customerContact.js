@@ -35,7 +35,7 @@ import User from '../models/User.js';
  */
 
 /** What the screens are allowed to see about a customer. Never the password. */
-const PROFILE_FIELDS = 'user company email customerName phone location shopNumber vendorNumber gstNumber customerCategory';
+const PROFILE_FIELDS = 'user company email customerName phone location shopNumber vendorNumber gstNumber customerCategory shippingAddress billingAddress';
 
 /** The shape every screen reads. Present even when the user record is gone. */
 const profileOf = (u) => ({
@@ -51,6 +51,11 @@ const profileOf = (u) => ({
   vendorNumber: u?.vendorNumber || null,
   gstNumber: u?.gstNumber || null,
   customerCategory: u?.customerCategory || null,
+  // The picklist prints these under their own headings. Null on every account
+  // created before they existed, which the picklist handles by falling back to
+  // `location`.
+  shippingAddress: u?.shippingAddress || null,
+  billingAddress: u?.billingAddress || null,
 });
 
 export const attachCustomerDetails = async (items) => {

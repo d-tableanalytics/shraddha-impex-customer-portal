@@ -29,6 +29,7 @@ import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
 import { canViewLineItemBoxNo, canEditBookingQuantity, hasPermission, PERMISSIONS, isSuperAdmin} from "../../utils/permissions";
+import { BookingScheduleSection } from "./BookingScheduleSection";
 import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
 import { PackageX, Receipt } from "lucide-react";
@@ -61,6 +62,7 @@ export const OrderDrawer = () => {
     quantityHistoryFor,
     quantityHistoryLoading,
     fetchQuantityHistory,
+    refreshSelected,
   } = useOrderHistoryStore();
   const { user } = useUserStore();
   const { pendingItems, fetchPendingReservations } = useCartStore();
@@ -773,6 +775,23 @@ export const OrderDrawer = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Delivery schedule — sits under the lines because it is about
+                    those lines, matching where Indent History puts its twin.
+
+                    Gated on the SAME permission the endpoint enforces
+                    (`manage_orders`), so the control is never offered to someone
+                    whose save would be refused. The indent equivalent uses a
+                    bare isSuperAdmin check; this follows the rest of
+                    order.routes.js instead, which is permission-based — and any
+                    admin satisfies it through the wildcard regardless. */}
+                {hasPermission(user, PERMISSIONS.MANAGE_ORDERS) && (
+                  <BookingScheduleSection
+                    orderId={selectedOrder.orderNumber}
+                    lines={selectedOrder.lineItems || []}
+                    onSaved={() => refreshSelected(selectedOrder.orderNumber)}
+                  />
+                )}
 
                 {/* Indents tied to this booking (matched by PO number) */}
                 {bookingIndents.length > 0 && (

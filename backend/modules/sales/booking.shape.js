@@ -118,7 +118,30 @@ export const shapeBooking = (rows, boxNumbers = new Map(), { includePricing = fa
     // The raw location, distinct from shippingAddress below — the pick list
     // prints "location + phone" as a pair for the person carrying it.
     location: first.location || null,
-    shippingAddress: first.shippingAddress || first.location || null,
+    /*
+     * The address SNAPSHOTTED on the booking, or null. No fallback here.
+     *
+     * This used to read `first.shippingAddress || first.location`, quietly
+     * substituting the delivery TOWN when no address had been snapshotted. That
+     * was harmless while the picklist printed a single "Place of supply" line —
+     * every consumer had its own `|| location` anyway — but it becomes a bug the
+     * moment shipping and billing are printed as separate, labelled addresses:
+     * the collapse made this field ALWAYS truthy, so a picklist could never tell
+     * "we snapshotted an address" from "we only know the town", and the
+     * client-side fallback to the customer's profile address was unreachable.
+     * A legacy booking printed "Pune" under Shipping Address while the
+     * customer's real warehouse address sat unused on their record.
+     *
+     * So this now reports the FACT and the picklist owns the display policy —
+     * in one place, shared by both adapters, instead of half here and half
+     * there. `location` is still exposed on its own line above for the
+     * consumers that want the town.
+     *
+     * Safe for every existing reader: PoConfirmModal, OrderToolbar and the
+     * picklist's own `location` field each already carry their own
+     * `|| booking.location`.
+     */
+    shippingAddress: first.shippingAddress || null,
     billingAddress: first.billingAddress || null,
     shopNumber: first.shopNumber || null,
     gstCode: first.gstCode || null,

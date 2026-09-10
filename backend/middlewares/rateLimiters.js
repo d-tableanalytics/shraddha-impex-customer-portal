@@ -65,12 +65,59 @@ export const loginLimiter = rateLimit({
 /**
  * Token refresh. Looser than login: a legitimate client refreshes on every
  * session resume and on every tab, so this is a runaway guard, not a gate.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS KEYED PER ACCOUNT AND NOT PER IP
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * It used to inherit the default key, which is the client IP. `loginLimiter`
+ * above already explains why that is wrong here — "IP alone lets one NAT'd
+ * office lock out its own staff" — but the reasoning was never applied to this
+ * limiter, and refresh is where it bites hardest:
+ *
+ *   - the whole office leaves through one public address, so they shared a
+ *     single budget of 30;
+ *   - every open tab refreshes on its own schedule, and `InboxBell` polls every
+ *     15 seconds in each visible tab, keeping them awake and phase-locked;
+ *   - a 429 is not a 401, so it bypassed the frontend's refresh-and-retry and
+ *     went straight to "log out", and the message told users to sign in again.
+ *
+ * Net effect: a busy office could throttle ITSELF into a mass logout without a
+ * single malicious request. Keying on the account makes one user's tabs unable
+ * to affect a colleague, which is the same property loginLimiter gets from
+ * including the email.
+ *
+ * The account is read from the refresh cookie by DECODING, not verifying. This
+ * is a bucketing key, not an authorization decision — the real verification
+ * happens in the controller moments later, and a forged id here can only cost
+ * the forger their own bucket. An unreadable or absent cookie falls back to the
+ * IP, which is the correct bucket for a caller who has not identified
+ * themselves at all.
  */
 export const refreshLimiter = rateLimit({
   ...base,
   windowMs: 15 * MINUTE,
-  limit: 30,
-  handler: tooMany('Too many refresh attempts. Please sign in again.'),
+  limit: 60,
+  keyGenerator: (req) => {
+    const raw = req.cookies?.refreshToken;
+    if (raw) {
+      // Payload only: split the JWT and read `id`. No signature check, and any
+      // malformed input falls through to the IP bucket.
+      try {
+        const [, body] = String(raw).split('.');
+        const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+        if (payload?.id) return `user:${payload.id}`;
+      } catch {
+        // Fall through.
+      }
+    }
+    return ipKeyGenerator(req.ip);
+  },
+  // A refresh that WORKED is not evidence of a runaway client, and charging for
+  // it is what turned an ordinary working day into a throttle. Only failures
+  // count now — the same choice loginLimiter makes, for the same reason.
+  skipSuccessfulRequests: true,
+  handler: tooMany('Too many refresh attempts. Please wait a moment and try again.'),
 });
 
 /** Password change and admin reset. Keyed per account where one is known. */

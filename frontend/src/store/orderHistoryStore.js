@@ -228,6 +228,21 @@ export const useOrderHistoryStore = create((set, get) => ({
     }
   },
 
+  /**
+   * Re-read the bookings and keep the open drawer on the refreshed copy.
+   *
+   * The tail of `saveLineQuantities`, extracted because the delivery-schedule
+   * control needs exactly the same thing after a save. Deliberately NOT
+   * `refresh()`, which also clears filters, search, sort and paging — that is
+   * right for a "reset the view" button and wrong after an edit, where it would
+   * silently throw away the admin's filters every time they saved a date.
+   */
+  refreshSelected: async (orderNumber) => {
+    await get().fetchOrders();
+    const updated = get().allOrders.find((o) => o.orderNumber === orderNumber);
+    if (updated) set({ selectedOrder: updated });
+  },
+
   // Multi-select for export (keyed by booking orderNumber).
   toggleSelectId: (id) =>
     set((state) => ({

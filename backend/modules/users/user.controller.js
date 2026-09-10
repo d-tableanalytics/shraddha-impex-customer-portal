@@ -46,6 +46,24 @@ export const CUSTOMER_MASTER_FIELDS = [
 ];
 
 /**
+ * Addresses, which are editable — deliberately NOT part of the master set above.
+ *
+ * `CUSTOMER_MASTER_FIELDS` identify the legal entity we trade with, and the
+ * intent is that they do not change on a live account. An address is the
+ * opposite: a customer moving warehouse is ordinary, and refusing the edit would
+ * mean deleting and recreating the account to record it.
+ *
+ * Changing them does not rewrite history. Every booking snapshots the addresses
+ * onto its own Order rows at creation, so a picklist already issued keeps the
+ * address it was picked against — see models/User.js.
+ *
+ * Optional on creation: an account can be made before its addresses are known,
+ * and the picklist degrades to the customer's `location` until they are filled
+ * in. That is why they are absent from the required-fields loop below.
+ */
+export const CUSTOMER_ADDRESS_FIELDS = ['shippingAddress', 'billingAddress'];
+
+/**
  * Who this actor is allowed to act on.
  *
  * MANAGE_USERS (Admin) is unrestricted. MANAGE_CUSTOMER_USERS (Sales) may only
@@ -165,6 +183,14 @@ export const createUser = async (req, res, next) => {
           missing,
         });
       }
+
+      // Addresses are accepted here but never required — see the note on
+      // CUSTOMER_ADDRESS_FIELDS. An account created without them still works;
+      // its picklists fall back to `location` until they are filled in.
+      for (const field of CUSTOMER_ADDRESS_FIELDS) {
+        const value = typeof req.body[field] === 'string' ? req.body[field].trim() : req.body[field];
+        if (value) master[field] = String(value);
+      }
     }
 
     const normalisedEmail = email.toLowerCase();
@@ -205,7 +231,7 @@ export const createUser = async (req, res, next) => {
 };
 
 // Fields an admin may change after creation.
-const ALLOWED_UPDATES = ['user', 'company', 'email', 'role', 'customerCategory', 'status', 'brandAccess', 'showMsilCode', ...CUSTOMER_MASTER_FIELDS];
+const ALLOWED_UPDATES = ['user', 'company', 'email', 'role', 'customerCategory', 'status', 'brandAccess', 'showMsilCode', ...CUSTOMER_MASTER_FIELDS, ...CUSTOMER_ADDRESS_FIELDS];
 
 // Admin updates a user, including changing the customer category at any time.
 // Status transitions have side effects:
@@ -353,7 +379,7 @@ export const resetUserPassword = async (req, res, next) => {
       // any session the previous holder still has must stop working.
       await User.updateOne(
         { _id: user._id },
-        { $set: { password: hashed, refreshTokenHash: null } },
+        { $set: { password: hashed, refreshTokenHash: null, refreshSessions: [] } },
       );
       return res.status(200).json({ success: true, message: `Password reset for ${user.email}.` });
     }

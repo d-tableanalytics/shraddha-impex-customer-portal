@@ -239,6 +239,9 @@ const bookForCustomer = async (customer, indents) => {
     });
 
     rows.push({
+      // These rows ARE the whole booking and are pushed in indent order, so the
+      // running length is the line's position. See models/Order.js on `lineSeq`.
+      lineSeq: rows.length,
       orderId: orderNumber,
       brand: brandFromModel(product),
       user: customer._id,
@@ -264,6 +267,11 @@ const bookForCustomer = async (customer, indents) => {
       vendorCode: product.vendorCode || null,
       emailId: customer.email || null,
       phoneNumber: customer.phone || null,
+      // Snapshotted for the picklist, as on every other creation path.
+      shippingAddress: customer.shippingAddress || null,
+      billingAddress: customer.billingAddress || null,
+      shopNumber: customer.shopNumber || null,
+      gstCode: customer.gstNumber || null,
       stockState: 'reserved',
     });
     taken.push(indent);

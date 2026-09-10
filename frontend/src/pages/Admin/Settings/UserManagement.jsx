@@ -30,6 +30,32 @@ const CUSTOMER_MASTER_FIELDS = [
   { key: 'gstNumber', label: 'GST Number', placeholder: '22AAAAA0000A1Z5' },
 ];
 
+/**
+ * Delivery and invoice addresses.
+ *
+ * Mirrors CUSTOMER_ADDRESS_FIELDS in backend/modules/users/user.controller.js.
+ *
+ * SEPARATE from the master set above, and optional, for two reasons: an address
+ * legitimately changes when a customer moves (the master fields identify the
+ * legal entity and are meant not to), and every account that already exists has
+ * neither, so requiring them would block editing any of them.
+ *
+ * Textareas, not inputs — an address is several lines, and the picklist prints
+ * the newlines the admin types here.
+ */
+const CUSTOMER_ADDRESS_FIELDS = [
+  {
+    key: 'shippingAddress',
+    label: 'Shipping Address',
+    placeholder: 'Where goods are delivered',
+  },
+  {
+    key: 'billingAddress',
+    label: 'Billing Address',
+    placeholder: 'Where the invoice goes — leave blank if same as shipping',
+  },
+];
+
 /** A GST number is 15 characters. Checked loosely — format varies in practice. */
 const gstLooksValid = (v) => String(v || '').trim().length === 15;
 const phoneLooksValid = (v) => String(v || '').replace(/[^0-9]/g, '').length >= 7;
@@ -63,6 +89,8 @@ const emptyForm = {
   shopNumber: '',
   vendorNumber: '',
   gstNumber: '',
+  shippingAddress: '',
+  billingAddress: '',
   // The new account's access level, in the same vocabulary the edit modal and
   // the table use: 'Customer' and 'MSIL' are levels here, not a role plus a
   // category. It is turned back into { role, customerCategory } on submit.
@@ -254,6 +282,8 @@ export const UserManagement = () => {
       shopNumber: u.shopNumber || '',
       vendorNumber: u.vendorNumber || '',
       gstNumber: u.gstNumber || '',
+      shippingAddress: u.shippingAddress || '',
+      billingAddress: u.billingAddress || '',
     });
   };
 
@@ -652,6 +682,20 @@ export const UserManagement = () => {
                   </Field>
                 ))}
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                {CUSTOMER_ADDRESS_FIELDS.map((f) => (
+                  <Field key={f.key} label={f.label}>
+                    <textarea
+                      value={form[f.key]}
+                      onChange={setField(f.key)}
+                      className={`${inputCls} min-h-[64px] resize-y`}
+                      placeholder={f.placeholder}
+                      rows={3}
+                    />
+                  </Field>
+                ))}
+              </div>
             </div>
           )}
 
@@ -760,6 +804,20 @@ export const UserManagement = () => {
                         onChange={setEditField(f.key)}
                         className={inputCls}
                         placeholder={f.placeholder}
+                      />
+                    </Field>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                  {CUSTOMER_ADDRESS_FIELDS.map((f) => (
+                    <Field key={f.key} label={f.label}>
+                      <textarea
+                        value={editForm[f.key]}
+                        onChange={setEditField(f.key)}
+                        className={`${inputCls} min-h-[64px] resize-y`}
+                        placeholder={f.placeholder}
+                        rows={3}
                       />
                     </Field>
                   ))}

@@ -18,7 +18,7 @@
  */
 
 import AuditLog from '../models/AuditLog.js';
-import Order from '../models/Order.js';
+import Order, { LINE_ORDER } from '../models/Order.js';
 import Reservation from '../models/Reservation.js';
 
 /**
@@ -191,7 +191,7 @@ export const changeLabel = (l) => {
 export const buildBookingJourney = async ({ orderId, rows = null }) => {
   const orderRows = rows && rows.length
     ? rows
-    : await Order.find({ orderId }).sort({ createdAt: 1 });
+    : await Order.find({ orderId }).sort(LINE_ORDER);
   if (!orderRows.length) return null;
 
   const summary = await buildChangeSummary(orderRows, orderId);

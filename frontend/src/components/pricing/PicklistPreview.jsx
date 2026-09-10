@@ -171,6 +171,39 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
               </div>
             </div>
 
+            {/*
+              Shipping and billing, side by side and full width.
+
+              Their own row rather than two more `Field`s in the grid above: a
+              `Field` is a single label/value line, and an address is several —
+              it would either clip or push the terms column out of alignment.
+
+              BOTH HEADINGS ALWAYS RENDER, even when the two addresses are the
+              same. Showing one heading would leave the reader unable to tell
+              "billing is the same" apart from "billing is unknown".
+
+              `whitespace-pre-line` so a multi-line address stored with newlines
+              prints as the customer typed it.
+            */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 py-3 border-b border-slate-200">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">
+                  Shipping Address
+                </p>
+                <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line">
+                  {doc.customer.shippingAddress || "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">
+                  Billing Address
+                </p>
+                <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line">
+                  {doc.customer.billingAddress || "—"}
+                </p>
+              </div>
+            </div>
+
             {/* Lines */}
             <table className="w-full mt-4 text-left border-collapse">
               <thead>

@@ -7,15 +7,25 @@
  *
  * This adds the standard pair:
  *
- *   access token   short-lived (15m), sent as a Bearer header, never stored
- *                  anywhere durable
+ *   access token   sent as a Bearer header. Its lifetime is
+ *                  JWT_ACCESS_EXPIRES_IN / JWT_EXPIRES_IN, defaulting to 1 day
+ *                  — see the note on `accessTokenTtl` for why the previous 15m
+ *                  default was being applied even when .env said otherwise.
  *   refresh token  long-lived (7d), delivered ONLY as an httpOnly cookie, so
  *                  JavaScript - and therefore XSS - cannot read it
  *
  * Rotation and reuse detection: each refresh issues a new token and stores a
- * hash of it. Presenting a refresh token that does not match the stored hash
- * means the previous one was replayed, so every session for that user is
- * revoked rather than merely refusing the request.
+ * hash of it. Presenting a token that does not match is a replay.
+ *
+ * WHAT CHANGED, AND WHY IT HAD TO
+ *
+ * Reuse detection used to be scoped to the ACCOUNT — one hash on the user, and
+ * any mismatch nulled it, revoking every session. In production that fired on
+ * 28% of all refresh attempts, because two ordinary things look exactly like a
+ * replay under that model: a second browser tab, and a second device. The hash
+ * is now per SESSION (`User.refreshSessions`), with a short grace window for a
+ * token that was rotated moments ago by a racing tab. Detection still fires; it
+ * just no longer takes the account's other devices down with it.
  *
  * AD-14 makes the httpOnly cookie practical: HRMS is served from the same
  * origin as the portal, so there is no cross-site cookie problem to work
@@ -28,18 +38,75 @@ import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 
 /**
- * Access-token lifetime.
+ * ⚠ READ BEFORE MAKING THESE `const` AGAIN.
  *
- * `JWT_EXPIRES_IN` is the portal's existing variable and is still honoured, so
- * an environment that sets it keeps its current behaviour. New deployments get
- * the short default.
+ * These used to be module-level constants:
+ *
+ *     export const ACCESS_TOKEN_TTL = process.env.JWT_ACCESS_EXPIRES_IN || ... || '15m';
+ *
+ * and that silently did not work. `server.js` calls `dotenv.config()` at line 25
+ * — AFTER the whole ESM import graph has been evaluated, because `import`
+ * statements are hoisted and run first. So a module-level read of
+ * `process.env.JWT_EXPIRES_IN` in this file ran before `.env` existed, saw
+ * `undefined`, and fell through to the hardcoded default.
+ *
+ * The effect: `JWT_EXPIRES_IN=1d` had been sitting in `backend/.env` doing
+ * NOTHING, and every access token was 15 minutes. Verified by executing the real
+ * modules in app.js's own import order — a signed token decoded to
+ * `exp - iat = 900`. That short token is what made every open tab expire
+ * together every quarter hour and pile onto /auth/refresh at once.
+ *
+ * The compiled-in default is now 1 day, matching what the deployment always
+ * intended. It is a DEFAULT rather than a hardcoded value: a server that sets
+ * JWT_ACCESS_EXPIRES_IN or JWT_EXPIRES_IN still wins, so the length stays an
+ * operational decision. Making the default match the intent means a deployment
+ * whose .env lacks the line does not silently fall back to a quarter hour.
+ *
+ * Functions, not constants, so the value is read when it is USED — by which
+ * time dotenv has run no matter where in the graph the caller sits. The secrets
+ * below were already lazy for exactly this reason (see `accessSecret`); the TTLs
+ * simply were not.
+ *
+ * Kept as getters rather than moving `dotenv.config()` earlier because that
+ * would re-time every module-level env read in the entire program, and this is
+ * the only one that was wrong.
  */
-export const ACCESS_TOKEN_TTL = process.env.JWT_ACCESS_EXPIRES_IN || process.env.JWT_EXPIRES_IN || '15m';
-export const REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
+export const ACCESS_TOKEN_TTL_DEFAULT = '1d';
 
-/** Refresh cookie name and lifetime, in milliseconds. */
+export const accessTokenTtl = () =>
+  process.env.JWT_ACCESS_EXPIRES_IN || process.env.JWT_EXPIRES_IN || ACCESS_TOKEN_TTL_DEFAULT;
+export const refreshTokenTtl = () => process.env.JWT_REFRESH_EXPIRES_IN || '7d';
+
+/** Refresh cookie name, and its lifetime in milliseconds. */
 export const REFRESH_COOKIE_NAME = 'refreshToken';
-const REFRESH_COOKIE_MAX_AGE_MS = ttlToMs(REFRESH_TOKEN_TTL, 7 * 24 * 60 * 60 * 1000);
+const refreshCookieMaxAgeMs = () => ttlToMs(refreshTokenTtl(), 7 * 24 * 60 * 60 * 1000);
+
+/**
+ * How long a just-rotated refresh token stays acceptable.
+ *
+ * Two tabs of the same session expire at the same instant and both post
+ * /auth/refresh. The first rotates; the second arrives milliseconds later still
+ * holding the token that was current when it set off. Without a window that is
+ * indistinguishable from a replayed token, and the account gets signed out for
+ * doing nothing but having two tabs open.
+ *
+ * 60s is far longer than any legitimate race (they are typically <1s apart) and
+ * far shorter than any useful attack window — a stolen token is only usable
+ * inside the minute after the victim's own rotation, and using it does not
+ * displace the victim's session or grant a refresh token of its own.
+ */
+export const REFRESH_GRACE_MS = Number(process.env.JWT_REFRESH_GRACE_MS) || 60_000;
+
+/**
+ * Most concurrent sessions one account may hold.
+ *
+ * A ceiling rather than unbounded growth: without one, a user who signs in from
+ * a new private window every day accumulates a row per visit forever, and the
+ * document grows without limit. When the cap is reached the LEAST RECENTLY USED
+ * session is dropped, which is the one the person is least likely to still be
+ * sitting in front of.
+ */
+export const MAX_REFRESH_SESSIONS = Number(process.env.JWT_MAX_SESSIONS) || 10;
 
 const accessSecret = () => process.env.JWT_SECRET;
 /**
@@ -59,7 +126,7 @@ const refreshSecret = () => process.env.JWT_REFRESH_SECRET || process.env.JWT_SE
  */
 export function signAccessToken(userId) {
   return jwt.sign({ id: String(userId), type: 'access' }, accessSecret(), {
-    expiresIn: ACCESS_TOKEN_TTL,
+    expiresIn: accessTokenTtl(),
   });
 }
 
@@ -73,7 +140,7 @@ export function signAccessToken(userId) {
 export function signRefreshToken(userId) {
   const jti = crypto.randomUUID();
   const token = jwt.sign({ id: String(userId), type: 'refresh', jti }, refreshSecret(), {
-    expiresIn: REFRESH_TOKEN_TTL,
+    expiresIn: refreshTokenTtl(),
   });
   return { token, jti };
 }
@@ -123,7 +190,7 @@ export function refreshCookieOptions() {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     path: '/api/v1/auth',
-    maxAge: REFRESH_COOKIE_MAX_AGE_MS,
+    maxAge: refreshCookieMaxAgeMs(),
   };
 }
 
@@ -145,7 +212,8 @@ export function ttlToMs(ttl, fallback) {
 }
 
 /** Seconds until the access token expires - handy for a client-side timer. */
-export const accessTokenExpiresInMs = () => ttlToMs(ACCESS_TOKEN_TTL, 15 * 60_000);
+export const accessTokenExpiresInMs = () =>
+  ttlToMs(accessTokenTtl(), ttlToMs(ACCESS_TOKEN_TTL_DEFAULT, 24 * 60 * 60_000));
 
 export default {
   signAccessToken,
@@ -156,6 +224,8 @@ export default {
   refreshCookieOptions,
   clearRefreshCookieOptions,
   REFRESH_COOKIE_NAME,
-  ACCESS_TOKEN_TTL,
-  REFRESH_TOKEN_TTL,
+  accessTokenTtl,
+  refreshTokenTtl,
+  REFRESH_GRACE_MS,
+  MAX_REFRESH_SESSIONS,
 };

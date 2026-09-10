@@ -10,7 +10,7 @@ import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { allowedBrandModels, canAccessBrand } from '../../utils/brandAccess.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
-import { termsFor } from '../../utils/transactionTerms.js';
+import { sendDeliverySchedule } from '../../utils/deliverySchedule.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
@@ -127,7 +127,11 @@ const sendNotification = (userId, title, message, type = 'reservation') => {
 
 export const getReservations = async (req, res, next) => {
   try {
-    const reservations = await Reservation.find({ customerId: req.user._id, status: 'Reserved' });
+    // Oldest first — the order the customer built their selection in. Unsorted,
+    // this returned natural order, which stops matching insertion order as soon
+    // as a row is updated, so the list could reorder itself under the customer.
+    const reservations = await Reservation.find({ customerId: req.user._id, status: 'Reserved' })
+      .sort({ createdAt: 1, _id: 1 });
     // Manually populate since refs don't span multiple models. The lookup is
     // brand-scoped, so a line whose brand access was revoked resolves to null.
     const populated = await Promise.all(reservations.map(async r => {
@@ -366,83 +370,44 @@ export const scheduleIndent = async (req, res, next) => {
       updated.push(r);
     }
 
-    // Grouped per customer: one indent can span more than one, and nobody
-    // should be shown another customer's lines.
-    const byCustomer = new Map();
+    /*
+     * ── One email per customer, covering EVERYTHING they have scheduled ────
+     *
+     * This block used to build its own HTML table of the indent lines just
+     * saved. It now delegates to the shared builder, which reads the customer's
+     * complete current schedule — these indent lines AND any booking lines that
+     * carry a date — and renders one email with a section for each.
+     *
+     * That is the change the requirement asked for: a customer with 2 indent
+     * items and 3 booking items receives ONE email listing all 5, rather than
+     * one email per system. Everything else is preserved deliberately:
+     *
+     *   - grouped per CUSTOMER, because one indent can span several and nobody
+     *     may be shown another customer's lines;
+     *   - only lines that HAVE a date appear, so clearing a date withdraws the
+     *     promise instead of announcing it;
+     *   - the PO wording (`termsFor`) still applies, and still only when every
+     *     row in a section shares one reference;
+     *   - fire-and-forget, because the schedule is already saved and a mail
+     *     failure must not report the whole operation as failed.
+     */
+    const scheduledCustomers = new Map();
     for (const r of updated) {
-      if (!r.scheduledDate || !r.customerId?.email) continue;
-      const key = String(r.customerId._id);
-      if (!byCustomer.has(key)) byCustomer.set(key, { customer: r.customerId, lines: [] });
-      byCustomer.get(key).lines.push(r);
+      if (!r.customerId?.email) continue;
+      scheduledCustomers.set(String(r.customerId._id), r.customerId);
     }
 
-    const fmt = (d) => new Date(d).toLocaleDateString('en-IN', {
-      day: '2-digit', month: 'short', year: 'numeric',
-    });
-
     let emailed = 0;
-    for (const entry of byCustomer.values()) {
-      const { customer, lines } = entry;
-      const rows = lines.map((l) => [
-        '<tr>',
-        '<td style="padding:8px 12px;border-bottom:1px solid #eee;"><b>' + l.skuCode + '</b></td>',
-        '<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">' + l.quantity + '</td>',
-        '<td style="padding:8px 12px;border-bottom:1px solid #eee;">' + fmt(l.scheduledDate) + '</td>',
-        '</tr>',
-      ].join('')).join('');
-
-      const notes = lines.filter((l) => l.scheduleNote)
-        .map((l) => l.skuCode + ': ' + l.scheduleNote).join('<br>');
-
-      // Which transaction is this schedule against? An indent carries the PO of
-      // the confirmation that produced it, so once that PO exists this IS a
-      // purchase order schedule and has to say so. Only when every line in the
-      // mail belongs to the SAME PO can it be named — a mixed batch is still
-      // just indent scheduling, and claiming otherwise would be wrong for half
-      // the rows.
-      const poNumbers = [...new Set(lines.map((l) => l.poNumber).filter((n) => n && n !== '-'))];
-      const onOnePo = poNumbers.length === 1 && lines.every((l) => l.poNumber === poNumbers[0]);
-      const terms = termsFor({ poNumber: onOnePo ? poNumbers[0] : null });
-
-      const html = [
-        '<p>Dear ' + (customer.name || customer.company || 'Customer') + ',</p>',
-        terms.isPo
-          ? '<p>The <strong>' + terms.scheduleNoun + '</strong> for <strong>'
-            + terms.reference + '</strong> has been updated. The expected availability for the '
-            + 'following item' + (lines.length === 1 ? ' is' : 's are') + ' shown below:</p>'
-          : '<p>We have scheduled the expected availability for the following indented item'
-            + (lines.length === 1 ? '' : 's') + ':</p>',
-        '<table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;">',
-        '<thead><tr style="background:#f5f5f5;">',
-        '<th style="padding:8px 12px;text-align:left;">SKU</th>',
-        '<th style="padding:8px 12px;">Quantity</th>',
-        '<th style="padding:8px 12px;text-align:left;">Expected available</th>',
-        '</tr></thead><tbody>' + rows + '</tbody></table>',
-        notes ? '<p style="color:#555;">' + notes + '</p>' : '',
-        '<p>We will be in touch when the stock is ready to move to your selection list.</p>',
-        '<p>Thank you.</p>',
-      ].join('');
-
-      const scheduleSubject = terms.isPo
-        ? 'Purchase Order ' + terms.reference + ' - schedule updated ('
-          + lines.length + ' item' + (lines.length === 1 ? '' : 's') + ')'
-        : 'Indent availability scheduled - ' + lines.length + ' item' + (lines.length === 1 ? '' : 's');
-
-      // Fire-and-forget: the schedule is saved, and a mail failure must not
-      // report the whole operation as failed.
-      sendEmail(
-        customer.email,
-        scheduleSubject,
-        html,
-        { cc: COMPANY_CC },
-      ).catch((e) => console.error('[Indent] schedule email failed:', e.message));
+    for (const customer of scheduledCustomers.values()) {
+      const result = await sendDeliverySchedule(customer);
+      if (!result.sent) continue;
+      emailed += 1;
 
       sendNotification(
         customer._id,
-        terms.isPo ? 'Purchase Order schedule updated' : 'Indent availability scheduled',
-        lines.length + ' indented item' + (lines.length === 1 ? ' has' : 's have') + ' an expected availability date.',
+        'Delivery schedule updated',
+        result.total + ' item' + (result.total === 1 ? ' has' : 's have') + ' an expected availability date.',
       );
-      emailed += 1;
     }
 
     await recordAudit(req.user, 'Indent Scheduled',
@@ -887,7 +852,11 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
         { customerId: req.user._id, status: 'Reserved' },
         null,
         session ? { session } : {}
-      );
+      // The SAME sort the Selection List uses. This loop's index becomes each
+      // Order row's `lineSeq`, so an arbitrary order here would be frozen into
+      // the picklist forever — and if it disagreed with the list, the customer
+      // would be shown one order and printed another.
+      ).sort({ createdAt: 1, _id: 1 });
   if (reservations.length === 0) {
     throw new Error('No active reservations to confirm.');
   }
@@ -911,7 +880,9 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
   const summary = [];
   const dateNow = new Date();
 
-  for (let resItem of reservations) {
+  // `entries()` rather than a bare for..of so each line keeps the position it
+  // held in the customer's request. See the note on `lineSeq` in models/Order.js.
+  for (const [lineSeq, resItem] of reservations.entries()) {
     const product = await findProductById(resItem.productId, session, req.user);
     if (!product) {
       throw new Error(`Product ${resItem.skuCode} not found.`);
@@ -932,6 +903,7 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
 
     if (confirmedQty > 0) {
       ordersToCreate.push({
+        lineSeq,
         orderId: orderNumber,
         brand: brandFromModel(product),
         user: req.user._id,
@@ -955,6 +927,15 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
         vendorCode: product.vendorCode || null,
         emailId: req.user.email || null,
         phoneNumber: req.user.phone || null,
+        // ── Customer identity, snapshotted at creation ──────────────────
+        // Copied onto the row rather than looked up when the picklist is drawn,
+        // so a customer who later moves or re-registers does not rewrite the
+        // address on a booking that has already been picked. Same reasoning as
+        // `unitPrice` — see models/Order.js.
+        shippingAddress: req.user.shippingAddress || null,
+        billingAddress: req.user.billingAddress || null,
+        shopNumber: req.user.shopNumber || null,
+        gstCode: req.user.gstNumber || null,
         // The delivery location chosen at checkout, falling back to the
         // customer's profile location. Stamped so the pick list can carry the
         // location and its phone number without a second lookup.

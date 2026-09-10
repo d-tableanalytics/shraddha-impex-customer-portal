@@ -658,7 +658,7 @@ export async function updateEmployee(id, dto, actor) {
     if (existing.userId && dto.status === 'inactive' && existing.status !== 'inactive') {
       await User.updateOne(
         { _id: existing.userId },
-        { $set: { status: 'Suspended', refreshTokenHash: null } },
+        { $set: { status: 'Suspended', refreshTokenHash: null, refreshSessions: [] } },
         opts,
       );
     }
@@ -721,7 +721,7 @@ export async function deactivateEmployee(id, actor) {
     if (existing.userId) {
       await User.updateOne(
         { _id: existing.userId },
-        { $set: { status: 'Suspended', refreshTokenHash: null } },
+        { $set: { status: 'Suspended', refreshTokenHash: null, refreshSessions: [] } },
         opts,
       );
     }
@@ -813,7 +813,7 @@ export async function resetEmployeePassword(id, actor) {
   const tempPassword = crypto.randomBytes(9).toString('base64url');
   await User.updateOne(
     { _id: emp.userId },
-    { $set: { password: await hashPassword(tempPassword), refreshTokenHash: null } },
+    { $set: { password: await hashPassword(tempPassword), refreshTokenHash: null, refreshSessions: [] } },
   );
 
   return { tempPassword };

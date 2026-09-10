@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
-import Order from '../../models/Order.js';
+import Order, { LINE_ORDER } from '../../models/Order.js';
+import { sendDeliverySchedule } from '../../utils/deliverySchedule.js';
 import Reservation from '../../models/Reservation.js';
 import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
 import AuditLog from '../../models/AuditLog.js';
@@ -96,7 +97,7 @@ export const getOrders = async (req, res, next) => {
     // every brand, since the sales desk has to process the whole queue.
     const seesEverything = hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS);
     const query = seesEverything ? {} : { ...brandFilter(req.user), user: req.user._id };
-    const orders = await Order.find(query).sort({ createdAt: -1 });
+    const orders = await Order.find(query).sort({ createdAt: -1, ...LINE_ORDER });
     // Older rows predate the phone/location stamp; fill them from the
     // customer's profile so the pick list always has a contact to print.
     await attachCustomerDetails(orders);
@@ -163,7 +164,9 @@ export const createOrder = async (req, res, next) => {
     const ordersToCreate = [];
     const summary = [];
 
-    for (const item of items) {
+    // `entries()` rather than a bare for..of so each line keeps the position it
+    // held in the customer's uploaded sheet or cart. See models/Order.js.
+    for (const [lineSeq, item] of items.entries()) {
       const requestedQty = Number(item.quantity) || 0;
       if (requestedQty <= 0) {
         throw new Error('Item quantity must be greater than zero.');
@@ -185,6 +188,7 @@ export const createOrder = async (req, res, next) => {
 
       if (confirmedQty > 0) {
         ordersToCreate.push({
+          lineSeq,
           orderId: orderNumber,
           brand: brand || 'Koken',
           user: req.user._id,
@@ -207,6 +211,15 @@ export const createOrder = async (req, res, next) => {
           msilCode: product.msilCode || null,
           boxNo: product.boxNo || null,
           emailId: req.user.email || null,
+          // ── Customer identity, snapshotted at creation ──────────────────
+          // Copied onto the row rather than looked up when the picklist is drawn,
+          // so a customer who later moves or re-registers does not rewrite the
+          // address on a booking that has already been picked. Same reasoning as
+          // `unitPrice` — see models/Order.js.
+          shippingAddress: req.user.shippingAddress || null,
+          billingAddress: req.user.billingAddress || null,
+          shopNumber: req.user.shopNumber || null,
+          gstCode: req.user.gstNumber || null,
         });
       }
 
@@ -359,7 +372,7 @@ export const updateBookingStatus = async (req, res, next) => {
 export const getBookingStatusTimeline = async (req, res, next) => {
   try {
     const orderId = req.params.orderId;
-    const rows = await Order.find({ orderId });
+    const rows = await Order.find({ orderId }).sort(LINE_ORDER);
     if (!rows.length) {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
@@ -420,7 +433,7 @@ export const getBookingStatusTimeline = async (req, res, next) => {
 export const getBookingQuantityHistory = async (req, res, next) => {
   try {
     const orderId = req.params.orderId;
-    const rows = await Order.find({ orderId });
+    const rows = await Order.find({ orderId }).sort(LINE_ORDER);
     if (!rows.length) {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
@@ -521,7 +534,7 @@ export const updateOrderPO = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'orderNumber and poNumber required' });
     }
 
-    const rows = await Order.find({ orderId: orderNumber });
+    const rows = await Order.find({ orderId: orderNumber }).sort(LINE_ORDER);
     if (!rows.length) {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
@@ -601,7 +614,7 @@ export const updateOrderPO = async (req, res, next) => {
 export const cancelBooking = async (req, res, next) => {
   try {
     const orderNumber = req.params.orderId;
-    const rows = await Order.find({ orderId: orderNumber });
+    const rows = await Order.find({ orderId: orderNumber }).sort(LINE_ORDER);
     if (!rows.length) {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
@@ -724,6 +737,135 @@ export const cancelBooking = async (req, res, next) => {
       success: true,
       message: `Booking ${orderNumber} cancelled. ${units} unit(s) released back to stock.`,
       data: { orderId: orderNumber, units, lines: released, autoBooked },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /orders/booking/:orderId/schedule
+ *
+ * Set or clear the expected availability date on individual SKU lines of a
+ * booking, then send the customer their delivery schedule.
+ *
+ * ---------------------------------------------------------------------------
+ * DELIBERATELY THE MIRROR OF `scheduleIndent`
+ * ---------------------------------------------------------------------------
+ *
+ * Same request shape (`{ items: [{ id, scheduledDate, note }] }`), same admin
+ * gate, same validation, same "write first, mail after" ordering, and the same
+ * treatment of a null date as WITHDRAWING a promise rather than as a no-op. An
+ * admin who has scheduled an indent should not have to learn a second idiom to
+ * schedule a booking, and two screens that behave differently for the same
+ * decision is how one of them ends up wrong.
+ *
+ * The one difference is scope. An indent line is gated by its schedule — it
+ * cannot reach the Selection List until the date arrives. A booking is already
+ * confirmed and its stock already committed, so the date here is a promise the
+ * customer is told about and nothing more. See models/Order.js.
+ *
+ * It takes a LIST because a booking is a list: an admin scheduling against one
+ * inbound delivery sets several dates in one sitting, and that is ONE decision
+ * and therefore one email.
+ */
+export const scheduleBooking = async (req, res, next) => {
+  try {
+    const orderId = req.params.orderId;
+    const items = Array.isArray(req.body?.items) ? req.body.items : null;
+    if (!items || items.length === 0) {
+      return res.status(400).json({ success: false, message: 'Send an items array of { id, scheduledDate }.' });
+    }
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const wanted = [];
+    for (const raw of items) {
+      const id = typeof raw?.id === 'string' ? raw.id.trim() : null;
+      if (!id) continue;
+
+      // A null date CLEARS the schedule — that is how a promise is withdrawn.
+      if (raw.scheduledDate === null || raw.scheduledDate === '') {
+        wanted.push({ id, date: null, note: null });
+        continue;
+      }
+      const date = new Date(raw.scheduledDate);
+      if (Number.isNaN(date.getTime())) {
+        return res.status(400).json({ success: false, message: 'One of the dates could not be read.' });
+      }
+      if (date < startOfToday) {
+        return res.status(400).json({
+          success: false,
+          message: 'An availability date cannot be in the past — it is what the customer is told to expect.',
+        });
+      }
+      wanted.push({ id, date, note: typeof raw.note === 'string' ? raw.note.trim() || null : null });
+    }
+    if (wanted.length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid lines were sent.' });
+    }
+
+    // Scoped to the booking in the URL. Without this, an id from another
+    // customer's booking would be schedulable through this endpoint.
+    const rows = await Order.find({
+      _id: { $in: wanted.map((w) => w.id) },
+      orderId,
+    }).sort(LINE_ORDER);
+    const byId = new Map(rows.map((r) => [String(r._id), r]));
+
+    const now = new Date();
+    const updated = [];
+    const skipped = [];
+    let cleared = 0;
+
+    for (const w of wanted) {
+      const row = byId.get(w.id);
+      if (!row) { skipped.push({ id: w.id, reason: 'Not found on this booking.' }); continue; }
+      // A delivered or cancelled line has no delivery ahead of it, so promising
+      // one would be telling the customer to expect goods they have had, or that
+      // were called off.
+      if (!['Booked', 'PO Received', 'Ready for Dispatch'].includes(row.status)) {
+        skipped.push({ id: w.id, skuCode: row.skuCode, reason: 'Status is ' + row.status + ', not an open booking line.' });
+        continue;
+      }
+      row.scheduledDate = w.date;
+      row.scheduledBy = w.date ? req.user._id : null;
+      row.scheduledAt = w.date ? now : null;
+      row.scheduleNote = w.note;
+      await row.save();
+      if (!w.date) cleared += 1;
+      updated.push(row);
+    }
+
+    /*
+     * One email, containing the customer's COMPLETE schedule — the booking lines
+     * just set AND any indent lines already dated. That is what makes a customer
+     * with items on both receive one delivery picture rather than two partial
+     * ones. Only lines that HAVE a date are included, so clearing the last one
+     * sends nothing at all rather than an empty table.
+     */
+    const owner = updated[0]?.user ?? rows[0]?.user ?? null;
+    const mailed = owner ? await sendDeliverySchedule(owner) : { sent: false, total: 0 };
+
+    await recordAudit(req.user, 'Booking Scheduled',
+      'Availability scheduled for ' + updated.length + ' booking line(s).',
+      req, { meta: { orderId, updated: updated.length, skipped: skipped.length, emailed: mailed.sent ? 1 : 0 } });
+
+    res.status(200).json({
+      success: true,
+      message: (cleared === updated.length && cleared > 0
+        ? cleared + ' schedule(s) cleared.'
+        : updated.length + ' line(s) scheduled.')
+        + (mailed.sent ? ' The customer has been emailed their delivery schedule.' : ''),
+      data: {
+        updated: updated.map((r) => ({
+          id: r._id, skuCode: r.skuCode, scheduledDate: r.scheduledDate, scheduleNote: r.scheduleNote,
+        })),
+        skipped,
+        emailed: mailed.sent,
+        scheduledItems: mailed.total,
+      },
     });
   } catch (error) {
     next(error);

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import Order from '../../models/Order.js';
+import Order, { LINE_ORDER } from '../../models/Order.js';
 import User from '../../models/User.js';
 import Reservation from '../../models/Reservation.js';
 import { nextSequence } from '../../models/Counter.js';
@@ -35,7 +35,7 @@ import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 // A booking is a set of Order rows sharing one orderId.
 const loadBooking = async (orderId, session = null) => {
   const opts = session ? { session } : {};
-  return Order.find({ orderId }, null, opts).sort({ createdAt: 1 });
+  return Order.find({ orderId }, null, opts).sort(LINE_ORDER);
 };
 
 // Audit writing lives in utils/auditLog.js — see recordAudit().
@@ -176,7 +176,7 @@ export const getBookings = async (req, res, next) => {
       ];
     }
 
-    const rows = await Order.find(query).sort({ createdAt: -1 });
+    const rows = await Order.find(query).sort({ createdAt: -1, ...LINE_ORDER });
 
     const byBooking = new Map();
     for (const r of rows) {
@@ -437,7 +437,32 @@ const runUpdateItems = async (req, session) => {
           { status: 409 },
         );
       }
+      /*
+       * A desk-added line goes to the END of the booking.
+       *
+       * It was never part of the customer's original request, so it has no
+       * position in it — appending is the only honest answer, and it keeps the
+       * customer's own sequence intact above it. `nextLineSeq` reads the current
+       * maximum for this booking rather than counting rows, because the sequence
+       * is deliberately sparse (see models/Order.js) and a count would collide
+       * with an existing index.
+       */
+      const lastLine = await Order.findOne({ orderId: template.orderId })
+        .sort({ lineSeq: -1 })
+        .select('lineSeq')
+        .session(session)
+        .lean();
+      const nextLineSeq = Number.isFinite(lastLine?.lineSeq) ? lastLine.lineSeq + 1 : 0;
+
       await Order.create([{
+        lineSeq: nextLineSeq,
+        // Inherited from the booking, NOT re-read from the customer record: a
+        // line added to an existing booking must ship to the same address as
+        // the rest of it, even if the customer has since moved.
+        shippingAddress: template.shippingAddress || null,
+        billingAddress: template.billingAddress || null,
+        shopNumber: template.shopNumber || null,
+        gstCode: template.gstCode || null,
         orderId: template.orderId,
         brand: product.constructor.modelName.toLowerCase().includes('bix') ? 'BIX'
           : product.constructor.modelName.toLowerCase().includes('imada') ? 'IMADA' : 'Koken',

@@ -16,6 +16,8 @@ import {
   clearRefreshCookieOptions,
   REFRESH_COOKIE_NAME,
   accessTokenExpiresInMs,
+  REFRESH_GRACE_MS,
+  MAX_REFRESH_SESSIONS,
 } from '../../utils/tokens.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { AUDIT_ACTIONS } from '../../shared/constants/hrms.js';
@@ -30,24 +32,133 @@ import {
 } from '../../utils/roleResolver.js';
 import { isHrmsRoleKey } from '../../shared/permissions/constants.js';
 
+/** The device label stored against a session, so a person can recognise it. */
+const agentOf = (req) => String(req?.headers?.['user-agent'] ?? '').slice(0, 255) || null;
+
 /**
- * Issue a fresh token pair and persist the refresh hash.
+ * Open a NEW session and issue its token pair.
+ *
+ * Used by sign-in only. A refresh does not come through here — it rotates the
+ * session it was presented with (see `rotateSession`), because creating a new
+ * row on every refresh would fill the array with one entry per quarter hour.
  *
  * The access token goes in the response body, exactly where the existing
  * frontend already looks for it. The refresh token goes ONLY into an httpOnly
  * cookie, so it is never reachable from JavaScript.
+ *
+ * WHAT CHANGED: this used to `$set` a single account-wide `refreshTokenHash`,
+ * so signing in anywhere silently invalidated everywhere else. It now PUSHES a
+ * session, leaving other devices alone.
  */
-async function issueSession(res, user) {
+async function issueSession(res, user, req) {
   const accessToken = signAccessToken(user._id);
-  const { token: refreshToken } = signRefreshToken(user._id);
+  const { token: refreshToken, jti } = signRefreshToken(user._id);
+  const now = new Date();
 
+  const session = {
+    hash: hashRefreshToken(refreshToken),
+    prevHash: null,
+    rotatedAt: now,
+    jti,
+    createdAt: now,
+    lastUsedAt: now,
+    userAgent: agentOf(req),
+  };
+
+  // $push with $slice keeps the newest MAX_REFRESH_SESSIONS and drops the rest,
+  // so the array cannot grow without bound. $sort by lastUsedAt first means the
+  // entry evicted is the least recently used — the device the person is least
+  // likely to still be sitting in front of.
   await User.updateOne(
     { _id: user._id },
-    { $set: { refreshTokenHash: hashRefreshToken(refreshToken) } },
+    {
+      $push: {
+        refreshSessions: {
+          $each: [session],
+          $sort: { lastUsedAt: 1 },
+          $slice: -MAX_REFRESH_SESSIONS,
+        },
+      },
+    },
   );
 
   res.cookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieOptions());
   return accessToken;
+}
+
+/**
+ * Rotate ONE session and issue its next token pair.
+ *
+ * The write is a COMPARE-AND-SWAP: the filter names the exact session by its
+ * current hash, so if a racing request rotated it a millisecond ago this update
+ * matches nothing and we can tell the difference between "I rotated it" and "it
+ * moved under me". `$elemMatch` is required — a positional `$` needs the array
+ * element to be identified in the FILTER, and matching two fields of the same
+ * element any other way can match across different elements.
+ *
+ * Returns the new access token, or null if the swap lost its race.
+ */
+async function rotateSession(res, user, currentHash, req) {
+  const { token: refreshToken, jti } = signRefreshToken(user._id);
+  const now = new Date();
+
+  const result = await User.updateOne(
+    { _id: user._id, refreshSessions: { $elemMatch: { hash: currentHash } } },
+    {
+      $set: {
+        'refreshSessions.$.hash': hashRefreshToken(refreshToken),
+        // The token just superseded stays acceptable for REFRESH_GRACE_MS, so a
+        // second tab that set off before this rotation landed is served rather
+        // than treated as an attacker.
+        'refreshSessions.$.prevHash': currentHash,
+        'refreshSessions.$.rotatedAt': now,
+        'refreshSessions.$.lastUsedAt': now,
+        'refreshSessions.$.jti': jti,
+        'refreshSessions.$.userAgent': agentOf(req),
+      },
+    },
+  );
+
+  if (result.matchedCount === 0) return null;
+
+  res.cookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieOptions());
+  return signAccessToken(user._id);
+}
+
+/**
+ * Adopt a session issued under the OLD single-hash model.
+ *
+ * Without this, deploying this change would sign out everyone holding a valid
+ * cookie — the array is empty for every existing account, so their next refresh
+ * would find no session and 401. Instead the legacy hash is matched once,
+ * converted into a session row, and cleared.
+ *
+ * Returns the adopted session's hash, or null if the presented token is not the
+ * legacy one.
+ */
+async function adoptLegacySession(user, presentedHash, req) {
+  if (!user.refreshTokenHash) return null;
+  if (!refreshHashMatches(presentedHash, user.refreshTokenHash)) return null;
+
+  const now = new Date();
+  await User.updateOne(
+    { _id: user._id, refreshTokenHash: user.refreshTokenHash },
+    {
+      $set: { refreshTokenHash: null },
+      $push: {
+        refreshSessions: {
+          hash: presentedHash,
+          prevHash: null,
+          rotatedAt: now,
+          jti: null,
+          createdAt: now,
+          lastUsedAt: now,
+          userAgent: agentOf(req),
+        },
+      },
+    },
+  );
+  return presentedHash;
 }
 
 export const login = async (req, res, next) => {
@@ -98,7 +209,7 @@ export const login = async (req, res, next) => {
       );
     }
 
-    const token = await issueSession(res, user);
+    const token = await issueSession(res, user, req);
 
     await User.updateOne({ _id: user._id }, { $set: { lastLogin: new Date() } });
     await recordAudit({ _id: user._id }, AUDIT_ACTIONS.AUTH_LOGIN, 'Signed in', req);
@@ -144,32 +255,115 @@ export const refresh = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Invalid refresh token.' });
     }
 
-    const user = await User.findById(payload.id).select('+refreshTokenHash');
-    if (!user || !user.refreshTokenHash) {
+    const user = await User.findById(payload.id).select('+refreshTokenHash +refreshSessions');
+    if (!user) {
       res.clearCookie(REFRESH_COOKIE_NAME, clearRefreshCookieOptions());
       return res.status(401).json({ success: false, message: 'Session revoked.' });
     }
 
-    if (!refreshHashMatches(hashRefreshToken(presented), user.refreshTokenHash)) {
-      // Replay. Treat the account as compromised and drop every live session.
-      await User.updateOne({ _id: user._id }, { $set: { refreshTokenHash: null } });
-      res.clearCookie(REFRESH_COOKIE_NAME, clearRefreshCookieOptions());
-      await recordAudit(
-        { _id: user._id },
-        AUDIT_ACTIONS.AUTH_REFRESH_REUSE_DETECTED,
-        'Refresh token reuse detected; all sessions revoked',
-        req,
+    const presentedHash = hashRefreshToken(presented);
+    const sessions = user.refreshSessions ?? [];
+
+    /*
+     * Which SESSION is this, and is the token its current one?
+     *
+     * `refreshHashMatches` is the constant-time comparison; it is called here,
+     * in the controller, exactly as before.
+     */
+    let session = sessions.find((s) => refreshHashMatches(presentedHash, s.hash));
+    let onGrace = false;
+
+    if (!session) {
+      // Not a current token. Is it the one THIS session held moments ago?
+      //
+      // Two tabs share one cookie and one access token, so they expire together
+      // and both post here. The first rotates; the second is still carrying what
+      // is now `prevHash`. Inside the grace window that is a race, not a replay —
+      // and calling it a replay is precisely what was signing people out.
+      const raced = sessions.find(
+        (s) =>
+          s.prevHash &&
+          refreshHashMatches(presentedHash, s.prevHash) &&
+          s.rotatedAt &&
+          Date.now() - new Date(s.rotatedAt).getTime() <= REFRESH_GRACE_MS,
       );
-      return res.status(401).json({ success: false, message: 'Refresh token reuse detected.' });
+      if (raced) {
+        session = raced;
+        onGrace = true;
+      }
+    }
+
+    if (!session) {
+      /*
+       * A genuine replay, or a session that was revoked while this tab slept.
+       *
+       * Adopt-or-refuse. First give a cookie issued under the OLD single-hash
+       * model a chance: this deploy must not sign out everyone holding one.
+       */
+      const adopted = await adoptLegacySession(user, presentedHash, req);
+      if (adopted) {
+        session = { hash: adopted, prevHash: null, rotatedAt: new Date() };
+      } else {
+        /*
+         * WHAT DELIBERATELY NO LONGER HAPPENS HERE.
+         *
+         * This branch used to `$set: { refreshTokenHash: null }` — revoking
+         * EVERY session the account had, on any mismatch. That is the correct
+         * response to a confirmed theft and a catastrophic one to a race, and
+         * the production audit trail showed it firing on 28% of all refresh
+         * attempts against real staff doing nothing unusual.
+         *
+         * The blast radius is now the one session that presented the token, and
+         * that session is already gone (that is why nothing matched). So the
+         * honest response is to refuse THIS request and leave the account's
+         * other devices signed in. The event is still audited, so a real attack
+         * is still visible — it just no longer takes the business offline.
+         */
+        res.clearCookie(REFRESH_COOKIE_NAME, clearRefreshCookieOptions());
+        await recordAudit(
+          { _id: user._id },
+          AUDIT_ACTIONS.AUTH_REFRESH_REUSE_DETECTED,
+          'Refresh token did not match any live session; this session refused (other devices unaffected)',
+          req,
+        );
+        return res.status(401).json({ success: false, message: 'Session expired. Please sign in again.' });
+      }
     }
 
     if (user.status !== 'Active') {
-      await User.updateOne({ _id: user._id }, { $set: { refreshTokenHash: null } });
+      // An inactive account loses everything — that IS an account-wide decision.
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { refreshTokenHash: null, refreshSessions: [] } },
+      );
       res.clearCookie(REFRESH_COOKIE_NAME, clearRefreshCookieOptions());
       return res.status(403).json({ success: false, message: 'Your account is inactive.' });
     }
 
-    const token = await issueSession(res, user);
+    let token;
+    if (onGrace) {
+      /*
+       * The racing tab. It gets a working access token and NOTHING ELSE:
+       *
+       *   - no rotation, or the two tabs would rotate each other in a loop
+       *   - no Set-Cookie, because the winning tab's cookie is the live one and
+       *     overwriting it with a token minted here would invalidate the winner
+       *   - no clearCookie, which is what the old code did and is how a losing
+       *     race used to delete the credential the winner had just been issued
+       */
+      token = signAccessToken(user._id);
+    } else {
+      token = await rotateSession(res, user, session.hash, req);
+      if (!token) {
+        // The compare-and-swap lost: another request rotated this same session
+        // between our read and our write. Its cookie is the live one; ours is
+        // already stale. Serve an access token rather than manufacturing a
+        // conflict — the outcome is identical to arriving a moment later and
+        // taking the grace branch.
+        token = signAccessToken(user._id);
+      }
+    }
+
     await recordAudit({ _id: user._id }, AUDIT_ACTIONS.AUTH_REFRESH, 'Access token refreshed', req);
 
     res.status(200).json({
@@ -197,6 +391,32 @@ export const logout = async (req, res, next) => {
     const userId = req.user?._id ?? verifyRefreshToken(presented ?? '')?.id ?? null;
 
     if (userId) {
+      /*
+       * Sign out THIS device only.
+       *
+       * This used to null the account-wide hash, so signing out of the office
+       * desktop also signed you out on your phone — which nobody expects from a
+       * button labelled "Sign out", and which the previous doc comment did not
+       * mention. With one row per session the right scope is expressible: pull
+       * the row whose hash matches the cookie being surrendered.
+       *
+       * `prevHash` is matched too, so signing out immediately after a background
+       * refresh still finds the row rather than silently leaving it live.
+       *
+       * A caller with no usable cookie (already expired, or never had one) falls
+       * through having removed nothing, which is correct — logging out must
+       * always succeed from the user's point of view, and there is nothing here
+       * to identify a session by.
+       */
+      const presentedHash = presented ? hashRefreshToken(presented) : null;
+      if (presentedHash) {
+        await User.updateOne(
+          { _id: userId },
+          { $pull: { refreshSessions: { $or: [{ hash: presentedHash }, { prevHash: presentedHash }] } } },
+        );
+      }
+      // Legacy single-hash holders have no row to pull; clear the old field so
+      // the surrendered cookie cannot be adopted back into a session later.
       await User.updateOne({ _id: userId }, { $set: { refreshTokenHash: null } });
       await recordAudit({ _id: userId }, AUDIT_ACTIONS.AUTH_LOGOUT, 'Signed out', req);
     }
@@ -334,12 +554,41 @@ export const changePassword = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Current password is incorrect.' });
     }
 
-    await User.updateOne(
-      { _id: user._id },
-      { $set: { password: await hashPassword(newPassword), refreshTokenHash: null } },
-    );
+    /*
+     * Changing your password revokes every OTHER session and keeps this one.
+     *
+     * The old code nulled the single account-wide hash and cleared the caller's
+     * cookie, so changing your own password signed you out and dumped you back
+     * on the login screen — with a single shared string there was no way to
+     * express "everyone but me". Per-session rows make it a $pull.
+     *
+     * The security property is unchanged and is the one that matters: an
+     * attacker holding a stolen refresh token is evicted the moment the real
+     * owner changes their password.
+     */
+    const presented = req.cookies?.[REFRESH_COOKIE_NAME];
+    const keepHash = presented ? hashRefreshToken(presented) : null;
 
-    res.clearCookie(REFRESH_COOKIE_NAME, clearRefreshCookieOptions());
+    // Built as one object rather than a conditional spread: spreading a second
+    // `$set` would REPLACE the first and silently drop the password itself.
+    const update = {
+      $set: { password: await hashPassword(newPassword), refreshTokenHash: null },
+    };
+    if (keepHash) {
+      // Every session except the one making the change. Both fields are matched
+      // so a session that rotated moments ago is still recognised as "mine".
+      update.$pull = {
+        refreshSessions: { hash: { $ne: keepHash }, prevHash: { $ne: keepHash } },
+      };
+    } else {
+      // No usable cookie to identify the caller, so nothing can be spared.
+      update.$set.refreshSessions = [];
+    }
+
+    await User.updateOne({ _id: user._id }, update);
+
+    // The caller's own cookie is deliberately NOT cleared when it was kept.
+    if (!keepHash) res.clearCookie(REFRESH_COOKIE_NAME, clearRefreshCookieOptions());
     await recordAudit({ _id: user._id }, AUDIT_ACTIONS.AUTH_PASSWORD_CHANGED, 'Password changed; other sessions revoked', req);
 
     res.status(200).json({ success: true, message: 'Password updated successfully.' });

@@ -124,6 +124,33 @@ const userSchema = new mongoose.Schema({
   customerName: { type: String, default: null },
   phone: { type: String, default: null },
   location: { type: String, default: null },
+
+  /**
+   * ── Where goods are sent, and where the invoice goes ─────────────────────
+   *
+   * NEW. Before this there was no address on a customer record at all — the six
+   * master fields above were the whole of it — and the picklist printed
+   * `location` alone under a single "Place of supply" heading. `Order` has
+   * carried `shippingAddress` and `billingAddress` since the sales desk was
+   * built, but nothing ever populated them: their only writer is `raisePo`,
+   * reading a request body that the PO modal seeds from fields that are null.
+   *
+   * So the picklist could not show a shipping and a billing address separately,
+   * because the system did not know them.
+   *
+   * These are the SOURCE OF TRUTH, held once per customer and maintained in
+   * Admin → User Management beside the GST and shop number. Each booking then
+   * SNAPSHOTS them onto its Order rows at creation, so a customer who later
+   * moves does not silently rewrite the address on a picklist that has already
+   * been picked, packed or invoiced. That is the same choice `unitPrice` makes a
+   * few fields up in Order.js, and for the same reason.
+   *
+   * Both optional. Every account that exists today has neither, and a picklist
+   * for an old booking falls back to the customer's current profile rather than
+   * printing nothing — see `picklistDocument.js`.
+   */
+  shippingAddress: { type: String, default: null },
+  billingAddress: { type: String, default: null },
   shopNumber: { type: String, default: null },
   vendorNumber: { type: String, default: null },
   gstNumber: { type: String, default: null },
@@ -139,14 +166,79 @@ const userSchema = new mongoose.Schema({
   lastLogin: { type: Date },
 
   // ── Refresh-token rotation ──────────────────────────────────────────────
-  // SHA-256 of the CURRENT refresh token, so a database leak yields no usable
-  // sessions. Presenting a refresh token that does not hash to this value means
-  // an older one was replayed: every session for the account is then revoked by
-  // nulling this field, rather than merely refusing the one request.
+  //
+  // LEGACY, AND STILL READ. SHA-256 of a single refresh token — the whole
+  // session model until `refreshSessions` below replaced it.
+  //
+  // It is no longer WRITTEN on any successful path. It is still read once, in
+  // refresh(), so that a user holding a cookie issued before this change is
+  // adopted into the new model instead of being signed out by the deploy. Once
+  // adopted the field is cleared. Every revoke-everything path still nulls it
+  // alongside emptying refreshSessions, so a stale value can never resurrect a
+  // session that was meant to be dead.
   //
   // `select: false` keeps it out of every existing query and every API response
   // that returns a user document — no controller needs to know it exists.
   refreshTokenHash: { type: String, default: null, select: false },
+
+  /**
+   * ── One entry per signed-in device ──────────────────────────────────────
+   *
+   * WHY THIS REPLACED A SINGLE HASH
+   *
+   * The old model stored ONE hash for the whole account, and refresh() treated
+   * any mismatch as a replayed token by nulling it — revoking every session the
+   * account had. That is the correct response to a genuine theft and the wrong
+   * response to almost everything else, because two ordinary situations produce
+   * exactly the same mismatch:
+   *
+   *   - Two browser TABS. They share one cookie jar and one localStorage access
+   *     token, so they expire together and both post /auth/refresh at the same
+   *     instant. One rotates the hash; the other is now holding the previous
+   *     token and is read as an attacker.
+   *   - Two DEVICES. Signing in on a phone overwrote the desktop's hash, so the
+   *     desktop's next refresh was read as an attacker — and killed both.
+   *
+   * The production audit trail showed this happening constantly: 27 revocations
+   * against 69 successful refreshes (28% of all refresh attempts), and one admin
+   * account force-signed-out 13 times in five hours.
+   *
+   * Keying the hash per SESSION rather than per ACCOUNT is what separates the
+   * two cases. A mismatch is now scoped to the one session that presented it, so
+   * reuse detection still fires — it just cannot take the other devices with it.
+   *
+   * WHAT EACH FIELD IS FOR
+   *
+   *   hash        SHA-256 of the CURRENT refresh token for this session. A
+   *               database leak still yields no usable sessions.
+   *   prevHash    the token this session held immediately before its last
+   *               rotation, plus `rotatedAt`, together forming a short GRACE
+   *               WINDOW. Two tabs racing on the SAME session both present the
+   *               same token; the first rotates, the second arrives moments
+   *               later holding what is now `prevHash`. Inside the window that
+   *               is a race, not a replay: it is served a fresh access token
+   *               without rotating again. Outside it, it is a replay.
+   *   jti         the refresh token's own id claim. Lets a session be found and
+   *               revoked without knowing the token itself.
+   *   userAgent   so a person can recognise their own devices in a session list.
+   *
+   * `select: false` for the same reason as the legacy field: no existing query
+   * or API response should start carrying session material.
+   */
+  refreshSessions: {
+    type: [{
+      hash: { type: String, required: true },
+      prevHash: { type: String, default: null },
+      rotatedAt: { type: Date, default: null },
+      jti: { type: String, default: null },
+      createdAt: { type: Date, default: Date.now },
+      lastUsedAt: { type: Date, default: Date.now },
+      userAgent: { type: String, default: null },
+      _id: false,
+    }],
+    default: [],
+    select: false,
+  },
 }, { timestamps: true });
 
 /**

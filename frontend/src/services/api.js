@@ -119,27 +119,69 @@ api.interceptors.response.use(
     const original = error.config;
     const status = error.response?.status;
 
+    const url = String(original?.url ?? '');
+
+    /*
+     * Endpoints whose 401 means "you got that wrong", not "your session died".
+     *
+     * THE BUG THIS FIXES: `PUT /auth/me/password` answers 401 for a WRONG
+     * CURRENT PASSWORD. That URL is neither /auth/refresh nor /auth/login, so it
+     * used to be treated as an expired token — refreshed, replayed, refused a
+     * second time, and then dropped through the blanket handler below, which
+     * hard-redirected to /login. Mistyping your own password signed you out, and
+     * the error message the Settings page had carefully prepared was never seen.
+     * It also burned two of the five attempts on the password limiter, so a
+     * couple of typos produced a 429 as well.
+     */
+    const isCredentialCheck =
+      url.includes('/auth/me/password') || url.includes('/auth/login');
+
     const isRefreshable =
       status === 401 &&
       original &&
       !original._retry &&
       !original._skipAuthRefresh &&
-      // Never try to refresh the refresh call, or a failed sign-in.
-      !String(original.url ?? '').includes('/auth/refresh') &&
-      !String(original.url ?? '').includes('/auth/login');
+      !isCredentialCheck &&
+      // Never try to refresh the refresh call itself.
+      !url.includes('/auth/refresh');
 
     if (isRefreshable) {
       original._retry = true;
       try {
         await refreshAccessToken();
         return api(original);
-      } catch {
+      } catch (refreshError) {
+        /*
+         * A THROTTLED refresh is not a dead session.
+         *
+         * The refresh limiter answers 429, and this catch used to treat every
+         * failure alike and sign the user out — obeying the throttle message
+         * ("Please sign in again") literally. Behind one office IP that turned a
+         * busy afternoon into a mass logout, because the limiter was keyed per
+         * address and every tab shared the budget.
+         *
+         * The limiter is now keyed per account and skips successful refreshes,
+         * so this should be rare. When it does happen the session is still
+         * perfectly valid: fail THIS request, keep the user signed in, and let
+         * the next attempt through once the window rolls over.
+         */
+        if (refreshError?.response?.status === 429) {
+          return Promise.reject(error);
+        }
         clearSessionAndRedirect();
         return Promise.reject(error);
       }
     }
 
-    if (status === 401) {
+    /*
+     * A 401 that is NOT a dead session must not sign anybody out.
+     *
+     * `_retry` is the important half. Axios preserves it across the replay, so a
+     * request that already refreshed successfully and STILL got a 401 is telling
+     * us the token was fine and the request was refused on its merits. Logging
+     * out on that is how a wrong-password dialog became a logout.
+     */
+    if (status === 401 && !isCredentialCheck && !original?._retry) {
       clearSessionAndRedirect();
     }
 

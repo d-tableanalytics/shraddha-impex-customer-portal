@@ -76,6 +76,11 @@ export const downloadPicklistPdf = async (docModel) => {
     /* ── Parties and terms ────────────────────────────────────────────────── */
     const info = [
       ["Customer", docModel.customer.name || "—", "Booking No.", docModel.orderId || "—"],
+      // The trading entity. Only when it differs from the customer name, or the
+      // same string is printed twice on every document.
+      ...(docModel.customer.company && docModel.customer.company !== docModel.customer.name
+        ? [["Company", docModel.customer.company, "", ""]]
+        : []),
       ["Contact No.", docModel.customer.phone || "—", "PO No.", docModel.poNumber || "Not raised"],
       ["Place of supply", docModel.customer.location || "—", "PO Date", docModel.poDate ? fmtDate(docModel.poDate) : "—"],
       ["GST No.", docModel.customer.gstNumber || "—", "Payment Term", docModel.paymentTerm || "—"],
@@ -99,6 +104,44 @@ export const downloadPicklistPdf = async (docModel) => {
         1: { fontStyle: "bold", cellWidth: 60 },
         2: { textColor: SLATE, cellWidth: 26 },
         3: { fontStyle: "bold" },
+      },
+    });
+
+    /* ── Shipping and billing addresses ───────────────────────────────────
+       Their own block rather than two more rows in the grid above, because an
+       address is multi-line and the grid's 60mm value column would either clip
+       it or wrap it into the terms beside it. Two equal columns, full width,
+       so a long address has room to breathe and the two are read side by side.
+
+       BOTH HEADINGS ALWAYS PRINT, even when the addresses are identical. A
+       packer who sees only one heading cannot tell whether billing was the same
+       or simply unknown; two headings answer that without being asked. */
+    const addrTop = pdf.lastAutoTable.finalY + 3;
+    const halfW = (pageW - margin * 2) / 2;
+    autoTable(pdf, {
+      startY: addrTop,
+      margin: { left: margin, right: margin },
+      head: [["Shipping Address", "Billing Address"]],
+      body: [[
+        docModel.customer.shippingAddress || "—",
+        docModel.customer.billingAddress || "—",
+      ]],
+      theme: "plain",
+      headStyles: {
+        fontSize: 7.5, fontStyle: "bold", textColor: SLATE,
+        cellPadding: { top: 0, bottom: 1, left: 0, right: 3 },
+      },
+      styles: {
+        fontSize: 8.5,
+        cellPadding: { top: 0, bottom: 1.5, left: 0, right: 3 },
+        // `overflow: linebreak` is what makes a long address wrap inside its own
+        // column instead of running under the neighbouring one.
+        overflow: "linebreak",
+        valign: "top",
+      },
+      columnStyles: {
+        0: { cellWidth: halfW - 2 },
+        1: { cellWidth: halfW - 2 },
       },
     });
 
