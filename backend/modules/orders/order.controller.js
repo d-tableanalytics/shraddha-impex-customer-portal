@@ -1,6 +1,8 @@
 import mongoose from 'mongoose';
 import Order, { LINE_ORDER } from '../../models/Order.js';
-import { sendDeliverySchedule } from '../../utils/deliverySchedule.js';
+import {
+  sendDeliverySchedule, OPEN_BOOKING_STATUSES as SCHEDULABLE_STATUSES,
+} from '../../utils/deliverySchedule.js';
 import Reservation from '../../models/Reservation.js';
 import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
 import AuditLog from '../../models/AuditLog.js';
@@ -825,7 +827,7 @@ export const scheduleBooking = async (req, res, next) => {
       // A delivered or cancelled line has no delivery ahead of it, so promising
       // one would be telling the customer to expect goods they have had, or that
       // were called off.
-      if (!['Booked', 'PO Received', 'Ready for Dispatch'].includes(row.status)) {
+      if (!SCHEDULABLE_STATUSES.includes(row.status)) {
         skipped.push({ id: w.id, skuCode: row.skuCode, reason: 'Status is ' + row.status + ', not an open booking line.' });
         continue;
       }
@@ -844,9 +846,17 @@ export const scheduleBooking = async (req, res, next) => {
      * with items on both receive one delivery picture rather than two partial
      * ones. Only lines that HAVE a date are included, so clearing the last one
      * sends nothing at all rather than an empty table.
+     *
+     * Naming the booking additionally attaches ITS complete SKU table — every
+     * line, dispatched and pending, as a spreadsheet and a PDF — in the format
+     * the customer files purchase orders in. The summary above says what changed
+     * across everything they hold; the attachment is the document they file
+     * against this PO. The indent path passes no orderId and is unchanged.
      */
     const owner = updated[0]?.user ?? rows[0]?.user ?? null;
-    const mailed = owner ? await sendDeliverySchedule(owner) : { sent: false, total: 0 };
+    const mailed = owner
+      ? await sendDeliverySchedule(owner, { orderId })
+      : { sent: false, total: 0 };
 
     await recordAudit(req.user, 'Booking Scheduled',
       'Availability scheduled for ' + updated.length + ' booking line(s).',

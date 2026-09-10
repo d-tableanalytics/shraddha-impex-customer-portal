@@ -2,13 +2,36 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, MapPin, Building2, Store, FileText, Hash, Calendar,
-  CreditCard, Clock, FileCheck2, Loader2, ShieldCheck, Phone, Navigation, IndianRupee
+  CreditCard, Clock, FileCheck2, Loader2, ShieldCheck, Phone, Navigation, IndianRupee,
+  CalendarClock, Mail
 } from "lucide-react";
 import { ERPButton } from "../ui/ERPButton";
+import { toYmd, todayYmd } from "../../utils/dateValue";
 import { PriceTypeSelector } from "../pricing/PriceTypeSelector";
 import { useUserStore } from "../../store/userStore";
 import { canViewPricing } from "../../utils/permissions";
 import { labelForPriceType } from "../../constants/pricing";
+
+/**
+ * The earliest delivery date already promised on this booking, as "YYYY-MM-DD".
+ *
+ * THE EARLIEST, not the first line's, so it agrees with what the server
+ * summarises as the booking's delivery schedule date and with the date the
+ * customer's email leads on. The first row's would be an accident of ordering,
+ * and the latest would overstate the wait for the whole order.
+ *
+ * "" when nothing is scheduled — the field is then genuinely empty rather than
+ * pre-filled with a commitment nobody made.
+ */
+const earliestScheduledDate = (booking) => {
+  const dates = (booking?.lines || [])
+    .map((l) => l.scheduledDate)
+    .filter(Boolean)
+    .map((d) => new Date(d))
+    .filter((d) => !Number.isNaN(d.getTime()));
+  if (!dates.length) return "";
+  return toYmd(new Date(Math.min(...dates)));
+};
 
 export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoNumber, saving }) => {
   const [formData, setFormData] = useState({
@@ -24,6 +47,21 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
     poDate: "",
     paymentTerm: "Net 30",
     promiseDate: "",
+    /**
+     * The date the customer is told their goods start arriving.
+     *
+     * NOT the same field as `promiseDate` directly above it, and the difference
+     * is worth stating because they look alike on screen. Promise Date is one
+     * booking-level commitment, stored as promiseDate/supplyByDate and printed
+     * on the pick list as "Supply By". This one is written to EVERY SKU LINE's
+     * own schedule, is what the customer is emailed a table of, and is refined
+     * per line afterwards from the Delivery schedule panel on the booking.
+     *
+     * Optional. Left blank, the PO is raised exactly as it always was and the
+     * schedule is set later — the mail simply goes out with the pending lines
+     * marked as awaiting a date.
+     */
+    deliveryScheduleDate: "",
     // Which rate this customer is being offered. The AMOUNT is never in here —
     // the server resolves it from the product master, so a price cannot be
     // decided by the browser.
@@ -54,6 +92,13 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
         poDate: booking.poDate ? new Date(booking.poDate).toISOString().split("T")[0] : today,
         paymentTerm: booking.paymentTerm || "Net 30",
         promiseDate: booking.promiseDate ? new Date(booking.promiseDate).toISOString().split("T")[0] : defaultPromise,
+        // Seeded from a date the booking ALREADY carries, never from a default.
+        // A delivery date is a promise to the customer, and pre-filling one
+        // nobody chose would have the desk confirm a commitment by not noticing
+        // it — which is exactly the mistake this field must not invite. The
+        // earliest scheduled line, matching what the server summarises as the
+        // booking's schedule date.
+        deliveryScheduleDate: earliestScheduledDate(booking),
         // If the booking has already been priced, open on that choice rather
         // than making the desk remember it.
         priceType: booking.pricing?.priceType ?? null,
@@ -313,9 +358,42 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                 />
               </div>
 
+              {/* 13. Delivery Schedule Date.
+                  Full width, and last, because it is the one field on this form
+                  that leaves the building: everything above it describes the
+                  purchase order, while this is a date the customer is emailed as
+                  a commitment the moment Confirm is pressed. The note below says
+                  so — a desk filling in a form should not have to discover from
+                  the customer's reply that a field was a promise.
+
+                  `min` is today for the same reason the server refuses a past
+                  date: a delivery date already gone is a typo, and this is the
+                  cheapest place to catch it. */}
+              <div className="md:col-span-2">
+                <label className={labelClass}>
+                  <CalendarClock size={14} className="text-primary-600" /> Delivery Schedule Date
+                  <span className="ml-1 font-normal normal-case text-[10px] text-slate-400">optional</span>
+                </label>
+                <input
+                  type="date"
+                  min={todayYmd()}
+                  value={formData.deliveryScheduleDate}
+                  onChange={(e) => handleChange("deliveryScheduleDate", e.target.value)}
+                  className={inputClass}
+                />
+                <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500 flex items-start gap-1.5">
+                  <Mail size={12} className="mt-0.5 shrink-0 text-primary-500" />
+                  <span>
+                    Applied to every SKU on this booking and emailed to the customer with the
+                    full item table, as Excel and PDF. Leave blank to raise the PO now and
+                    schedule later &mdash; you can set per-SKU dates from the booking afterwards.
+                  </span>
+                </p>
+              </div>
+
             </div>
 
-            {/* 13. Customer pricing.
+            {/* 14. Customer pricing.
                 Only for an authorised user — a desk account without
                 view_pricing sees no prices here and raises the PO without
                 them, which the server enforces independently of this check. */}

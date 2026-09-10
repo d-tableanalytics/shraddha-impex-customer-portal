@@ -22,6 +22,9 @@ import {
   QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
 } from '../../utils/bookingJourney.js';
 import { isTransactionUnsupported } from '../../utils/mongoSession.js';
+import {
+  buildScheduleMailParts, OPEN_BOOKING_STATUSES as SCHEDULABLE_STATUSES,
+} from '../../utils/deliverySchedule.js';
 
 /**
  * Sales desk: review confirmed bookings, amend them while the PO is pending,
@@ -87,7 +90,23 @@ const esc = (v) =>
 // imports QTY_EDIT_ACTIONS from this module.
 export { QTY_EDIT_ACTIONS };
 
-const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary, journeyHtml }) => {
+/**
+ * `03 Aug 2026` — spelled out, for the reason given in deliveryScheduleMail.js:
+ * `toLocaleDateString` renders from whatever ICU data the running Node was
+ * built with, so the same mail would word its dates differently after a runtime
+ * upgrade.
+ */
+const MAIL_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtMailDate = (d) => {
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${String(date.getDate()).padStart(2, '0')} ${MAIL_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+};
+
+const buildPoRaisedEmail = ({
+  customerName, orderId, poNumber, summary, journeyHtml,
+  scheduleHtml = '', deliveryScheduleDate = null, attachmentNames = [],
+}) => {
   // THE CONVERSION EMAIL. Deliberately carries NO booking TAT line: this mail
   // exists only because a PO has been raised, and the 7-day booking turnaround
   // stops applying at that point. Quoting it against a purchase order tells the
@@ -114,6 +133,12 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary, journeyH
       <div style="margin-top: 10px; font-size: 11px; color: #5a7ca8; letter-spacing: 0.3px;">
         Raised against booking reference <strong style="font-family: monospace;">${esc(orderId)}</strong>
       </div>
+      ${deliveryScheduleDate
+      ? `<div style="margin-top: 10px; font-size: 11px; color: #5a7ca8; letter-spacing: 0.3px;">
+             Delivery scheduled from
+             <strong style="color:#1a5b9e;">${esc(fmtMailDate(deliveryScheduleDate))}</strong>
+           </div>`
+      : ''}
     </div>
 
     ${summary.changed
@@ -121,6 +146,32 @@ const buildPoRaisedEmail = ({ customerName, orderId, poNumber, summary, journeyH
       : ''}
 
     ${journeyHtml}
+
+    ${/*
+       * THE DELIVERY SCHEDULE, in the layout the customer files purchase orders
+       * in — every SKU, the ordered quantity, what has been dispatched and what
+       * is still outstanding against a date.
+       *
+       * It does NOT replace the journey table above it, which answers a
+       * different question: that one is what the desk CHANGED between the
+       * booking and this purchase order, and it is the only place a customer
+       * sees a quantity they asked for next to the quantity they are getting.
+       * This one is what happens next. Both, or the mail answers half of what
+       * the customer opens it to find out.
+       */''}
+    ${scheduleHtml
+      ? `<h3 style="font-family:Arial,sans-serif;font-size:15px;margin:22px 0 8px;color:#1a5b9e;">
+           Delivery Schedule
+         </h3>
+         ${scheduleHtml}`
+      : ''}
+
+    ${attachmentNames.length
+      ? `<p style="margin-top:12px;font-size:13px;color:#555;">
+           The same schedule is attached as ${attachmentNames.map((n) => esc(n)).join(' and ')},
+           so you can file it or share it with your team.
+         </p>`
+      : ''}
 
     <p>Thank you for your business.</p>
   `;
@@ -749,7 +800,50 @@ export const raisePo = async (req, res, next) => {
       poDate,
       paymentTerm,
       promiseDate,
+      deliveryScheduleDate,
     } = req.body || {};
+
+    /**
+     * ── The delivery schedule date, set as the PO is raised ─────────────────
+     *
+     * DELIBERATELY NOT promiseDate, which is collected two fields above it on
+     * the same screen and means something else. `promiseDate` is a BOOKING-LEVEL
+     * commitment written to `promiseDate`/`supplyByDate`, printed on the pick
+     * list as "Supply By" and read by every consumer as one date for the whole
+     * order. The delivery schedule is PER SKU LINE — that is the entire point of
+     * `Order.scheduledDate`, and why the model has a separate field for it
+     * rather than overloading the promise (see the note there).
+     *
+     * What this screen collects is the OPENING position: one date applied across
+     * every line, because at the moment a PO is raised the desk has one date and
+     * has not yet had to split it. From there the Delivery schedule panel on the
+     * booking refines individual lines, and each refinement re-mails the
+     * customer. Collecting it here rather than making the desk raise the PO and
+     * then go to a second screen is what makes "raise a PO with a delivery date"
+     * one action instead of two.
+     *
+     * Validated the same way `scheduleBooking` validates its dates, and for the
+     * same reason: a date in the past is not a schedule, it is a typo, and it is
+     * about to be emailed to the customer as a commitment.
+     */
+    let scheduleDate = null;
+    if (deliveryScheduleDate) {
+      scheduleDate = new Date(deliveryScheduleDate);
+      if (Number.isNaN(scheduleDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: 'The delivery schedule date could not be read.',
+        });
+      }
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      if (scheduleDate < startOfToday) {
+        return res.status(400).json({
+          success: false,
+          message: 'The delivery schedule date cannot be in the past — it is what the customer is told to expect.',
+        });
+      }
+    }
 
     const setFields = {
       poNumber,
@@ -778,6 +872,25 @@ export const raisePo = async (req, res, next) => {
       { orderId },
       { $set: setFields },
     );
+
+    /*
+     * A SEPARATE WRITE, SCOPED BY STATUS, rather than another key in setFields.
+     *
+     * Everything in setFields is a fact about the purchase order and belongs on
+     * every row of it, cancelled and delivered rows included — that is the
+     * record of what was ordered. A delivery date is not a fact, it is a
+     * PROMISE, and promising a delivery on a line that has already been
+     * delivered or called off is telling the customer to expect goods they have
+     * had, or that nobody is sending. The same three statuses `scheduleBooking`
+     * confines itself to, so the two paths cannot disagree about which lines can
+     * carry a date.
+     */
+    if (scheduleDate) {
+      await Order.updateMany(
+        { orderId, status: { $in: SCHEDULABLE_STATUSES } },
+        { $set: { scheduledDate: scheduleDate, scheduledBy: req.user._id, scheduledAt: now } },
+      );
+    }
 
     /**
      * The price this customer is being given.
@@ -834,6 +947,11 @@ export const raisePo = async (req, res, next) => {
       // trail beside the lock rather than only on the rows it was written to.
       + (pricing?.priceType
         ? ` Priced at the ${pricing.priceTypeLabel} rate — ${pricing.pricedLines} of ${pricing.lines} line(s) rated, total ₹${pricing.totalAmount}.`
+        : '')
+      // A delivery date given to the customer is a commitment, so it goes on
+      // the trail beside the lock and the price rather than only on the rows.
+      + (scheduleDate
+        ? ` Delivery scheduled from ${scheduleDate.toISOString().slice(0, 10)}.`
         : ''),
       req,
       {
@@ -841,6 +959,7 @@ export const raisePo = async (req, res, next) => {
           orderId, poNumber, poGeneratedAt: now, reBoxed,
           priceType: pricing?.priceType ?? null,
           totalAmount: pricing?.totalAmount ?? null,
+          deliveryScheduleDate: scheduleDate,
         },
       },
     );
@@ -862,25 +981,43 @@ export const raisePo = async (req, res, next) => {
       const customer = await User.findById(updated[0].user).lean();
       const to = customer?.email || updated[0].emailId;
       if (to && customer?.preferences?.emailNotifications !== false) {
-        const body = buildPoRaisedEmail({
-          customerName: customer?.user || customer?.company || updated[0].company || 'Customer',
-          orderId,
-          poNumber,
-          summary,
-          journeyHtml: journeyTablesHtml(journey, { audience: 'customer' }),
-        });
-        // Subject names the PURCHASE ORDER, not the booking: this is the mail
-        // that tells the customer the reference has changed, and every mail
-        // after it uses the PO number.
-        const subject = summary.changed
-          ? `Your Purchase Order #${poNumber} has been raised — items adjusted`
-          : `Your Purchase Order #${poNumber} has been raised`;
+        /*
+         * The whole mail — body table and both attachments — is assembled off
+         * the request path.
+         *
+         * The PO is already committed and the response is already owed to the
+         * desk; rendering a spreadsheet and a PDF is tens of milliseconds of
+         * work that the person who clicked "Confirm & lock" should not wait on,
+         * and a font that will not load or a booking large enough to be slow
+         * must not be able to fail a purchase order that has already deducted
+         * stock. Fire-and-forget, exactly as the mail already was — the `await`
+         * has simply moved inside it.
+         */
+        (async () => {
+          const parts = await buildScheduleMailParts(orderId, { customer, rows: updated });
 
-        // Fire-and-forget: the PO is already committed, so a mail failure must
-        // not fail the request.
-        sendEmail(to, subject, body, {
-          cc: [...(customer?.bookingCcEmails || []), ...COMPANY_CC],
-        }).catch((e) => console.error('[raisePo] email error', e));
+          const body = buildPoRaisedEmail({
+            customerName: customer?.user || customer?.company || updated[0].company || 'Customer',
+            orderId,
+            poNumber,
+            summary,
+            journeyHtml: journeyTablesHtml(journey, { audience: 'customer' }),
+            scheduleHtml: parts.tableHtml,
+            deliveryScheduleDate: parts.doc?.deliveryScheduleDate ?? null,
+            attachmentNames: parts.attachments.map((a) => a.filename),
+          });
+          // Subject names the PURCHASE ORDER, not the booking: this is the mail
+          // that tells the customer the reference has changed, and every mail
+          // after it uses the PO number.
+          const subject = summary.changed
+            ? `Your Purchase Order #${poNumber} has been raised — items adjusted`
+            : `Your Purchase Order #${poNumber} has been raised`;
+
+          await sendEmail(to, subject, body, {
+            cc: [...(customer?.bookingCcEmails || []), ...COMPANY_CC],
+            ...(parts.attachments.length ? { attachments: parts.attachments } : {}),
+          });
+        })().catch((e) => console.error('[raisePo] email error', e));
       }
     }
 

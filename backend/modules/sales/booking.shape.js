@@ -177,6 +177,23 @@ export const shapeBooking = (rows, boxNumbers = new Map(), { includePricing = fa
       bookedQty: r.bookedQty || 0,
       confirmedQty: r.confirmedQty || 0,
       pendingQty: r.pendingQty || 0,
+      /*
+       * PER-LINE status and delivery schedule.
+       *
+       * The booking-level `status` above is `first.status`, which cannot answer
+       * "does THIS line still have a delivery ahead of it" for a booking whose
+       * lines have diverged — and that is the question both the schedule panel
+       * and the PO screen have to ask before offering a date control.
+       *
+       * The dates are what the customer has already been promised, so the PO
+       * screen seeds from them rather than from a default: a delivery date
+       * nobody chose must never be confirmed by not being noticed. Order
+       * History's own adapter already exposed these; the sales desk read a
+       * different shape and did not.
+       */
+      status: r.status,
+      scheduledDate: r.scheduledDate || null,
+      scheduleNote: r.scheduleNote || null,
       // The rate this customer was given for this line and what it comes to.
       // Present only when the viewer may see pricing; absent, not zeroed, so a
       // template cannot mistake "not allowed to know" for "free".
