@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Printer, FileDown, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 
 import { ERPButton } from "../ui/ERPButton";
@@ -44,8 +44,76 @@ const Field = ({ label, value }) => (
   </div>
 );
 
+/** Where the document is cloned to for printing — a direct child of <body>. */
+const PRINT_ROOT_ID = "picklist-print-root";
+
+/**
+ * Lift the document out of the dialog, print it, put everything back.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY A CLONE, AND NOT JUST CSS
+ * ---------------------------------------------------------------------------
+ *
+ * The previous approach hid `body *` and re-showed `#picklist-document`, then
+ * pulled it to the top-left with `position: absolute`. It could not work, and
+ * the reason is the ancestor chain rather than anything in the rule:
+ *
+ *   div.fixed.inset-0                                  positioned ancestor
+ *     motion.div .relative .max-h-[92vh] .overflow-hidden   <-- the problem
+ *       #picklist-document
+ *
+ *   1. `position: absolute` resolves against the nearest POSITIONED ancestor,
+ *      which is the modal card — so "top-left" meant the top-left of the card,
+ *      not of the page.
+ *   2. That card is `max-h-[92vh]` with `overflow-hidden`, so it CLIPPED the
+ *      document to roughly one screenful. `max-height:none; overflow:visible`
+ *      on the document itself cannot undo a clip applied by an ancestor.
+ *   3. framer-motion writes an inline `transform` on that same card, which
+ *      makes it a containing block for fixed positioning too, and shifts
+ *      whatever is inside it.
+ *
+ * No stylesheet can reach "every ancestor of this node" to unpick that. Moving
+ * the content to a direct child of <body> removes the whole chain instead, so
+ * there is nothing left to clip, offset or constrain.
+ *
+ * Bound to `beforeprint`/`afterprint` rather than to the button, so Ctrl+P and
+ * the browser's own print menu behave identically — with the old code they
+ * produced the same truncated page, and there was no button press to hook.
+ */
+const usePrintablePicklist = (enabled) => {
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    const build = () => {
+      const source = document.getElementById("picklist-document");
+      if (!source || document.getElementById(PRINT_ROOT_ID)) return;
+
+      const clone = source.cloneNode(true);
+      clone.id = PRINT_ROOT_ID;
+      // Drop the dialog's layout classes. `flex-1`, `overflow-y-auto` and the
+      // padding are how it behaved as a pane inside a modal; on paper they
+      // would reintroduce a scroll box that prints only its visible part.
+      clone.className = "";
+      clone.removeAttribute("style");
+      document.body.appendChild(clone);
+    };
+
+    const teardown = () => document.getElementById(PRINT_ROOT_ID)?.remove();
+
+    window.addEventListener("beforeprint", build);
+    window.addEventListener("afterprint", teardown);
+    return () => {
+      window.removeEventListener("beforeprint", build);
+      window.removeEventListener("afterprint", teardown);
+      teardown();
+    };
+  }, [enabled]);
+};
+
 export const PicklistPreview = ({ doc, onClose, onDownload }) => {
   const [downloading, setDownloading] = useState(false);
+
+  usePrintablePicklist(Boolean(doc));
 
   if (!doc) return null;
 
@@ -54,6 +122,27 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
   // totals rows need. Counted, because the MSIL code column is optional.
   const labelSpan = 2 + (doc.showMsilCode ? 1 : 0);
   const moneySpan = labelSpan + 2;
+
+  /*
+   * Safari does not fire `beforeprint`. Building the clone here as well covers
+   * it; `build()` is a no-op when one already exists, so the two paths cannot
+   * produce two copies.
+   */
+  const handlePrint = () => {
+    const source = document.getElementById("picklist-document");
+    if (source && !document.getElementById(PRINT_ROOT_ID)) {
+      const clone = source.cloneNode(true);
+      clone.id = PRINT_ROOT_ID;
+      clone.className = "";
+      clone.removeAttribute("style");
+      document.body.appendChild(clone);
+    }
+    window.print();
+    // `afterprint` removes it on every browser that fires it. This is the
+    // backstop for the ones that do not, and for a print dialog dismissed
+    // without printing — a stale clone would otherwise sit in the DOM.
+    window.setTimeout(() => document.getElementById(PRINT_ROOT_ID)?.remove(), 1000);
+  };
 
   const handleDownload = async () => {
     if (!onDownload) return;
@@ -97,7 +186,7 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
                   PDF
                 </ERPButton>
               )}
-              <ERPButton variant="outline" size="sm" onClick={() => window.print()}>
+              <ERPButton variant="outline" size="sm" onClick={handlePrint}>
                 <Printer size={14} className="mr-1.5" />
                 Print
               </ERPButton>
@@ -110,9 +199,9 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
             </div>
           </div>
 
-          {/* The document. `print:` utilities strip the chrome so Print gives
-              the paper rather than a screenshot of a dialog. */}
-          <div className="flex-1 overflow-y-auto p-6 print:p-0 print:overflow-visible" id="picklist-document">
+          {/* The document. This node is what appears on SCREEN; printing uses a
+              clone of it placed outside the dialog — see usePrintablePicklist. */}
+          <div className="flex-1 overflow-y-auto p-6" id="picklist-document">
             {/* Letterhead */}
             <div className="flex items-start justify-between gap-4 pb-3 border-b-2 border-slate-800">
               <div>
@@ -139,7 +228,7 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
             </div>
 
             {/* Parties and terms */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1 py-3 border-b border-slate-200">
+            <div className="picklist-pair grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1 py-3 border-b border-slate-200">
               <div className="flex flex-col gap-0.5">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">
                   Billed to
@@ -149,7 +238,9 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
                   <Field label="Company" value={doc.customer.company} />
                 )}
                 <Field label="Contact No." value={doc.customer.phone} />
-                <Field label="Place of supply" value={doc.customer.location} />
+                {/* "Place of supply" removed: it printed the delivery TOWN under a
+                    heading that reads like an address, which the Shipping and
+                    Billing blocks below now state in full. */}
                 <Field label="GST No." value={doc.customer.gstNumber} />
                 {doc.customer.shopNumber && <Field label="Shop No." value={doc.customer.shopNumber} />}
               </div>
@@ -185,7 +276,7 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
               `whitespace-pre-line` so a multi-line address stored with newlines
               prints as the customer typed it.
             */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 py-3 border-b border-slate-200">
+            <div className="picklist-pair grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 py-3 border-b border-slate-200">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">
                   Shipping Address

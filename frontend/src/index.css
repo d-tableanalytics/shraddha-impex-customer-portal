@@ -309,34 +309,61 @@ html.dark .text-warning-500 { color: #e0a355; }
 html.dark .border-warning-200 { border-color: rgba(249, 115, 22, 0.30); }
 
 /* ── Printing the picklist / PO preview ─────────────────────────────────────
-   The preview is a dialog over the app, so a plain window.print() would put the
-   whole dashboard on the paper. Everything is hidden and only the document is
-   made visible again, then lifted out of the dialog's positioning so it starts
-   at the top of the sheet rather than wherever the modal happened to sit.
+   The preview is a dialog, and the document sits inside a card that is
+   `max-h-[92vh] overflow-hidden` and carries an inline framer-motion transform.
+   Nothing a stylesheet can say will un-clip a node from its ancestors, so this
+   no longer tries: PicklistPreview.jsx CLONES the document to a direct child of
+   <body> on `beforeprint` and removes it on `afterprint`.
 
-   `visibility` rather than `display`, because hiding an ancestor with display
-   would take the document down with it. Scoped to the one id in
-   components/pricing/PicklistPreview.jsx; nothing else prints this way. */
+   These rules therefore address that clone — `#picklist-print-root` — which has
+   no ancestors but <body> and so cannot be clipped, offset or constrained.
+   See the long note on `usePrintablePicklist`. */
+
+/* The clone only exists while printing, and must never be seen on screen. */
+#picklist-print-root { display: none; }
+
 @media print {
-  body * { visibility: hidden !important; }
+  /* Everything except the document is out. `display` rather than `visibility`:
+     a hidden-but-present dialog still occupies the page box and pushed the
+     document onto a second sheet. */
+  body > *:not(#picklist-print-root) { display: none !important; }
 
-  #picklist-document,
-  #picklist-document * { visibility: visible !important; }
-
-  #picklist-document {
-    position: absolute !important;
-    inset: 0 auto auto 0;
-    width: 100%;
+  #picklist-print-root {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
     max-height: none !important;
     overflow: visible !important;
     padding: 0 !important;
+    margin: 0 !important;
     box-shadow: none !important;
+    background: #fff !important;
   }
 
   /* Table borders survive the printer's default colour dropping. */
-  #picklist-document table { border-collapse: collapse !important; }
-  #picklist-document th,
-  #picklist-document td { border: 1px solid #94a3b8 !important; }
+  #picklist-print-root table { border-collapse: collapse !important; }
+  #picklist-print-root th,
+  #picklist-print-root td { border: 1px solid #94a3b8 !important; }
+
+  /* The two side-by-side blocks — "Billed to / Order" and "Shipping / Billing"
+     — are `sm:grid-cols-2` on screen. `sm:` is a min-width query, and browsers
+     do not agree on the width they hand a print stylesheet: some report the
+     page (A4 ≈ 794px, so the query matches), others report something narrower
+     and the columns silently collapse into one. Pinned here so paper does not
+     depend on that. */
+  #picklist-print-root .picklist-pair {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    column-gap: 2rem !important;
+  }
+
+  /* Neither block reads correctly split across a page boundary, and nor does a
+     row of goods. */
+  #picklist-print-root .picklist-pair,
+  #picklist-print-root tr { break-inside: avoid; page-break-inside: avoid; }
+
+  /* Column headings repeat when the goods run onto a second sheet. */
+  #picklist-print-root thead { display: table-header-group; }
 
   @page { margin: 12mm; }
 }

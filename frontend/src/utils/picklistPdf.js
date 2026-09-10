@@ -74,24 +74,57 @@ export const downloadPicklistPdf = async (docModel) => {
     pdf.line(margin, headerBottom, pageW - margin, headerBottom);
 
     /* ── Parties and terms ────────────────────────────────────────────────── */
-    const info = [
-      ["Customer", docModel.customer.name || "—", "Booking No.", docModel.orderId || "—"],
+    /*
+     * TWO INDEPENDENT COLUMNS, ZIPPED — not a hand-written list of 4-cell rows.
+     *
+     * This grid is [label, value, label, value] per row, so the two sides were
+     * coupled: a row paired one fact about the CUSTOMER with one about the
+     * TRANSACTION, and those have nothing to do with each other. Two bugs came
+     * straight out of that coupling:
+     *
+     *   - "Place of supply" shared its row with "PO Date", so deleting the
+     *     former would have silently deleted the latter;
+     *   - the optional Company row was written `["Company", value, "", ""]`,
+     *     which punched a blank gap into the RIGHT column every time a company
+     *     name differed from the customer name.
+     *
+     * Building each column on its own and zipping them at the end makes both
+     * impossible: either side can gain or lose an entry and the other is
+     * untouched. The shorter column is padded with empty cells.
+     *
+     * "Place of supply" is GONE. It printed `customer.location` — the delivery
+     * TOWN — under a heading that reads like an address, and that is now simply
+     * redundant: the Shipping and Billing addresses are printed in full in their
+     * own block below. `location` stays on the doc model, because it is still a
+     * fallback in that address ladder (see picklistDocument.js).
+     */
+    const left = [
+      ["Customer", docModel.customer.name || "—"],
       // The trading entity. Only when it differs from the customer name, or the
       // same string is printed twice on every document.
       ...(docModel.customer.company && docModel.customer.company !== docModel.customer.name
-        ? [["Company", docModel.customer.company, "", ""]]
+        ? [["Company", docModel.customer.company]]
         : []),
-      ["Contact No.", docModel.customer.phone || "—", "PO No.", docModel.poNumber || "Not raised"],
-      ["Place of supply", docModel.customer.location || "—", "PO Date", docModel.poDate ? fmtDate(docModel.poDate) : "—"],
-      ["GST No.", docModel.customer.gstNumber || "—", "Payment Term", docModel.paymentTerm || "—"],
-      ["Shop No.", docModel.customer.shopNumber || "—", "Supply By", docModel.promiseDate ? fmtDate(docModel.promiseDate) : "—"],
+      ["Contact No.", docModel.customer.phone || "—"],
+      ["GST No.", docModel.customer.gstNumber || "—"],
+      ["Shop No.", docModel.customer.shopNumber || "—"],
+      ...(docModel.customer.vendorCode ? [["Vendor Code", docModel.customer.vendorCode]] : []),
     ];
-    // Internal copies name the schedule; the adapter leaves it null otherwise.
-    if (docModel.priceTypeLabel) {
-      info.push(["Vendor Code", docModel.customer.vendorCode || "—", "Price Type", docModel.priceTypeLabel]);
-    } else if (docModel.customer.vendorCode) {
-      info.push(["Vendor Code", docModel.customer.vendorCode, "", ""]);
-    }
+
+    const right = [
+      ["Booking No.", docModel.orderId || "—"],
+      ["PO No.", docModel.poNumber || "Not raised"],
+      ["PO Date", docModel.poDate ? fmtDate(docModel.poDate) : "—"],
+      ["Payment Term", docModel.paymentTerm || "—"],
+      ["Supply By", docModel.promiseDate ? fmtDate(docModel.promiseDate) : "—"],
+      // Internal copies name the schedule; the adapter leaves it null otherwise.
+      ...(docModel.priceTypeLabel ? [["Price Type", docModel.priceTypeLabel]] : []),
+    ];
+
+    const info = Array.from({ length: Math.max(left.length, right.length) }, (_, i) => [
+      ...(left[i] ?? ["", ""]),
+      ...(right[i] ?? ["", ""]),
+    ]);
 
     autoTable(pdf, {
       startY: headerBottom + 4,
