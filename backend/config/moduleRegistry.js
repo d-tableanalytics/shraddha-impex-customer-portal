@@ -65,6 +65,54 @@
  */
 
 /** The five actions the Super Admin can grant, in display order. */
+/**
+ * ── THE PORTALS ──────────────────────────────────────────────────────────
+ *
+ * One database, one `users` collection, one `roles` collection — and two
+ * DOMAINS that must show different things to the same account.
+ *
+ *   customer   Customer Management, Inventory, Sales Desk
+ *   employee   HRMS and the company's internal modules
+ *
+ * A user may legitimately exist in both: a salesperson works bookings in the
+ * customer domain and their own leave in the employee one. What must NOT leak
+ * is the MODULE SET — signing into the customer domain must not surface HRMS,
+ * and typing an employee-domain URL there must not reach it.
+ *
+ * Every module below declares which portals may serve it, and that single tag
+ * is what the menu, the permission ceiling, the route guard and the frontend
+ * nav all read. Adding a third portal is a new string here plus a tag on each
+ * module it owns — no new plumbing.
+ *
+ * A module tagged with BOTH is served by both, deliberately: `administration`
+ * is where accounts and roles are maintained, and both domains need part of it.
+ * Sub-modules narrow further — "manage customers" and "manage internal users"
+ * are the same shape of screen pointed at different populations, and they do
+ * not belong in the same domain.
+ */
+export const PORTALS = Object.freeze({
+  CUSTOMER: 'customer',
+  EMPLOYEE: 'employee',
+});
+
+export const PORTAL_LIST = Object.freeze(Object.values(PORTALS));
+
+export const isPortal = (value) => PORTAL_LIST.includes(value);
+
+/**
+ * Which portals serve this module or sub-module.
+ *
+ * An UNTAGGED entry belongs to every portal. That default is deliberate: adding
+ * a module without thinking about domains cannot accidentally hide it, and the
+ * tag is only needed where a real boundary exists. The opposite default —
+ * untagged means nowhere — would make a forgotten tag look like a broken
+ * deployment rather than an unfinished thought.
+ */
+export const portalsOf = (entry) =>
+  Array.isArray(entry?.portals) && entry.portals.length ? entry.portals : PORTAL_LIST;
+
+export const servesPortal = (entry, portal) => portalsOf(entry).includes(portal);
+
 export const ACTIONS = ['view', 'create', 'edit', 'delete', 'approve'];
 
 export const ACTION_LABELS = {
@@ -98,6 +146,7 @@ export const MODULES = [
    */
   {
     key: 'customer_portal',
+    portals: [PORTALS.CUSTOMER],
     label: 'Customer Portal',
     description: 'Everything the customer-facing portal offers.',
     icon: 'Store',
@@ -190,6 +239,7 @@ export const MODULES = [
    */
   {
     key: 'sales',
+    portals: [PORTALS.CUSTOMER],
     label: 'Sales Desk',
     description: 'Reviewing, amending and releasing customer bookings.',
     icon: 'FileCheck2',
@@ -240,6 +290,7 @@ export const MODULES = [
    */
   {
     key: 'inventory',
+    portals: [PORTALS.CUSTOMER],
     label: 'Inventory Management',
     description: 'Stock master data, movements, counts and health.',
     icon: 'Warehouse',
@@ -382,6 +433,7 @@ export const MODULES = [
 
   {
     key: 'reports',
+    portals: [PORTALS.CUSTOMER],
     label: 'Reports',
     description: 'Operational and inventory reporting.',
     icon: 'BarChart3',
@@ -442,6 +494,7 @@ export const MODULES = [
    */
   {
     key: 'hrms',
+    portals: [PORTALS.EMPLOYEE],
     label: 'HRMS',
     description: 'Human resources: self-service, people operations, payroll, hiring and HR administration.',
     icon: 'Users',
@@ -500,6 +553,7 @@ export const MODULES = [
 
   {
     key: 'administration',
+    portals: [PORTALS.CUSTOMER, PORTALS.EMPLOYEE],
     label: 'Administration',
     description: 'Users, roles and system-wide access control.',
     icon: 'ShieldCheck',
@@ -510,17 +564,79 @@ export const MODULES = [
         label: 'Admin Panel',
         path: '/admin',
         icon: 'LayoutGrid',
-        actions: { view: ['manage_users', 'manage_customer_users', 'manage_roles'] },
+        /*
+         * `manage_customer_users` is DELIBERATELY not here any more.
+         *
+         * It used to be, which made Sales an administrator as far as this tile
+         * page was concerned — and once the domains were split that leaked:
+         * Sales held the key through this sub-module, `overview` is served by
+         * both domains, so a salesperson signing into the EMPLOYEE portal saw an
+         * "Admin Panel" entry pointing at a route that portal does not even
+         * mount. Caught by resolving real accounts against both domains.
+         *
+         * Nothing is lost. Customer Management is its own sidebar entry now, and
+         * it still admits `manage_customer_users` — so Sales reaches the screen
+         * they actually use in one click rather than via a tile grid. This page
+         * is for administering the SYSTEM, which is what the two keys left here
+         * mean.
+         */
+        actions: { view: ['manage_users', 'manage_roles'] },
+      },
+      /*
+       * ── TWO USER-MANAGEMENT SCREENS, NOT ONE ────────────────────────────
+       *
+       * `users` used to be a single screen doing both jobs, gated on
+       * `manage_users` OR `manage_customer_users`. That conflated two workflows
+       * that only look alike:
+       *
+       *   Customer Management     onboard the businesses we sell to. Sales owns
+       *                           it, holds MANAGE_CUSTOMER_USERS, and the
+       *                           controller already refuses them any account
+       *                           whose role is not Customer.
+       *   Internal User Management  create staff — Sales, Inventory Manager,
+       *                           Admin. Needs MANAGE_USERS, which is the
+       *                           permission that can grant privilege, and is
+       *                           therefore the one worth keeping separate.
+       *
+       * Splitting them is what stops "add a user" meaning two different things
+       * depending on who clicks it, and it makes the domain split expressible:
+       * customers are a customer-domain concern, staff are an internal one.
+       *
+       * The BACKEND distinction already existed — two permissions and
+       * `denyIfOutOfScope` in user.controller.js. Only the UI was fused.
+       */
+      {
+        key: 'customers',
+        label: 'Customer Management',
+        path: '/admin/customers',
+        icon: 'Store',
+        // Customer accounts are a customer-domain concern; the Employee Portal
+        // has no reason to onboard the businesses we sell to.
+        portals: [PORTALS.CUSTOMER],
+        actions: {
+          view: ['manage_customer_users', 'manage_users'],
+          create: ['manage_customer_users', 'manage_users'],
+          edit: ['manage_customer_users', 'manage_users'],
+          delete: ['manage_users'],
+        },
       },
       {
         key: 'users',
-        label: 'User Management',
+        label: 'Internal User Management',
         path: '/admin/users',
         icon: 'Users',
+        /*
+         * BOTH portals, and that is a deliberate choice rather than an
+         * oversight. The staff created here work in BOTH domains — a
+         * salesperson lives in the customer portal, an HR admin in the employee
+         * one — so an administrator in either domain may need to create one.
+         * `manage_users` gates it, and no customer-facing role holds that.
+         */
+        portals: [PORTALS.CUSTOMER, PORTALS.EMPLOYEE],
         actions: {
-          view: ['manage_users', 'manage_customer_users'],
-          create: ['manage_users', 'manage_customer_users'],
-          edit: ['manage_users', 'manage_customer_users'],
+          view: ['manage_users'],
+          create: ['manage_users'],
+          edit: ['manage_users'],
           delete: ['manage_users'],
         },
       },
@@ -529,6 +645,17 @@ export const MODULES = [
         label: 'Roles & Permissions',
         path: '/admin/permissions',
         icon: 'Key',
+        /*
+         * EMPLOYEE PORTAL ONLY.
+         *
+         * This matrix grants access across BOTH domains' modules, and both
+         * repositories write the same `roles` collection. Two screens
+         * recompiling the same `Role.grants` is the hazard SHARED-CONTRACT.md
+         * documents — a save from one domain can strip cells the other wrote.
+         * Keeping the single editor in the internal domain removes the race
+         * rather than trying to merge around it.
+         */
+        portals: [PORTALS.EMPLOYEE],
         actions: {
           view: ['manage_roles'],
           create: ['manage_roles'],
@@ -711,8 +838,38 @@ export const allRegistryKeys = () => {
  * only the actions they really offer. Sent over the wire so the matrix screen
  * never has to keep its own copy of the catalogue.
  */
-export const registryForClient = () =>
+/**
+ * The registry as the permission-matrix screen sees it.
+ *
+ * ---------------------------------------------------------------------------
+ * SCOPED TO ONE DOMAIN, AND WHY THAT IS SAFE
+ * ---------------------------------------------------------------------------
+ *
+ * `portal` narrows the matrix to the modules THAT domain serves, so the
+ * Employee Portal's Roles & Permissions screen shows HRMS and Administration
+ * and not the Customer Portal, Sales Desk or Inventory.
+ *
+ * The obvious worry is data loss: if the screen cannot see a customer-domain
+ * cell, does saving a role wipe it? No, and the reason is worth writing down
+ * because it is not obvious from this file.
+ *
+ * `PermissionMatrix.jsx` seeds its draft with `grantsToMap(role.grants)` — the
+ * role's STORED grants, keyed `module.submodule`, built without consulting the
+ * registry at all. Cells it does not render are simply never touched, and
+ * `mapToGrants(draft)` serialises the whole map back. So a hidden cell makes the
+ * round trip unchanged.
+ *
+ * Server-side, `validateGrants` still checks against the FULL `MODULES` list —
+ * deliberately not filtered — so those returning cells are recognised rather
+ * than rejected as "Unknown module or sub-module". Filtering the validator too
+ * would turn every save of a role holding another domain's grants into a 400.
+ *
+ * A `portal` of null/undefined returns everything, which is what a caller that
+ * genuinely wants the whole vocabulary should ask for.
+ */
+export const registryForClient = (portal = null) =>
   [...MODULES]
+    .filter((mod) => !portal || servesPortal(mod, portal))
     .sort((a, b) => a.order - b.order)
     .map((mod) => ({
       key: mod.key,
@@ -720,14 +877,18 @@ export const registryForClient = () =>
       description: mod.description,
       icon: mod.icon,
       order: mod.order,
-      submodules: mod.submodules.map((sub) => ({
-        key: sub.key,
-        label: sub.label,
-        path: sub.path ?? null,
-        hidden: !!sub.hidden,
-        icon: sub.icon ?? null,
-        actions: availableActions(sub),
-      })),
+      submodules: mod.submodules
+        // Sub-modules narrow independently: Roles & Permissions is
+        // employee-only inside an Administration module both domains serve.
+        .filter((sub) => !portal || servesPortal({ portals: sub.portals ?? mod.portals }, portal))
+        .map((sub) => ({
+          key: sub.key,
+          label: sub.label,
+          path: sub.path ?? null,
+          hidden: !!sub.hidden,
+          icon: sub.icon ?? null,
+          actions: availableActions(sub),
+        })),
     }));
 
 export default {

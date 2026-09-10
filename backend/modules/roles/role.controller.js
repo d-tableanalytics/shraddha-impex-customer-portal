@@ -7,6 +7,7 @@ import {
   validateGrants,
 } from '../../config/moduleRegistry.js';
 import { BASELINE_ROLE_PERMISSIONS, SYSTEM_ROLE_NAMES } from '../../config/permissions.js';
+import { currentPortal } from '../../config/portal.js';
 import {
   loadRoles,
   resolveRolePermissions,
@@ -102,7 +103,16 @@ export const getRegistry = async (req, res, next) => {
   try {
     res.status(200).json({
       success: true,
-      data: { actions: ACTIONS, modules: registryForClient() },
+      /*
+       * Scoped to THIS deployment's domain. The Employee Portal's matrix shows
+       * HRMS and Administration; it does not show the Customer Portal, Sales
+       * Desk or Inventory, because those are not its to grant.
+       *
+       * The portal is passed in rather than read inside the registry:
+       * config/portal.js imports PORTALS from the registry, so the registry
+       * importing it back would be a cycle.
+       */
+      data: { actions: ACTIONS, modules: registryForClient(currentPortal()) },
     });
   } catch (error) {
     next(error);

@@ -12,10 +12,9 @@
     "verify:features": "node scripts/verify-feature-pack.js",
     "test": "node --test --test-reporter=spec \"tests/**/*.test.js\"",
     "test:watch": "node --test --watch \"tests/**/*.test.js\"",
-    "verify:passwords": "node scripts/hrms/verify-password-hashing.js",
-    "verify:sensitive": "node scripts/hrms/verify-no-plaintext-sensitive.js",
-    "hrms:import": "node scripts/hrms/import-client-workbook.js",
+    "verify:passwords": "node scripts/verify-password-hashing.js",
     "verify:rbac": "node scripts/verify-rbac.js",
+    "verify:contract": "node scripts/verify-shared-contract.js",
     "verify:msil": "node scripts/verify-msil.js",
     "msil:check": "node scripts/sync-msil.js",
     "msil:sync": "node scripts/sync-msil.js --apply",
@@ -32,9 +31,6 @@
     "history:send": "node scripts/send-history-report.js"
   },
   "dependencies": {
-    "@aws-sdk/client-kms": "^3.1123.0",
-    "@aws-sdk/client-s3": "^3.1123.0",
-    "@aws-sdk/s3-request-presigner": "^3.1123.0",
     "bcryptjs": "^3.0.3",
     "compression": "^1.7.4",
     "cookie-parser": "^1.4.6",

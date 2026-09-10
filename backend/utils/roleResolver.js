@@ -1,6 +1,8 @@
 import Role from '../models/Role.js';
+import { currentPortal } from '../config/portal.js';
 import {
   MODULES,
+  servesPortal,
   compileGrants,
   availableActions,
   keysForGrant,
@@ -54,24 +56,66 @@ let resolvedByName = new Map();
 
 let loadedAt = null;
 
-/**
- * Every flat key reachable from inside the customer_portal module.
- *
- * This is the ceiling a `portalOnly` role is held to - requirement 1. Computed
- * from the registry rather than listed by hand so that a sub-module added to
- * the Customer Portal later is automatically inside the fence, and a sub-module
- * added to any OTHER module is automatically outside it.
- */
-const PORTAL_KEYS = (() => {
+/** Every flat key a module or sub-module list can reach. */
+const keysOf = (modules) => {
   const keys = new Set();
-  const portal = MODULES.find((m) => m.key === 'customer_portal');
-  for (const sub of portal?.submodules || []) {
-    for (const action of availableActions(sub)) {
-      for (const key of sub.actions[action]) keys.add(key);
+  for (const mod of modules) {
+    for (const sub of mod.submodules || []) {
+      for (const action of availableActions(sub)) {
+        for (const key of sub.actions[action]) keys.add(key);
+      }
     }
   }
   return keys;
-})();
+};
+
+/**
+ * Every flat key reachable from inside the customer_portal MODULE.
+ *
+ * The ceiling a `portalOnly` ROLE is held to — a Customer account, or any role
+ * a Super Admin marks portal-only. Distinct from PORTAL_MODULE_KEYS below, and
+ * the two are easy to confuse:
+ *
+ *   CUSTOMER_MODULE_KEYS  a property of the ROLE. A Customer is fenced into the
+ *                         customer_portal module wherever they sign in.
+ *   PORTAL_MODULE_KEYS    a property of the DEPLOYMENT. Nobody, whatever their
+ *                         role, sees another domain's modules from here.
+ *
+ * Both are computed from the registry rather than listed by hand, so a
+ * sub-module added later lands inside or outside each fence automatically.
+ */
+const CUSTOMER_MODULE_KEYS = keysOf(MODULES.filter((m) => m.key === 'customer_portal'));
+
+/**
+ * Every flat key this DEPLOYMENT's portal is allowed to serve, per portal.
+ *
+ * Computed once per portal and cached, because `resolveUserPermissions` runs on
+ * every authenticated request and must not be walking the registry each time.
+ *
+ * Sub-modules narrow: `administration` is served by both portals, but its
+ * `roles` sub-module is employee-only and its `customers` sub-module is
+ * customer-only — so a key reachable ONLY through a sub-module the current
+ * portal does not serve is outside the fence even though its parent module is
+ * inside it.
+ */
+const PORTAL_KEY_CACHE = new Map();
+
+const portalKeys = (portal) => {
+  if (PORTAL_KEY_CACHE.has(portal)) return PORTAL_KEY_CACHE.get(portal);
+  const keys = new Set();
+  for (const mod of MODULES) {
+    if (!servesPortal(mod, portal)) continue;
+    for (const sub of mod.submodules || []) {
+      // A sub-module inherits its module's portals unless it names its own.
+      if (!servesPortal({ portals: sub.portals ?? mod.portals }, portal)) continue;
+      for (const action of availableActions(sub)) {
+        for (const key of sub.actions[action]) keys.add(key);
+      }
+    }
+  }
+  PORTAL_KEY_CACHE.set(portal, keys);
+  return keys;
+};
 
 // ── Loading ────────────────────────────────────────────────────────────────
 
@@ -201,7 +245,7 @@ export const resolveRolePermissions = (roleName) => {
   // is empty or unreachable, which is precisely when a fence that quietly
   // disappears would do the most damage.
   const bounded = isPortalOnly(roleName, role)
-    ? [...permissions].filter((key) => PORTAL_KEYS.has(key))
+    ? [...permissions].filter((key) => CUSTOMER_MODULE_KEYS.has(key))
     : [...permissions];
 
   const frozen = Object.freeze(bounded);
@@ -230,23 +274,45 @@ export const resolveUserPermissions = (user) => {
   if (!user) return [];
 
   const rolePerms = resolveRolePermissions(user.role);
+
+  /*
+   * THE WILDCARD IS NOT FENCED HERE, AND THAT IS CORRECT.
+   *
+   * '*' means "unrestricted", and `setHas` reads it as satisfying every key.
+   * Filtering it would be meaningless — there is no subset of a wildcard — and
+   * removing it would strip a Super Admin of everything.
+   *
+   * What stops a Super Admin reaching another domain's modules is not this
+   * function: it is that this deployment does not MOUNT them (an employee route
+   * simply 404s here), plus `requirePortalModule` on anything that is mounted
+   * but domain-scoped. The menu is filtered separately in `menuFor`, so an
+   * unrestricted account still sees only this domain's navigation.
+   */
   if (rolePerms.includes('*')) return rolePerms;
 
   const extras = user.extraGrants || [];
 
-  // The overwhelmingly common case: no per-user grants. Return the cached array
-  // untouched rather than copying it on every request.
-  if (!extras.length) return rolePerms;
-
-  const permissions = new Set(rolePerms);
+  const permissions = new Set(extras.length ? rolePerms : rolePerms);
   for (const key of compileGrants(extras)) permissions.add(key);
 
-  // The portal fence follows the USER, not just the role. A customer given an
-  // extra grant by mistake is still a customer - extraGrants is additive, and
-  // this is the one thing it cannot add past.
-  return isPortalOnly(user.role, rolesByName.get(user.role))
-    ? [...permissions].filter((key) => PORTAL_KEYS.has(key))
-    : [...permissions];
+  /*
+   * TWO FENCES, applied in order. They answer different questions and a user
+   * can be caught by either.
+   *
+   *   1. THE ROLE fence. A `portalOnly` role — a Customer, or any role a Super
+   *      Admin marks as such — is held to the customer_portal module wherever
+   *      they sign in. It follows the USER, not just the role name, so extra
+   *      grants given by mistake cannot add past it.
+   *   2. THE DOMAIN fence. Nobody, whatever their role, comes away holding a
+   *      key this deployment's portal does not serve. That is what makes the
+   *      same account see different capabilities on the two domains.
+   */
+  let bounded = [...permissions];
+  if (isPortalOnly(user.role, rolesByName.get(user.role))) {
+    bounded = bounded.filter((key) => CUSTOMER_MODULE_KEYS.has(key));
+  }
+  const domain = portalKeys(currentPortal());
+  return bounded.filter((key) => domain.has(key));
 };
 
 // ── Questions the rest of the system asks ──────────────────────────────────
@@ -286,7 +352,13 @@ export const can = (user, moduleKey, submoduleKey, action) => {
 export const menuFor = (user) => {
   const permissions = resolveUserPermissions(user);
 
+  const portal = currentPortal();
+
   return [...MODULES]
+    // The DOMAIN fence. A module this deployment does not serve never reaches
+    // the menu, whatever the account holds — so an HR admin signing into the
+    // customer domain sees the customer modules and no trace of HRMS.
+    .filter((mod) => servesPortal(mod, portal))
     .sort((a, b) => a.order - b.order)
     .map((mod) => ({
       key: mod.key,
@@ -294,6 +366,9 @@ export const menuFor = (user) => {
       icon: mod.icon,
       order: mod.order,
       items: mod.submodules
+        // Sub-modules narrow: Roles & Permissions is employee-only inside an
+        // administration module both portals serve.
+        .filter((sub) => servesPortal({ portals: sub.portals ?? mod.portals }, portal))
         .filter((sub) => sub.path && !sub.hidden)
         .filter((sub) => {
           const keys = sub.actions?.view;

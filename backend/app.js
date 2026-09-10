@@ -16,8 +16,6 @@ import notificationRoutes from './modules/notifications/notification.routes.js';
 import roleRoutes from './modules/roles/role.routes.js';
 import salesRoutes from './modules/sales/sales.routes.js';
 import inventoryRoutes from './modules/inventory/inventory.routes.js';
-import hrmsRoutes from './modules/hrms/hrms.routes.js';
-import { captureBiometricRawBody } from './modules/hrms/attendance/rawBody.js';
 import productDetailRoutes from './modules/inventory/productDetail.routes.js';
 import apiRoutes from './routes/api.routes.js';
 
@@ -44,12 +42,10 @@ app.use(cors({
   credentials: true 
 }));
 app.use(compression());
-// `verify` keeps the RAW bytes of the biometric webhook's body, and only that
-// route's. Its HMAC signature is computed over the exact bytes the device sent,
-// and this parser consumes the stream before any router runs — so without this
-// hook there would be nothing left to verify against. See
-// modules/hrms/attendance/rawBody.js. Every other request is unaffected.
-app.use(express.json({ limit: '10mb', verify: captureBiometricRawBody }));
+// The `verify` hook that preserved the raw bytes of the HRMS biometric webhook
+// went with HRMS — that webhook is served by the Employee Portal now, and this
+// app has no route that authenticates over an exact byte sequence.
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
@@ -72,11 +68,6 @@ app.use('/api/v1/roles', roleRoutes);
 app.use('/api/v1/sales', salesRoutes);
 // Inventory Management System (M1: master, locations, configuration).
 app.use('/api/v1/inventory', inventoryRoutes);
-// HRMS (AD-14). Same domain, same session, same Express app - one application,
-// not two. Its router owns its own auth chain: protect -> attachHrmsActor ->
-// requireHrmsAccess, so no HRMS endpoint can be reached without HRMS
-// authorization, and no portal route is affected by any of it.
-app.use('/api/v1/hrms', hrmsRoutes);
 // Product content — descriptions, photographs and user-guide videos. Mounted
 // apart from the inventory router because that router authenticates everything
 // under it, and serving an image must not be authenticated: a browser's <img>

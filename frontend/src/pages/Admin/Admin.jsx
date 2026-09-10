@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Users, Boxes, Key, Image as ImageIcon } from "lucide-react";
+import { Users, Boxes, Store, Image as ImageIcon } from "lucide-react";
 import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
 import { Badge } from "../../components/ui/Badge";
 import { useUserStore } from "../../store/userStore";
@@ -12,15 +12,23 @@ export const Admin = () => {
     {
       name: "User Management",
       desc: "Add customers and set/change their category (MSIL / Customer).",
+      icon: Store,
+      path: "/admin/customers",
+    },
+    {
+      name: "Internal User Management",
+      desc: "Create and maintain staff accounts. These people work across both portals.",
       icon: Users,
       path: "/admin/users",
     },
-    {
-      name: "Roles & Permissions",
-      desc: "Create roles and grant module access: view, create, edit, delete, approve.",
-      icon: Key,
-      path: "/admin/permissions",
-    },
+    /*
+     * Roles & Permissions is NOT here.
+     *
+     * The matrix grants access across both portals' modules and both
+     * repositories write the same `roles` collection, so it has exactly one
+     * editor — in the Employee Portal. Linking it from here would offer a tile
+     * that 404s: the route is gone from this SPA and the API is portal-gated.
+     */
     {
       name: "Product Details",
       desc: "Descriptions, product images and videos, by SKU.",

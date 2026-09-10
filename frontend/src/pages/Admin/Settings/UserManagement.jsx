@@ -94,7 +94,7 @@ const emptyForm = {
   // The new account's access level, in the same vocabulary the edit modal and
   // the table use: 'Customer' and 'MSIL' are levels here, not a role plus a
   // category. It is turned back into { role, customerCategory } on submit.
-  accessLevel: 'Customer',
+  accessLevel: 'Customer', // overridden per audience when the Add modal opens
   status: 'Active',
   brandAccess: {
     koken: true,
@@ -167,7 +167,29 @@ const accessLevelsFor = (actor, customRoles = []) =>
     return [role];
   });
 
-export const UserManagement = () => {
+/**
+ * ── ONE COMPONENT, TWO AUDIENCES ─────────────────────────────────────────
+ *
+ * `audience` decides which POPULATION this screen manages:
+ *
+ *   'customers'  the businesses we sell to. Sales owns this, holding
+ *                MANAGE_CUSTOMER_USERS, and the server already refuses them any
+ *                account whose role is not Customer.
+ *   'internal'   staff — Sales, Inventory Manager, Admin. Needs MANAGE_USERS,
+ *                the permission that can grant privilege.
+ *
+ * Parameterised rather than forked into two 900-line files: the two screens are
+ * the same table, the same modals and the same API, pointed at different rows.
+ * Copying it would guarantee that a fix to one silently misses the other — and
+ * the thing that must NOT be shared is the population and the permission, which
+ * is exactly what this prop separates.
+ *
+ * The routes mount it twice, and the module registry decides which route each
+ * DOMAIN offers: Customer Management is customer-portal-only, Internal User
+ * Management is served by both because the staff it creates work in both.
+ */
+export const UserManagement = ({ audience = 'internal' }) => {
+  const isCustomerAudience = audience === 'customers';
   const {
     users, fetchUsers, loading, createUser, updateUser, resetUserPassword,
     roles, fetchAssignableRoles,
@@ -212,7 +234,10 @@ export const UserManagement = () => {
   // The levels this actor may create an account at. Same list the edit modal
   // offers, so an account is created at the level it would later be edited to
   // rather than through a different pair of dropdowns.
-  const addLevels = accessLevelsFor(user, customRoles);
+  const forAudience = (levels) => levels.filter((l) =>
+    isCustomerAudience ? (l === 'Customer' || l === 'MSIL') : (l !== 'Customer' && l !== 'MSIL'),
+  );
+  const addLevels = forAudience(accessLevelsFor(user, customRoles));
 
   /**
    * The levels the edit modal offers.
@@ -227,18 +252,33 @@ export const UserManagement = () => {
    */
   const editLevels = editForm
     ? [...new Set([
-      ...(isAdmin ? accessLevelsFor(user, customRoles) : []),
+      ...(isAdmin ? forAudience(accessLevelsFor(user, customRoles)) : []),
+      // The account's CURRENT level is always kept, even when the audience
+      // filter would exclude it — otherwise a legacy value renders as a blank
+      // select and is written away by the next save.
       editForm.accessLevel,
     ])].filter(Boolean)
     : [];
 
+  /*
+   * The population, before any search.
+   *
+   * A Customer account and a staff account are different objects with different
+   * required fields, and mixing them in one list is what made "add a user" mean
+   * two things. `role === 'Customer'` is the whole distinction — MSIL is a
+   * customerCategory ON a Customer, not a separate role.
+   */
+  const audienceUsers = users.filter((u) =>
+    isCustomerAudience ? u.role === 'Customer' : u.role !== 'Customer',
+  );
+
   const q = search.trim().toLowerCase();
   const filteredUsers = q
-    ? users.filter((u) =>
+    ? audienceUsers.filter((u) =>
         [u.user, u.company, u.email]
           .some((v) => String(v || '').toLowerCase().includes(q)),
       )
-    : users;
+    : audienceUsers;
 
   const { page, setPage, pageItems: visibleUsers, total } = usePagination(filteredUsers, PAGE_SIZE);
 
@@ -258,9 +298,18 @@ export const UserManagement = () => {
     setPage(1);
   }, [q, setPage]);
 
-  // Admin and Sales reach this screen; everyone else is sent away. The route is
-  // guarded again on every API call.
-  if (user && !mayOpen) {
+  /*
+   * The gate differs by audience, and the difference is the point.
+   *
+   * Customer Management admits anyone who may manage customers — that includes
+   * Sales, which is the role that onboards them.
+   * Internal User Management demands MANAGE_USERS, so Sales cannot reach it.
+   * Without that split a salesperson could open the screen that creates an
+   * Admin, which is the privilege-escalation path the two permissions exist to
+   * keep apart. The server enforces both again on every call.
+   */
+  const mayOpenThisScreen = isCustomerAudience ? mayOpen : isAdmin;
+  if (user && !mayOpenThisScreen) {
     return <Navigate to="/" replace />;
   }
 
@@ -408,8 +457,14 @@ export const UserManagement = () => {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h2 className="text-lg font-bold text-slate-800">User Management</h2>
-          <p className="text-sm text-slate-500">Manage customers, categories, roles, and access.</p>
+          <h2 className="text-lg font-bold text-slate-800">
+            {isCustomerAudience ? 'Customer Management' : 'Internal User Management'}
+          </h2>
+          <p className="text-sm text-slate-500">
+            {isCustomerAudience
+              ? 'Onboard and maintain the businesses we sell to — categories, brand access and contact details.'
+              : 'Create and maintain staff accounts. These people work across both portals.'}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="relative w-full sm:w-72">
@@ -429,7 +484,17 @@ export const UserManagement = () => {
               />
             )}
           </div>
-          <Button size="sm" variant="primary" onClick={() => setShowAdd(true)} className="shrink-0">
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => {
+              // Open at a level this audience can actually create, so the first
+              // thing an admin sees is not a role they must immediately change.
+              setForm((f) => ({ ...f, accessLevel: addLevels[0] ?? f.accessLevel }));
+              setShowAdd(true);
+            }}
+            className="shrink-0"
+          >
             <UserPlus size={16} className="mr-2" />
             Add User
           </Button>
@@ -444,8 +509,27 @@ export const UserManagement = () => {
                 <tr>
                   <th className="px-6 py-4 font-bold text-slate-600">User</th>
                   <th className="px-6 py-4 font-bold text-slate-600">Role</th>
-                  <th className="px-6 py-4 font-bold text-slate-600">Customer Category</th>
-                  <th className="px-6 py-4 font-bold text-slate-600">Brand Access</th>
+                  {/*
+                    CUSTOMER-ONLY COLUMNS.
+                    `customerCategory` is MSIL vs non-MSIL, and `brandAccess`
+                    scopes which brands a CUSTOMER may order — see the note on
+                    INVENTORY_ROLES in backend/config/permissions.js, which says
+                    the flags exist to scope customers and that staff roles see
+                    every brand regardless.
+
+                    On the internal list they were worse than merely redundant:
+                    the Category cell fell back to printing the account's role,
+                    duplicating the column beside it, and Brand Access rendered a
+                    red "None" against inventory staff who in fact see all three
+                    brands. A column that states the opposite of the truth is
+                    worse than no column.
+                  */}
+                  {isCustomerAudience && (
+                    <>
+                      <th className="px-6 py-4 font-bold text-slate-600">Customer Category</th>
+                      <th className="px-6 py-4 font-bold text-slate-600">Brand Access</th>
+                    </>
+                  )}
                   <th className="px-6 py-4 font-bold text-slate-600">Status</th>
                   <th className="px-6 py-4 font-bold text-slate-600 text-right">Actions</th>
                 </tr>
@@ -455,7 +539,10 @@ export const UserManagement = () => {
                   <TableSkeleton rows={PAGE_SIZE} columns={6} />
                 ) : filteredUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                    {/* Must track the header count, which is two shorter on the
+                        internal list — a fixed 6 would leave the empty-state row
+                        spanning past the last column. */}
+                    <td colSpan={isCustomerAudience ? 6 : 4} className="px-6 py-12 text-center text-slate-400">
                       {q ? `No users match "${search}".` : 'No users found.'}
                     </td>
                   </tr>
@@ -487,6 +574,8 @@ export const UserManagement = () => {
                             <Shield size={12} /> {u.role || 'Customer'}
                           </span>
                         </td>
+                        {isCustomerAudience && (
+                          <>
                         <td className="px-6 py-4">
                           {isCustomer ? (
                             <select
@@ -527,6 +616,8 @@ export const UserManagement = () => {
                             )}
                           </div>
                         </td>
+                          </>
+                        )}
                         <td className="px-6 py-4">
                           <div className="flex flex-col items-start gap-1">
                             <span className={`px-2 py-1 text-xs font-bold rounded-full ${STATUS_STYLES[u.status] || STATUS_STYLES.Inactive}`}>
@@ -699,6 +790,9 @@ export const UserManagement = () => {
             </div>
           )}
 
+           {/* Customer-only: brand access scopes which brands a CUSTOMER may
+               order. Staff roles see every brand regardless. */}
+           {isCustomerAudience && (
            <div className="flex flex-col gap-2 mt-1">
              <span className="text-xs font-bold text-slate-600">Brand Access</span>
              <div className="flex gap-4">
@@ -731,6 +825,7 @@ export const UserManagement = () => {
                </label>
              </div>
            </div>
+           )}
 
           <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 mt-2">
             <Button type="button" variant="outline" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
@@ -845,6 +940,8 @@ export const UserManagement = () => {
               </p>
             )}
  
+             {/* Customer-only — see the note in the Add modal. */}
+             {isCustomerAudience && (
              <div className="flex flex-col gap-2 mt-1">
                <span className="text-xs font-bold text-slate-600">Brand Access</span>
                <div className="flex gap-4">
@@ -877,6 +974,7 @@ export const UserManagement = () => {
                  </label>
                </div>
              </div>
+             )}
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 mt-2">
               <Button type="button" variant="outline" size="sm" onClick={closeEdit}>Cancel</Button>

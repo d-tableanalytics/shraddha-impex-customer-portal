@@ -13,9 +13,6 @@ import { useUserStore } from "../../store/userStore";
 import { useUIStore } from "../../store/uiStore";
 import { useThemeStore } from "../../store/themeStore";
 import { useNotificationStore } from "../../store/notificationStore";
-// HRMS notification centre. Renders nothing for anyone without an HRMS inbox
-// grant, so the shared top bar is unchanged for portal customers (AD-14).
-import { InboxBell } from "../hrms/InboxBell";
 import { Drawer } from "../ui/Drawer";
 import toast from "react-hot-toast";
 
@@ -129,8 +126,6 @@ export const Navbar = () => {
             </span>
           )}
         </button>
-
-        <InboxBell />
 
         <div className="w-px h-6 bg-slate-200" />
 

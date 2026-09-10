@@ -33,13 +33,6 @@ import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
 import { homePathFor } from "../../utils/permissions";
 import { buildNavigation } from "../../utils/navigation";
-import { useHrmsPermissions } from "../../hooks/useHrmsPermissions";
-import {
-  visibleHrmsNavItems,
-  groupHrmsNavItems,
-  HRMS_SIDEBAR_GROUP_KEY,
-  HRMS_SIDEBAR_GROUP_LABEL,
-} from "../hrms/navItems";
 
 /**
  * Icon names travel from the backend registry as strings; this is where they
@@ -57,11 +50,10 @@ const ICONS = {
   GaugeCircle, Upload, Images, Store, ShieldCheck, LayoutGrid, Key, BarChart3,
 };
 
-// The ERP registry sends icons as NAMES; the HRMS nav items hold the imported
-// component directly. Accepting both keeps one renderer for the whole rail
-// rather than forking it, and keeps every HRMS icon out of the map above.
-const iconFor = (name) =>
-  (typeof name === "function" || typeof name === "object") && name ? name : ICONS[name] || Circle;
+// The registry sends icons as NAMES, and this is where they become components.
+// An unknown name falls back to a plain dot, so a module registered before
+// somebody picks its icon still appears in the menu.
+const iconFor = (name) => ICONS[name] || Circle;
 
 export const Sidebar = () => {
   const { sidebarOpen, toggleSidebar, collapsedNavGroups, toggleNavGroup } = useUIStore();
@@ -95,68 +87,7 @@ export const Sidebar = () => {
    * into groups. The presentation decisions that genuinely belong to the
    * sidebar - the cart badge, which group is open - stay here.
    */
-  /**
-   * HRMS navigation - ONE dropdown.
-   *
-   * Appended to the SAME group list the ERP menu produces, not rendered as a
-   * second rail: HRMS items then take part in the same active-item contest,
-   * the same collapse behaviour and the same renderer, so exactly one row is
-   * ever lit and the two halves cannot drift apart visually.
-   *
-   * This used to append one top-level group PER HRMS group - HRMS, My Work,
-   * People & Org and HRMS Admin, four headings deep in a rail that already has
-   * the ERP's own modules in it. They are now a single "HRMS" group the user
-   * opens once, with the four sections rendered INSIDE it as quiet uppercase
-   * labels rather than as four more collapsible trees.
-   *
-   * `sections` is what the rail draws; `items` is the same list flattened, and
-   * exists so the active-item contest below stays one comparison over every
-   * item in the menu rather than a special case for HRMS.
-   *
-   * Visibility comes from the HRMS evaluator, never from a portal permission -
-   * the portal's Roles & Permissions matrix decides which HRMS ROLES an account
-   * holds (see backend/utils/hrmsAccessBridge.js), and the evaluator then
-   * decides what those roles can see, exactly as it did before. An account with
-   * no HRMS access - a customer, or an admin on a role without the HRMS module
-   * - gets null back and sees no trace of HRMS, not even a heading (AD-4).
-   */
-  const { can, implementedModules, hasAccess: hasHrmsAccess } = useHrmsPermissions();
-
-  const hrmsSections = hasHrmsAccess
-    ? groupHrmsNavItems(visibleHrmsNavItems(can, implementedModules)).map((section) => ({
-        key: section.group,
-        // The first section is the module's own core links (Dashboard, Inbox,
-        // My Profile). They sit directly under the HRMS heading with no label
-        // of their own — a heading above three links that are already under
-        // "HRMS" would be a label for the thing you just read.
-        label: section.group === "core" ? null : section.label,
-        items: section.items.map((item) => ({
-          id: `hrms:${item.key}`,
-          key: item.key,
-          label: item.label,
-          path: item.path,
-          icon: item.icon,
-        })),
-      }))
-    : [];
-
   const erpGroups = buildNavigation(user);
-
-  const hrmsGroups =
-    hrmsSections.length > 0
-      ? [
-          {
-            key: HRMS_SIDEBAR_GROUP_KEY,
-            label: HRMS_SIDEBAR_GROUP_LABEL,
-            icon: "Users",
-            // Always a heading, even at one item: an HRMS entry loose among the
-            // ERP modules would read as an ERP module.
-            alwaysGrouped: true,
-            sections: hrmsSections,
-            items: hrmsSections.flatMap((s) => s.items),
-          },
-        ]
-      : [];
 
   /**
    * Administration sits at the BOTTOM of the rail, under everything it
@@ -164,10 +95,9 @@ export const Sidebar = () => {
    *
    * It has to be done here rather than with the registry's `order`, because the
    * two halves of this menu are ordered by different things. The ERP groups
-   * arrive from the server already sorted by `order`; the HRMS group is built
-   * on the client from the HRMS actor and knows nothing about that scale, so it
-   * can only ever be concatenated - which put it after Administration however
-   * the registry was numbered.
+   * arrive from the server already sorted by `order`, and Administration is
+   * moved by KEY rather than by renumbering the registry — so it stays last
+   * whatever order values the registry is later given.
    *
    * Moving the one group by key is therefore the honest fix: it says what it
    * means, it survives a renumbering, and it does nothing at all for an account
@@ -177,7 +107,6 @@ export const Sidebar = () => {
 
   const groups = [
     ...erpGroups.filter((g) => !isAdministration(g)),
-    ...hrmsGroups,
     ...erpGroups.filter(isAdministration),
   ];
 
@@ -222,11 +151,10 @@ export const Sidebar = () => {
   /**
    * One row of the rail.
    *
-   * Flat, not nested: every item sits at the same left edge whether it belongs
-   * to an ERP module or to an HRMS section, so the rail reads as one navigation
-   * system rather than an application inside an application. Section membership
-   * is carried by the heading above the group, which is what a heading is for —
-   * it does not need to be restated as indentation on every child.
+   * Flat, not nested: every item sits at the same left edge, so the rail reads
+   * as one navigation system. Group membership is carried by the heading above,
+   * which is what a heading is for — it does not need to be restated as
+   * indentation on every child.
    *
    * `py-2` on `text-sm` gives a ~36px row; `px-3` is the 12px gutter the rest of
    * the shell uses; `rounded-lg` is 8px.
@@ -381,26 +309,16 @@ export const Sidebar = () => {
                 />
               </button>
 
-              {!collapsed &&
-                (group.sections
-                  ? /* Sectioned group (HRMS). The headings are quiet labels, not
-                       controls and not cards — they name the run of links under
-                       them and carry no interaction of their own. */
-                    group.sections.map((section) => (
-                      <div key={section.key} className="space-y-0.5 pt-2 first:pt-0.5">
-                        {section.label && (
-                          <p className="px-3 pt-1 pb-1 text-[10.5px] font-bold uppercase tracking-[0.08em] text-primary-200/55">
-                            {section.label}
-                          </p>
-                        )}
-                        {section.items.map((item) => renderItem(item))}
-                      </div>
-                    ))
-                  : (
-                      <div className="space-y-0.5">
-                        {group.items.map((item) => renderItem(item))}
-                      </div>
-                    ))}
+              {/* `group.sections` — the sub-headed variant — existed only for
+                  HRMS, which had four sections inside one dropdown. Every group
+                  the module registry produces is a flat list, so the branch that
+                  rendered sections went with HRMS rather than staying as a
+                  permanently-false condition. */}
+              {!collapsed && (
+                <div className="space-y-0.5">
+                  {group.items.map((item) => renderItem(item))}
+                </div>
+              )}
             </div>
           );
         })}

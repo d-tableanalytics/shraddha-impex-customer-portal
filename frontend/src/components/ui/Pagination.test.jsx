@@ -4,7 +4,7 @@
  * ---------------------------------------------------------------------------
  * Why this file exists
  * ---------------------------------------------------------------------------
- * `Pagination` takes `page` / `pageSize` / `totalItems`. Six HRMS call sites
+ * `Pagination` takes `page` / `pageSize` / `totalItems`. Several call sites
  * were passing `currentPage` / `totalPages` instead — prop names it does not
  * declare. `totalItems` was therefore `undefined`, and the component rendered
  *

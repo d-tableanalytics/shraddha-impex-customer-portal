@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import app from './app.js';
 import User from './models/User.js';
 import { connectDatabase } from './config/database.js';
+import { describePortal } from './config/portal.js';
 import { runReservationExpiryChecks } from './modules/reservations/reservationExpiryJob.js';
 import { runPoSettlement } from './modules/orders/poExpiryJob.js';
 import { seedDefaultRoles } from './config/seedRoles.js';
@@ -13,8 +14,6 @@ import { seedAlertRules } from './config/seedAlertRules.js';
 import { subscribeAlerts } from './modules/inventory/alert.subscriber.js';
 import { onEvent, EVENTS } from './utils/eventBus.js';
 import { sweepUploads } from './middlewares/importUpload.js';
-import { bootstrapHrms } from './modules/hrms/hrms.bootstrap.js';
-import { runHrmsRetentionSweep } from './modules/hrms/retention/retention.sweep.js';
 import { runWeeklyInventoryReport } from './modules/inventory/inventoryReport.job.js';
 import { readInventoryReportConfig, describeInventoryReportConfig } from './config/inventoryReport.js';
 import { runWeeklyHistoryReport } from './modules/orders/historyReport.job.js';
@@ -120,12 +119,6 @@ const startServer = async () => {
   // disk is debris — and debris nobody reads accumulates until the disk fills.
   await sweepUploads();
 
-  // Register the HRMS retention handlers and file access rules. Explicit and
-  // central, so what is armed in a running system is answerable by reading
-  // modules/hrms/hrms.bootstrap.js — and so importing an HRMS service from a
-  // script does not arm a background behaviour as a side effect.
-  bootstrapHrms();
-
   // Initial check on boot
   await runReservationExpiryChecks();
   // Settle the stock held by confirmed bookings: consume it where a PO was
@@ -138,11 +131,22 @@ const startServer = async () => {
     runReservationExpiryChecks();
     runPoSettlement();
     sweepUploads();
-    // AD-16: the application policy is authoritative for retention; the S3
-    // lifecycle rule sits behind it at a longer window as a backstop only.
-    runHrmsRetentionSweep().catch((err) =>
-      console.error('[Cron] HRMS retention sweep failed:', err.message),
-    );
+    /*
+     * THE HRMS RETENTION SWEEP IS NO LONGER RUN HERE.
+     *
+     * It used to sit on this cron, deleting expired audit rows, attendance
+     * selfies, employee documents and inbox items. HRMS now lives in the
+     * Employee Portal, which owns that job — and because both portals share one
+     * database, running it in two places would have been two processes deleting
+     * the same rows at the same minute.
+     *
+     * ⚠ THE HANDOVER IS ONLY HALF DONE UNTIL SOMEBODY ACTS.
+     * The Employee Portal ships the sweep DISABLED (HRMS_RETENTION_CRON is not
+     * 'enabled' in its .env). Between this deploy and that switch being flipped,
+     * NOBODY runs it and retention is paused. That fails safe — nothing is
+     * over-deleted — but it is unbounded, so it needs doing rather than
+     * discovering. See Employee portal module/SHARED-CONTRACT.md §4.
+     */
   });
 
   /**
@@ -198,6 +202,10 @@ const startServer = async () => {
   }
   
   server.listen(PORT, () => {
+    // Named at boot because it decides which modules this process will serve.
+    // A deployment pointed at the wrong domain is otherwise only discovered by
+    // a user finding a screen they should not have.
+    console.log(describePortal());
     console.log(`[Server] ERP Backend running on port ${PORT}`);
     console.log(`[Server] Environment: ${process.env.NODE_ENV || 'development'}`);
   });

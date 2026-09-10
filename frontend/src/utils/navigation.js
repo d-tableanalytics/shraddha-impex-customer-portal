@@ -111,9 +111,13 @@ const FALLBACK_MODULES = [
     label: "Administration",
     icon: "ShieldCheck",
     items: [
-      { key: "overview", label: "Admin Panel", path: "/admin", icon: "LayoutGrid", any: [PERMISSIONS.MANAGE_USERS, PERMISSIONS.MANAGE_CUSTOMER_USERS, PERMISSIONS.MANAGE_ROLES] },
-      { key: "users", label: "User Management", path: "/admin/users", icon: "Users", any: [PERMISSIONS.MANAGE_USERS, PERMISSIONS.MANAGE_CUSTOMER_USERS] },
-      { key: "roles", label: "Roles & Permissions", path: "/admin/permissions", icon: "Key", any: [PERMISSIONS.MANAGE_ROLES] },
+      // Mirrors backend/config/moduleRegistry.js: the Admin Panel is for
+      // administering the SYSTEM. Customer Management is its own entry below.
+      { key: "overview", label: "Admin Panel", path: "/admin", icon: "LayoutGrid", any: [PERMISSIONS.MANAGE_USERS, PERMISSIONS.MANAGE_ROLES] },
+      { key: "customers", label: "Customer Management", path: "/admin/customers", icon: "Store", any: [PERMISSIONS.MANAGE_CUSTOMER_USERS, PERMISSIONS.MANAGE_USERS] },
+      { key: "users", label: "Internal User Management", path: "/admin/users", icon: "Users", any: [PERMISSIONS.MANAGE_USERS] },
+      // Roles & Permissions is deliberately absent: the matrix has one editor,
+      // in the Employee Portal. See backend/config/moduleRegistry.js.
     ],
   },
 ];

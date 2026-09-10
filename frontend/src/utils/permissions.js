@@ -70,7 +70,7 @@ export const PERMISSIONS = {
   // HRMS entry tiers. MIRRORS backend/config/permissions.js.
   //
   // These decide which HRMS ROLES an account holds, not what it may do once it
-  // holds them - that stays with the HRMS evaluator in @shared/permissions,
+  // holds them - that lives with HRMS, in the Employee Portal,
   // which useHrmsPermissions reads from the actor the server resolved. So no
   // HRMS screen should ever ask about a key below; ask `can(module, action,
   // scope)` instead. They are here so the permission matrix and the role

@@ -14,12 +14,26 @@
  * this is what says so out loud.
  */
 
+/*
+ * WHAT THIS FILE STILL COVERS, NOW THAT HRMS HAS LEFT THIS REPOSITORY
+ *
+ * The scope tests that needed a real Employee document went with HRMS — they
+ * exercise employee self/team/department scope, which is the Employee Portal's
+ * to prove and which its own copy of this file still does.
+ *
+ * Everything below stayed, and is the reason this file was not simply deleted:
+ * it is the AD-4 FENCE, and the fence has to be tested wherever the WRITING
+ * happens. This backend still creates and edits accounts in the shared `users`
+ * collection, so it is still capable of putting an `hrms_*` key on a customer —
+ * and the Employee Portal would honour it. `utils/hrmsRoleGuard.js`, the schema
+ * hook and `updateUserAccess` are what stop that, and they are all asserted here.
+ */
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import User from '../models/User.js';
 import Role from '../models/Role.js';
-import Employee from '../models/hrms/Employee.js';
 import { PERMISSIONS, hasPermission, permissionsFor } from '../middlewares/rbac.js';
 import { loadRoles } from '../utils/roleResolver.js';
 import { assertHrmsRolesAssignable, isPortalOnlyRole } from '../utils/hrmsRoleGuard.js';
@@ -37,12 +51,11 @@ import {
   HRMS_MODULE_LIST,
   HRMS_ACTION_LIST,
 } from '../shared/permissions/constants.js';
-import { employeeReferenceProvider } from '../modules/hrms/employees/employee.provider.js';
 import { startTestMongo, stopTestMongo, syncIndexes, clearCollections } from './helpers/mongo.js';
 
 test.before(async () => {
   await startTestMongo();
-  await syncIndexes(Employee, User, Role);
+  await syncIndexes(User, Role);
 });
 
 test.after(async () => {
@@ -226,128 +239,37 @@ test('an HRMS role granted through User.roles[] still resolves', () => {
   assert.equal(hasHrmsPermission(actor, M.EMPLOYEES, A.VIEW, S.ORG), true);
 });
 
-test('employee self scope: an employee reaches their own record and no other', () => {
-  const actor = buildHrmsActor({
-    userId: 'u1',
-    roles: [R.EMPLOYEE],
-    employee: { id: 'e1', departmentId: 'd1', managerChain: [] },
-  });
 
-  assert.equal(
-    hasHrmsPermission(actor, M.ATTENDANCE, A.VIEW, S.SELF, { ownerEmployeeId: 'e1' }),
-    true,
-  );
-  assert.equal(
-    hasHrmsPermission(actor, M.ATTENDANCE, A.VIEW, S.SELF, { ownerEmployeeId: 'e2' }),
-    false,
-    'somebody else is not self',
-  );
-  assert.equal(hasHrmsPermission(actor, M.ATTENDANCE, A.VIEW, S.ORG), false);
-});
 
-test('manager/team scope: a manager reaches a report through the chain only', () => {
-  const manager = buildHrmsActor({
-    userId: 'u2',
-    roles: [R.MANAGER],
-    employee: { id: 'm1', departmentId: 'd1', managerChain: [] },
-  });
-
-  assert.equal(
-    hasHrmsPermission(manager, M.LEAVE, A.APPROVE, S.TEAM, {
-      ownerEmployeeId: 'e9',
-      ownerManagerChain: ['m1'],
-    }),
-    true,
-    'a direct report is in the team',
-  );
-  assert.equal(
-    hasHrmsPermission(manager, M.LEAVE, A.APPROVE, S.TEAM, {
-      ownerEmployeeId: 'e9',
-      ownerManagerChain: ['someone-else'],
-    }),
-    false,
-    'somebody outside the chain is not',
-  );
-});
-
-test('sensitive employee data stays behind its own module, not a portal key', () => {
-  const employee = buildHrmsActor({
-    roles: [R.EMPLOYEE],
-    employee: { id: 'e1', managerChain: [] },
-  });
-  const manager = buildHrmsActor({ roles: [R.MANAGER], employee: { id: 'm1', managerChain: [] } });
-  const portalAdmin = { role: 'Admin', roles: [] };
-
-  for (const actor of [employee, manager]) {
-    assert.equal(
-      hasHrmsPermission(actor, M.EMPLOYEES_COMPENSATION, A.VIEW, S.ORG),
-      false,
-      'compensation is not an ordinary employee or manager grant',
-    );
-  }
-
-  // And the portal wildcard does not reach it either.
-  assert.equal(hasPermission(portalAdmin, '*'), true);
-  assert.equal(
-    hasHrmsPermission(
-      buildHrmsActor({ roles: portalAdmin.roles, legacyRole: 'Admin' }),
-      M.EMPLOYEES_COMPENSATION,
-      A.VIEW,
-      S.ORG,
-    ),
-    false,
-  );
-
-  // Payroll admin is the role that does hold it.
-  const payroll = buildHrmsActor({ roles: [R.PAYROLL_ADMIN], employee: { id: 'p1', managerChain: [] } });
-  assert.equal(hasHrmsPermission(payroll, M.EMPLOYEES_COMPENSATION, A.VIEW, S.ORG), true);
-});
 
 // ---------------------------------------------------------------------------
 // 11 + 12. The Employee invariants the merge must not disturb
 // ---------------------------------------------------------------------------
 
-test('an employee with no login is still valid, and actor resolution never finds one', async () => {
-  const base = {
-    firstName: 'No',
-    lastName: 'Login',
-    dateOfJoining: new Date('2025-01-01'),
-    employmentType: 'full_time',
-    status: 'active',
-  };
-  await Employee.create({ ...base, employeeCode: 'NL-1', userId: null });
-  await Employee.create({ ...base, employeeCode: 'NL-2', userId: null });
 
-  assert.equal(await Employee.countDocuments({ userId: null }), 2, 'more than one may exist');
-
-  for (const bad of [null, undefined, '', 'not-an-id']) {
-    assert.equal(await employeeReferenceProvider.byUserId(bad), null);
-  }
-});
-
-test('one login still resolves to exactly one employee', async () => {
-  const mongoose = (await import('mongoose')).default;
-  const userId = new mongoose.Types.ObjectId();
-  const base = {
-    firstName: 'A',
-    lastName: 'B',
-    dateOfJoining: new Date('2025-01-01'),
-    employmentType: 'full_time',
-    status: 'active',
-  };
-
-  await Employee.create({ ...base, employeeCode: 'ONE', userId });
-  await assert.rejects(
-    Employee.create({ ...base, employeeCode: 'TWO', userId }),
-    (err) => err.code === 11000,
-  );
-});
 
 // ---------------------------------------------------------------------------
 // 15. The portal's own access is exactly what it was
 // ---------------------------------------------------------------------------
 
 test('every production role keeps the portal access it had, and gains no HRMS', async () => {
+  /*
+   * ASSERTED IN THE CUSTOMER DOMAIN, EXPLICITLY.
+   *
+   * These are customer-portal permissions — raising a PO, seeing every booking,
+   * onboarding a customer. Since the portal separation, `resolveUserPermissions`
+   * fences a user to the modules the CURRENT deployment serves, so Sales
+   * correctly holds none of them while the process is serving the employee
+   * domain. That is the feature, not a regression.
+   *
+   * The claim this test makes — "no role lost the access it had" — is therefore
+   * a claim about a domain, and it names the one it means rather than inheriting
+   * whichever repository happens to be running it. Without this the same file
+   * passes in one repo and fails in the other for a reason that looks like a bug.
+   */
+  const prevPortal = process.env.PORTAL;
+  process.env.PORTAL = 'customer';
+  try {
   const expected = {
     Admin: '*',
     Sales: [PERMISSIONS.VIEW_ALL_BOOKINGS, PERMISSIONS.RAISE_PO, PERMISSIONS.MANAGE_CUSTOMER_USERS],
@@ -375,4 +297,8 @@ test('every production role keeps the portal access it had, and gains no HRMS', 
 
   // Separation of duties, unchanged: Sales raises the PO it cannot then unlock.
   assert.equal(hasPermission({ role: 'Sales', roles: [] }, PERMISSIONS.OVERRIDE_PO_LOCK), false);
+  } finally {
+    if (prevPortal === undefined) delete process.env.PORTAL;
+    else process.env.PORTAL = prevPortal;
+  }
 });

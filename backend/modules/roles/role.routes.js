@@ -11,6 +11,7 @@ import {
 import { protect } from '../../middlewares/auth.js';
 import { authorize, PERMISSIONS } from '../../middlewares/rbac.js';
 import { auditLogger } from '../../middlewares/auditLogger.js';
+import { requirePortalModule } from '../../middlewares/portalGuard.js';
 
 const router = express.Router();
 
@@ -27,7 +28,30 @@ router.use(protect);
  */
 router.get('/my-access', getMyAccess);
 
-// Everything past this point administers OTHER people's access.
+/*
+ * Everything past this point administers OTHER people's access.
+ *
+ * TWO GATES, and they answer different questions:
+ *
+ *   requirePortalModule  is this DOMAIN allowed to offer the role matrix at
+ *                        all? The matrix grants access across both portals'
+ *                        modules, and both repositories write the same `roles`
+ *                        collection — so two editors mean one can strip cells
+ *                        the other wrote (see SHARED-CONTRACT.md). The single
+ *                        editor lives in the employee domain; here these routes
+ *                        404 as though they were never written.
+ *
+ *   authorize            does this USER hold manage_roles? Unchanged.
+ *
+ * The portal gate is FIRST and is not a permission check, deliberately: a Super
+ * Admin holds the wildcard and satisfies every permission ever written, so a
+ * domain fence built out of permissions would fail on exactly the accounts it
+ * most needs to contain.
+ *
+ * `/my-access` above stays open to every signed-in account in both domains — it
+ * reports what the caller may do, which is how any sidebar gets drawn.
+ */
+router.use(requirePortalModule('administration', 'roles'));
 router.use(authorize(PERMISSIONS.MANAGE_ROLES));
 
 router.get('/', getRoles);

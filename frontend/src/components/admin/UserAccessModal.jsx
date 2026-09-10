@@ -120,8 +120,26 @@ export const UserAccessModal = ({ user, onClose }) => {
           <Loader2 className="animate-spin text-slate-400" size={28} />
         </div>
       ) : (
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        /*
+         * ONE scroll region, not two.
+         *
+         * This used to be a plain column containing a box hard-capped at
+         * `max-h-[52vh]`. Inside the Modal — whose body is already
+         * `overflow-y-auto flex-1` — that made TWO nested scrollers, and on a
+         * laptop viewport they fought: 52vh of modules did not fit in the space
+         * the intro, the notice and the button row left over, so the OUTER
+         * scroller engaged as well. Scrolling then moved whichever container the
+         * pointer happened to be over, and the outer one carried the Save button
+         * off the bottom of the modal.
+         *
+         * `h-full min-h-0` makes this column exactly as tall as the Modal body,
+         * so the module list below is the only thing that scrolls and the footer
+         * stays put. `min-h-0` is the load-bearing half: without it a flex child
+         * refuses to shrink below its content height and the overflow escapes
+         * the container instead of scrolling inside it.
+         */
+        <div className="flex flex-col gap-4 h-full min-h-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
             <p className="text-xs text-slate-500 font-medium max-w-2xl">
               This account signs in as <span className="font-bold text-slate-700">{user?.role}</span>.
               Everything that role grants is ticked and locked below. Anything you add here
@@ -176,7 +194,31 @@ export const UserAccessModal = ({ user, onClose }) => {
             </div>
           )}
 
-          <div className="flex flex-col gap-4 max-h-[52vh] overflow-y-auto pr-1">
+          {/*
+            `flex-1` rather than `max-h-[52vh]`: the list takes whatever height
+            is actually left after the header and footer, on any viewport, instead
+            of a fraction of the SCREEN that has no idea what else is in the modal.
+
+            `min-h-[160px]` does double duty and is not just a floor. A flex item
+            defaults to `min-height: auto`, i.e. its own content height, which
+            stops it shrinking and lets the overflow escape instead of scrolling.
+            Any explicit min-height overrides that — so this both permits the
+            shrink AND keeps the list usable on a very short window. (`min-h-0`
+            would do the first half, but the two together are contradictory CSS
+            and which one wins depends on Tailwind's emit order.)
+
+            The scrollbar is styled visible on purpose. Windows renders overlay
+            scrollbars that vanish when idle, so a clipped list looked like a
+            bug: there was no way to tell there was more below.
+          */}
+          <div
+            className="flex flex-col gap-4 flex-1 min-h-[160px] overflow-y-auto pr-2
+                       [&::-webkit-scrollbar]:w-1.5
+                       [&::-webkit-scrollbar-track]:bg-slate-50 [&::-webkit-scrollbar-track]:rounded-full
+                       [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full
+                       hover:[&::-webkit-scrollbar-thumb]:bg-slate-400
+                       [scrollbar-width:thin] [scrollbar-color:rgb(203_213_225)_rgb(248_250_252)]"
+          >
             {registry.modules.map((mod) => {
               const fenced = rolePortalOnly && mod.key !== 'customer_portal';
 
@@ -264,7 +306,9 @@ export const UserAccessModal = ({ user, onClose }) => {
             })}
           </div>
 
-          <div className="flex items-center justify-between gap-2 pt-1">
+          {/* shrink-0 + a rule: the actions stay visible however long the list
+              is, and read as a footer rather than as the end of the content. */}
+          <div className="flex items-center justify-between gap-2 pt-3 shrink-0 border-t border-slate-100">
             <Button
               size="sm"
               variant="ghost"
