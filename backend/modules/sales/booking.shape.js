@@ -140,7 +140,7 @@ const bookingTotals = (rows, indentBySku) => {
 export const shapeBooking = (
   rows,
   boxNumbers = new Map(),
-  { includePricing = false, indentBySku = null } = {},
+  { includePricing = false, indentBySku = null, value = null } = {},
 ) => {
   const first = rows[0];
   const bookingDate = first.date || first.orderTimestamp || first.createdAt;
@@ -201,6 +201,20 @@ export const shapeBooking = (
     // change what they report. The whole picture is `totals` below.
     totalQuantity: rows.reduce((n, r) => n + (r.confirmedQty || 0), 0),
     totals: bookingTotals(rows, indentBySku),
+    /*
+     * The FULL order value - booked plus indent - computed by valueBooking()
+     * in pricing.service.js, which has to query the product master for any
+     * indent SKU the booking cannot rate from its own rows.
+     *
+     * Passed IN rather than computed here because this function is pure and
+     * must stay that way: it is called once per booking in the list response,
+     * and a query hidden inside it would be an N+1 that nothing at the call
+     * site could see.
+     *
+     * Behind `includePricing`, like `pricing` above - an order's value is a
+     * commercial figure and follows the same permission.
+     */
+    value: includePricing ? value : null,
     lineCount: rows.length,
     lines: rows.map((r) => ({
       id: r._id,

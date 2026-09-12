@@ -10,7 +10,7 @@ import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { assertBookingEditable, isPlaceholderPo } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { boxKey, currentBoxNumbers, shapeBooking, pricingSummary } from './booking.shape.js';
-import { quoteBooking, applyPricing } from './pricing.service.js';
+import { quoteBooking, applyPricing, valueBooking } from './pricing.service.js';
 import { PRICE_TYPES, normalisePriceType } from '../../config/pricing.js';
 import {
   findProductBySku, reserveStock, releaseStock, consumeStock,
@@ -45,6 +45,23 @@ const loadBooking = async (orderId, session = null) => {
 };
 
 // Audit writing lives in utils/auditLog.js — see recordAudit().
+
+/**
+ * One booking, shaped, with its indent balance and full order value attached.
+ *
+ * Five call sites were each doing the same three awaits, and the one that
+ * forgot an option would have shipped a booking whose Total Amount section
+ * silently read "not priced". One helper means the whole response shape is
+ * decided in a single place.
+ */
+const shapedWithValue = async (rows, req, { includePricing, boxNumbers = null } = {}) => {
+  const indentBySku = await openIndentBySku(rows[0]?.orderId);
+  return shapeBooking(rows, boxNumbers ?? await currentBoxNumbers(rows), {
+    includePricing,
+    indentBySku,
+    value: includePricing ? await valueBooking({ rows, indentBySku }) : null,
+  });
+};
 
 /**
  * May this actor see what a customer is charged, and choose it?
@@ -246,10 +263,19 @@ export const getBookings = async (req, res, next) => {
       await (async () => {
         const groups = [...byBooking.values()];
         const indents = await openIndentsByOrder(groups.map((g) => g[0]?.orderId));
-        return groups.map((b) => shapeBooking(b, boxNumbers, {
-          includePricing: mayPrice(req.user),
-          indentBySku: indents.get(String(b[0]?.orderId)) ?? new Map(),
-        }));
+        // Sequential rather than Promise.all: valueBooking only queries for a
+        // booking that has an indent SKU its own rows cannot rate, so most
+        // iterations touch no database at all.
+        const shaped = [];
+        for (const b of groups) {
+          const indentBySku = indents.get(String(b[0]?.orderId)) ?? new Map();
+          shaped.push(shapeBooking(b, boxNumbers, {
+            includePricing: mayPrice(req.user),
+            indentBySku,
+            value: mayPrice(req.user) ? await valueBooking({ rows: b, indentBySku }) : null,
+          }));
+        }
+        return shaped;
       })(),
     );
 
@@ -285,10 +311,7 @@ export const getBookingDetail = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: (await attachCustomerDetails([
-        shapeBooking(rows, await currentBoxNumbers(rows), {
-          includePricing: mayPrice(req.user),
-          indentBySku: await openIndentBySku(rows[0]?.orderId),
-        }),
+        await shapedWithValue(rows, req, { includePricing: mayPrice(req.user) }),
       ]))[0],
     });
   } catch (error) {
@@ -741,10 +764,7 @@ export const updateBookingItems = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: (await attachCustomerDetails([
-        shapeBooking(updated, await currentBoxNumbers(updated), {
-          includePricing: mayPrice(req.user),
-          indentBySku: await openIndentBySku(updated[0]?.orderId),
-        }),
+        await shapedWithValue(updated, req, { includePricing: mayPrice(req.user) }),
       ]))[0],
       changes,
     });
@@ -1044,10 +1064,7 @@ export const raisePo = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: (await attachCustomerDetails([
-        shapeBooking(updated, new Map(), {
-          includePricing: mayPrice(req.user),
-          indentBySku: await openIndentBySku(updated[0]?.orderId),
-        }),
+        await shapedWithValue(updated, req, { includePricing: mayPrice(req.user), boxNumbers: new Map() }),
       ]))[0],
     });
   } catch (error) {
@@ -1156,10 +1173,7 @@ export const setBookingPricing = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: (await attachCustomerDetails([
-        shapeBooking(updated, await currentBoxNumbers(updated), {
-          includePricing: true,
-          indentBySku: await openIndentBySku(updated[0]?.orderId),
-        }),
+        await shapedWithValue(updated, req, { includePricing: true }),
       ]))[0],
       pricing: result,
     });
@@ -1203,10 +1217,7 @@ const respondWithBooking = async (rows, req, res) =>
   res.status(200).json({
     success: true,
     data: (await attachCustomerDetails([
-      shapeBooking(rows, await currentBoxNumbers(rows), {
-        includePricing: mayPrice(req.user),
-        indentBySku: await openIndentBySku(rows[0]?.orderId),
-      }),
+      await shapedWithValue(rows, req, { includePricing: mayPrice(req.user) }),
     ]))[0],
   });
 

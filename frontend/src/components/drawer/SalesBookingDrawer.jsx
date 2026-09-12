@@ -82,8 +82,15 @@ export const SalesBookingDrawer = () => {
   const mayRaise = canRaisePo(user, selected);
   const mayPrice = canViewPricing(user);
   const pricing = selected.pricing || null;
-  // Subtotal, GST and payable total, from the one shared helper.
-  const money = withGst(pricing?.totalAmount ?? null);
+  /**
+   * The FULL order value - booked plus indent - with GST.
+   *
+   * `value.subtotal` comes from valueBooking() on the server, which has to
+   * find a rate for each indent SKU; `withGst` is the same helper the
+   * picklist and the PDF use, so the three cannot quote different tax.
+   */
+  const value = selected.value || null;
+  const money = withGst(value?.subtotal ?? null);
   const isOverride = locked && hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
   /**
    * Correcting submitted details is Admin-only, and the server enforces it with
@@ -455,103 +462,54 @@ export const SalesBookingDrawer = () => {
             */}
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 items-stretch">
               {/*
-                TOTAL BOOKING AMOUNT, GST included.
+                TOTAL QUANTITY — confirmed from stock plus what is still open on
+                this booking's indent.
 
-                ── ONE DOCUMENT-LEVEL RATE, NOT A PER-LINE ONE ──────────────
-                `withGst` is the same helper the picklist and the PDF use, and
-                its rate is deliberately applied to the subtotal rather than per
-                line: this portal holds no HSN code and no per-SKU tax rate -
-                only the customer's GSTIN, which is an identifier - so a
-                line-level rate would be an invention. Sharing the helper is
-                also what stops the screen, the printed page and the PDF quoting
-                three different totals.
+                The MONEY moved out of this row into its own section below, where
+                a subtotal, its GST and the payable total can be read as the
+                three lines of a sum rather than crammed into a tile. What the
+                desk needs at a glance here is the count, which is what it checks
+                against the numbered lines of the customer's paper PO.
 
-                ── WHAT THE SUBTOTAL COVERS ─────────────────────────────────
-                `pricingSummary` rates CONFIRMED quantity only, because that is
-                what the PO charges for - an indent remainder has not shipped
-                and is not on it. So this figure can be legitimately lower than
-                the line count suggests, and the quantity breakdown moved to the
-                footer rather than being dropped.
+                NOT confirmed + pendingQty: `pendingQty` is the shortfall frozen
+                onto the order row at confirmation, while the indent is the live
+                balance that shrinks as stock arrives and auto-books against it.
+                They are also the same units recorded twice, so adding both would
+                double-count. See bookingTotals() in booking.shape.js.
 
-                ── UNPRICED LINES ARE SAID OUT LOUD ─────────────────────────
-                A booking can be part-rated. Showing its total without saying so
-                would present a number that looks like the whole booking and is
-                not - the same failure mode as a total that silently omitted the
-                indent. Nothing priced at all shows a dash, never a confident
-                zero.
+                `total` is null, never 0, when the server did not send the indent
+                - a confident total that silently omitted it would be worse than
+                none, because nobody re-checks a number that looks right.
               */}
-              {mayPrice ? (
-                <div className="col-span-2 h-full rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5 shadow-sm">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <IndianRupee size={13} className="text-emerald-700 shrink-0" />
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800/80 whitespace-nowrap">
-                      Total Amount
+              <div className="col-span-2 h-full rounded-xl border border-primary-200 bg-primary-50/60 p-3.5 shadow-sm">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Package size={13} className="text-primary-700 shrink-0" />
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700/80 whitespace-nowrap">
+                    Total Quantity
+                  </p>
+                </div>
+                {selected.totals?.total == null ? (
+                  <>
+                    <p className="text-2xl font-black leading-none text-slate-400">—</p>
+                    <p className="mt-1.5 text-[11px] text-slate-500">Indent balance unavailable</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-2xl font-black leading-none text-slate-900 tabular-nums">
+                      {selected.totals.total}
+                      <span className="ml-1 text-[11px] font-bold text-slate-500">
+                        {selected.totals.total === 1 ? "unit" : "units"}
+                      </span>
                     </p>
-                  </div>
-                  {money.grandTotal == null ? (
-                    <>
-                      <p className="text-2xl font-black leading-none text-slate-400">—</p>
-                      <p className="mt-1.5 text-[11px] text-slate-500">No rate set on this booking</p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-2xl font-black leading-none text-slate-900 tabular-nums">
-                        {formatRupees(money.grandTotal)}
-                      </p>
-                      <p className="mt-1.5 text-[11px] font-semibold text-slate-500 tabular-nums whitespace-nowrap">
-                        {formatRupees(money.subtotal)} + {formatRupees(money.gstAmount)} {GST_LABEL}
-                      </p>
-                      {pricing?.unpricedLines > 0 && (
-                        <p className="mt-0.5 text-[11px] font-bold text-amber-700">
-                          Covers {pricing.pricedLines} of{" "}
-                          {pricing.pricedLines + pricing.unpricedLines} line(s)
-                        </p>
+                    <p className="mt-1.5 text-[11px] font-semibold text-slate-500 tabular-nums whitespace-nowrap">
+                      {selected.totals.booked} booked
+                      {selected.totals.indent > 0 && (
+                        <span className="text-amber-700"> · {selected.totals.indent} indent</span>
                       )}
-                    </>
-                  )}
-                </div>
-              ) : (
-                /*
-                  No pricing rights, so the amount would be a permanent dash.
-                  The quantity is the useful figure for this reader instead —
-                  confirmed from stock plus what is still open on the indent.
-
-                  NOT confirmed + pendingQty: `pendingQty` is the shortfall
-                  frozen onto the order row at confirmation, while the indent is
-                  the live balance that shrinks as stock auto-books against it.
-                  They are also the same units recorded twice, so adding both
-                  double-counts. See bookingTotals() in booking.shape.js.
-                */
-                <div className="col-span-2 h-full rounded-xl border border-primary-200 bg-primary-50/60 p-3.5 shadow-sm">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <Package size={13} className="text-primary-700 shrink-0" />
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700/80 whitespace-nowrap">
-                      Total Quantity
                     </p>
-                  </div>
-                  {selected.totals?.total == null ? (
-                    <>
-                      <p className="text-2xl font-black leading-none text-slate-400">—</p>
-                      <p className="mt-1.5 text-[11px] text-slate-500">Indent balance unavailable</p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-2xl font-black leading-none text-slate-900 tabular-nums">
-                        {selected.totals.total}
-                        <span className="ml-1 text-[11px] font-bold text-slate-500">
-                          {selected.totals.total === 1 ? "unit" : "units"}
-                        </span>
-                      </p>
-                      <p className="mt-1.5 text-[11px] font-semibold text-slate-500 tabular-nums whitespace-nowrap">
-                        {selected.totals.booked} booked
-                        {selected.totals.indent > 0 && (
-                          <span className="text-amber-700"> · {selected.totals.indent} indent</span>
-                        )}
-                      </p>
-                    </>
-                  )}
-                </div>
-              )}
+                  </>
+                )}
+              </div>
 
               {/* CUSTOMER */}
               <div className="h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
@@ -692,6 +650,123 @@ export const SalesBookingDrawer = () => {
                       customerCategory={selected.customerProfile?.customerCategory}
                       disabled={saving || dirty}
                     />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/*
+              ── TOTAL AMOUNT ────────────────────────────────────────────────
+              The whole order's value: what stock covered PLUS what is still on
+              indent, then GST.
+
+              A SECTION rather than a tile because it is a SUM, and a sum is
+              read by checking that its parts add up. Four figures stacked in a
+              150px tile are four numbers with no visible relationship; here the
+              booked line, the indent line, the subtotal and the tax sit in the
+              order they combine.
+
+              It follows Customer Pricing deliberately: the total depends
+              entirely on which rate is chosen, so "the rate is Trader" reads
+              before "and it comes to this".
+
+              WHY IT IS NOT THE PO FIGURE. A purchase order charges for what
+              shipped, so `pricing.totalAmount` values confirmed quantity only.
+              This figure answers a different question - what is the whole order
+              worth - and deliberately includes the indent, which has not
+              shipped. Both are correct; they are not the same number, and the
+              rows below say which is which rather than leaving the desk to
+              wonder why the PO is smaller.
+            */}
+            {mayPrice && (
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
+                  <IndianRupee size={18} className="text-emerald-600" />
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">Total Amount</h3>
+                    <p className="text-[11px] text-slate-500">
+                      The full order value — booked and indent — including GST.
+                    </p>
+                  </div>
+                </div>
+
+                {money.grandTotal == null ? (
+                  <div className="px-5 py-6 text-center">
+                    <p className="text-sm font-semibold text-slate-500">
+                      No rate on this booking yet.
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Set a customer price above and the order value appears here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="px-5 py-4">
+                    <dl className="flex flex-col gap-1.5 text-sm">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <dt className="text-slate-600">
+                          Booked
+                          {selected.totals?.booked != null && (
+                            <span className="ml-1 text-[11px] text-slate-400 tabular-nums">
+                              {selected.totals.booked} unit(s)
+                            </span>
+                          )}
+                        </dt>
+                        <dd className="font-semibold text-slate-800 tabular-nums">
+                          {formatRupees(value?.booking?.amount)}
+                        </dd>
+                      </div>
+
+                      {/* Only when there IS one. A zero indent row on a fully
+                          confirmed booking is a line that always says nothing. */}
+                      {value?.indent?.quantity > 0 && (
+                        <div className="flex items-baseline justify-between gap-3">
+                          <dt className="text-slate-600">
+                            On indent
+                            <span className="ml-1 text-[11px] text-amber-700 tabular-nums">
+                              {value.indent.quantity} unit(s)
+                            </span>
+                          </dt>
+                          <dd className="font-semibold text-slate-800 tabular-nums">
+                            {formatRupees(value.indent.amount)}
+                          </dd>
+                        </div>
+                      )}
+
+                      <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-slate-100 pt-2">
+                        <dt className="text-slate-600">Subtotal</dt>
+                        <dd className="font-semibold text-slate-800 tabular-nums">
+                          {formatRupees(money.subtotal)}
+                        </dd>
+                      </div>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <dt className="text-slate-600">{GST_LABEL}</dt>
+                        <dd className="font-semibold text-slate-800 tabular-nums">
+                          {formatRupees(money.gstAmount)}
+                        </dd>
+                      </div>
+
+                      <div className="mt-1 flex items-baseline justify-between gap-3 border-t-2 border-slate-200 pt-2">
+                        <dt className="text-sm font-bold text-slate-900">Total payable</dt>
+                        <dd className="text-lg font-black text-slate-900 tabular-nums">
+                          {formatRupees(money.grandTotal)}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    {/* A part-rated order still shows its total, but never
+                        without saying what the total leaves out - otherwise it
+                        reads as the whole order and is quoted as one. */}
+                    {(value?.booking?.unpricedLines > 0 || value?.indent?.unpricedSkus > 0) && (
+                      <p className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] font-semibold text-amber-800">
+                        {[
+                          value.booking.unpricedLines > 0
+                            && `${value.booking.unpricedLines} booked line(s)`,
+                          value.indent.unpricedSkus > 0
+                            && `${value.indent.unpricedSkus} indent SKU(s)`,
+                        ].filter(Boolean).join(" and ")}{" "}
+                        have no rate on file and are not counted in this total.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
