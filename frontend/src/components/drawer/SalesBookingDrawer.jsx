@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
   Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle, Download, FileText,
-  MapPin, Receipt, IndianRupee, Pencil, ArrowUp, ArrowDown, SlidersHorizontal,
+  MapPin, Receipt, IndianRupee, Pencil, GripVertical, SlidersHorizontal,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
@@ -19,7 +19,7 @@ import { PoConfirmModal } from "../modal/PoConfirmModal";
 import { PicklistPreview } from "../pricing/PicklistPreview";
 import { PriceTypeSelector } from "../pricing/PriceTypeSelector";
 import { picklistFromSalesBooking } from "../../utils/picklistDocument";
-import { formatRupees } from "../../constants/pricing";
+import { formatRupees, withGst, GST_LABEL } from "../../constants/pricing";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
 //
@@ -55,6 +55,9 @@ export const SalesBookingDrawer = () => {
   const [repricing, setRepricing] = useState(false);
   // Admin-only correction of the submitted customer/order details.
   const [editingDetails, setEditingDetails] = useState(false);
+  // Which line is being dragged, and which row the pointer is over.
+  const [dragIdx, setDragIdx] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
 
   // `selected` is only replaced on an explicit select / save / raise-PO, so this
   // resyncs the draft with server truth after a write without clobbering
@@ -67,6 +70,8 @@ export const SalesBookingDrawer = () => {
     setShowPicklist(false);
     setRepricing(false);
     setEditingDetails(false);
+    setDragIdx(null);
+    setDragOverIdx(null);
   }, [selected]);
 
   if (!selected) return null;
@@ -77,6 +82,8 @@ export const SalesBookingDrawer = () => {
   const mayRaise = canRaisePo(user, selected);
   const mayPrice = canViewPricing(user);
   const pricing = selected.pricing || null;
+  // Subtotal, GST and payable total, from the one shared helper.
+  const money = withGst(pricing?.totalAmount ?? null);
   const isOverride = locked && hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
   /**
    * Correcting submitted details is Admin-only, and the server enforces it with
@@ -96,44 +103,93 @@ export const SalesBookingDrawer = () => {
     setDraft((d) => [...d, { id: null, skuCode: "", msilCode: null, boxNo: null, quantity: 1 }]);
 
   /**
-   * Move one line up or down and persist immediately.
+   * Reordering the lines to match the customer's paper PO.
    *
-   * ── WHY UP/DOWN AND NOT DRAG-AND-DROP ──────────────────────────────────
-   * Both were offered. Buttons win here: the desk works on tablets where a
-   * drag inside a scrolling drawer fights the scroll, they are reachable by
-   * keyboard, and they need no dependency - which matters when the brief asks
-   * for minimal impact on a working system. Dragging a table row is also the
-   * classic place where a row lands one position off and nobody notices.
+   * ── DRAG AND DROP, WITH THE KEYBOARD STILL WORKING ─────────────────────
+   * The handle is draggable, and it is also a focusable button that responds
+   * to the arrow keys. Native HTML5 drag is mouse-only and exposes nothing to
+   * a screen reader, so a drag-only implementation would take the feature away
+   * from anyone not using a mouse. The arrow keys are not a second UI - there
+   * are no visible buttons - they are the same handle, reachable another way.
    *
-   * ── WHY IT SAVES ON EVERY CLICK ────────────────────────────────────────
-   * A local reorder plus a separate Save would be a SECOND kind of unsaved
-   * change sitting beside the line edits, sharing one Save button that posts to
-   * a different endpoint. Persisting each move keeps one meaning for "saved",
-   * and the response is the booking itself, so what is on screen is what is
-   * stored.
+   * ── NATIVE, NOT A LIBRARY ──────────────────────────────────────────────
+   * The list is one booking's lines, it does not nest, and it does not scroll
+   * independently. That is the case native drag handles well, and a dependency
+   * for it would be weight the brief explicitly asked us not to add.
+   *
+   * ── THE DROP IS WHAT PERSISTS ──────────────────────────────────────────
+   * `dragOverIdx` moves a preview while the pointer travels; nothing is sent
+   * until the drop. One request per rearrangement, not one per row crossed.
    *
    * Blocked while there are unsaved line edits, the same rule pricing follows:
-   * the response replaces `selected`, which re-derives the draft and would
-   * silently discard them.
+   * the reorder response replaces `selected`, which re-derives the draft and
+   * would silently discard them.
    */
-  const moveLine = async (idx, delta) => {
-    const target = idx + delta;
-    if (target < 0 || target >= draft.length) return;
+  const reorderable = editable && !dirty && !saving;
 
-    const ids = draft.map((l) => l.id);
+  /** Persist a specific order of the CURRENT lines. */
+  const persistOrder = async (lines) => {
+    const ids = lines.map((l) => l.id);
     // A line that has never been saved has no id for the server to order.
-    // Unreachable while `dirty` blocks the buttons, but a null here would be
-    // rejected as "does not match this booking", which is a confusing way to
-    // learn that.
+    // Unreachable while `reorderable` is false, but a null would come back as
+    // "does not match this booking", which is a confusing way to learn that.
     if (ids.some((id) => !id)) {
       return toast.error("Save the new lines before rearranging them.");
     }
-
-    const next = [...ids];
-    [next[idx], next[target]] = [next[target], next[idx]];
-
-    const res = await reorderLines(selected.orderId, next);
+    const res = await reorderLines(selected.orderId, ids);
     if (!res.success) toast.error(res.error);
+  };
+
+  /** Move the line at `from` so it sits at `to`, and save. */
+  const moveLineTo = async (from, to) => {
+    if (from === to || to < 0 || to >= draft.length) return;
+    const next = [...draft];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    // Optimistic, so the row lands where it was dropped instead of snapping
+    // back for the length of the round trip. `selected` replaces it on success
+    // and re-derives it from server truth on failure.
+    setDraft(next);
+    await persistOrder(next);
+  };
+
+  const onDragStart = (idx) => (e) => {
+    setDragIdx(idx);
+    e.dataTransfer.effectAllowed = "move";
+    // Firefox refuses to start a drag unless some data is set.
+    e.dataTransfer.setData("text/plain", String(idx));
+  };
+
+  const onDragOver = (idx) => (e) => {
+    // Without preventDefault the browser treats the row as an invalid target
+    // and no drop event ever fires.
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (idx !== dragOverIdx) setDragOverIdx(idx);
+  };
+
+  const onDrop = (idx) => async (e) => {
+    e.preventDefault();
+    const from = dragIdx;
+    setDragIdx(null);
+    setDragOverIdx(null);
+    if (from === null) return;
+    await moveLineTo(from, idx);
+  };
+
+  /** Dropped outside a row, or cancelled with Escape. */
+  const onDragEnd = () => {
+    setDragIdx(null);
+    setDragOverIdx(null);
+  };
+
+  /** The handle is a button too, so the list is operable without a mouse. */
+  const onHandleKeyDown = (idx) => (e) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    // The row scrolls the drawer otherwise, which moves the list out from
+    // under the person rearranging it.
+    e.preventDefault();
+    moveLineTo(idx, idx + (e.key === "ArrowUp" ? -1 : 1));
   };
 
   // Rearranging is an amendment, so it follows the same lock as one.
@@ -399,49 +455,103 @@ export const SalesBookingDrawer = () => {
             */}
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 items-stretch">
               {/*
-                TOTAL QUANTITY — confirmed from stock plus what is still open on
-                this booking's indent.
+                TOTAL BOOKING AMOUNT, GST included.
 
-                NOT confirmed + pendingQty: `pendingQty` is the shortfall frozen
-                onto the order row at confirmation, while the indent is the live
-                balance that shrinks as stock arrives and auto-books against it.
-                They are also the same units recorded twice, so adding both
-                double-counts the shortfall. See bookingTotals() in
-                booking.shape.js.
+                ── ONE DOCUMENT-LEVEL RATE, NOT A PER-LINE ONE ──────────────
+                `withGst` is the same helper the picklist and the PDF use, and
+                its rate is deliberately applied to the subtotal rather than per
+                line: this portal holds no HSN code and no per-SKU tax rate -
+                only the customer's GSTIN, which is an identifier - so a
+                line-level rate would be an invention. Sharing the helper is
+                also what stops the screen, the printed page and the PDF quoting
+                three different totals.
 
-                `total` is null, never 0, when the server did not send the indent
-                - a confident total that silently omitted it would be worse than
-                none, because nobody re-checks a number that looks right.
+                ── WHAT THE SUBTOTAL COVERS ─────────────────────────────────
+                `pricingSummary` rates CONFIRMED quantity only, because that is
+                what the PO charges for - an indent remainder has not shipped
+                and is not on it. So this figure can be legitimately lower than
+                the line count suggests, and the quantity breakdown moved to the
+                footer rather than being dropped.
+
+                ── UNPRICED LINES ARE SAID OUT LOUD ─────────────────────────
+                A booking can be part-rated. Showing its total without saying so
+                would present a number that looks like the whole booking and is
+                not - the same failure mode as a total that silently omitted the
+                indent. Nothing priced at all shows a dash, never a confident
+                zero.
               */}
-              <div className="col-span-2 h-full rounded-xl border border-primary-200 bg-primary-50/60 p-3.5 shadow-sm">
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <Package size={13} className="text-primary-700 shrink-0" />
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700/80 whitespace-nowrap">
-                    Total Quantity
-                  </p>
-                </div>
-                {selected.totals?.total == null ? (
-                  <>
-                    <p className="text-2xl font-black leading-none text-slate-400">—</p>
-                    <p className="mt-1.5 text-[11px] text-slate-500">Indent balance unavailable</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-2xl font-black leading-none text-slate-900 tabular-nums">
-                      {selected.totals.total}
-                      <span className="ml-1 text-[11px] font-bold text-slate-500">
-                        {selected.totals.total === 1 ? "unit" : "units"}
-                      </span>
+              {mayPrice ? (
+                <div className="col-span-2 h-full rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5 shadow-sm">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <IndianRupee size={13} className="text-emerald-700 shrink-0" />
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800/80 whitespace-nowrap">
+                      Total Amount
                     </p>
-                    <p className="mt-1.5 text-[11px] font-semibold text-slate-500 tabular-nums whitespace-nowrap">
-                      {selected.totals.booked} booked
-                      {selected.totals.indent > 0 && (
-                        <span className="text-amber-700"> · {selected.totals.indent} indent</span>
+                  </div>
+                  {money.grandTotal == null ? (
+                    <>
+                      <p className="text-2xl font-black leading-none text-slate-400">—</p>
+                      <p className="mt-1.5 text-[11px] text-slate-500">No rate set on this booking</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-2xl font-black leading-none text-slate-900 tabular-nums">
+                        {formatRupees(money.grandTotal)}
+                      </p>
+                      <p className="mt-1.5 text-[11px] font-semibold text-slate-500 tabular-nums whitespace-nowrap">
+                        {formatRupees(money.subtotal)} + {formatRupees(money.gstAmount)} {GST_LABEL}
+                      </p>
+                      {pricing?.unpricedLines > 0 && (
+                        <p className="mt-0.5 text-[11px] font-bold text-amber-700">
+                          Covers {pricing.pricedLines} of{" "}
+                          {pricing.pricedLines + pricing.unpricedLines} line(s)
+                        </p>
                       )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                /*
+                  No pricing rights, so the amount would be a permanent dash.
+                  The quantity is the useful figure for this reader instead —
+                  confirmed from stock plus what is still open on the indent.
+
+                  NOT confirmed + pendingQty: `pendingQty` is the shortfall
+                  frozen onto the order row at confirmation, while the indent is
+                  the live balance that shrinks as stock auto-books against it.
+                  They are also the same units recorded twice, so adding both
+                  double-counts. See bookingTotals() in booking.shape.js.
+                */
+                <div className="col-span-2 h-full rounded-xl border border-primary-200 bg-primary-50/60 p-3.5 shadow-sm">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <Package size={13} className="text-primary-700 shrink-0" />
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700/80 whitespace-nowrap">
+                      Total Quantity
                     </p>
-                  </>
-                )}
-              </div>
+                  </div>
+                  {selected.totals?.total == null ? (
+                    <>
+                      <p className="text-2xl font-black leading-none text-slate-400">—</p>
+                      <p className="mt-1.5 text-[11px] text-slate-500">Indent balance unavailable</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-2xl font-black leading-none text-slate-900 tabular-nums">
+                        {selected.totals.total}
+                        <span className="ml-1 text-[11px] font-bold text-slate-500">
+                          {selected.totals.total === 1 ? "unit" : "units"}
+                        </span>
+                      </p>
+                      <p className="mt-1.5 text-[11px] font-semibold text-slate-500 tabular-nums whitespace-nowrap">
+                        {selected.totals.booked} booked
+                        {selected.totals.indent > 0 && (
+                          <span className="text-amber-700"> · {selected.totals.indent} indent</span>
+                        )}
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* CUSTOMER */}
               <div className="h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
@@ -691,37 +801,72 @@ export const SalesBookingDrawer = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
                     {draft.map((line, idx) => (
-                      <tr key={line.id || `new-${idx}`} className="align-top">
+                      <tr
+                        key={line.id || `new-${idx}`}
+                        /* The whole ROW is the drop target, not just the handle:
+                           a target the size of a grip icon is a target people
+                           miss, and a missed drop silently does nothing. The
+                           row is only draggable FROM the handle (see
+                           draggable={false} on the cells' parent below), so a
+                           text selection in the SKU box does not start a drag. */
+                        onDragOver={reorderable ? onDragOver(idx) : undefined}
+                        onDrop={reorderable ? onDrop(idx) : undefined}
+                        onDragEnd={onDragEnd}
+                        className={`align-top transition-colors ${
+                          dragIdx === idx
+                            ? "opacity-40"
+                            : dragOverIdx === idx && dragIdx !== null
+                              ? "bg-primary-50"
+                              : ""
+                        } ${
+                          /* Where it will land. A line across the top edge is
+                             read as "between these two rows"; highlighting the
+                             whole row instead says "onto this row", which is not
+                             what a reorder does. */
+                          dragOverIdx === idx && dragIdx !== null && dragIdx !== idx
+                            ? "shadow-[inset_0_2px_0_0_theme(colors.primary.500)]"
+                            : ""
+                        }`}
+                      >
                         {mayReorder && (
                           <td className="px-2 py-3">
-                            <div className="flex flex-col items-center gap-0.5">
-                              {/* Disabled while there are unsaved line edits:
-                                  the reorder response replaces the booking and
-                                  would re-derive the draft over the top of
-                                  them. Same rule the pricing button follows. */}
+                            <div className="flex flex-col items-center gap-1">
+                              {/*
+                                A button that is also a drag handle.
+
+                                `draggable` gives the mouse the drag; the arrow
+                                keys give everyone else the same move. Native
+                                HTML5 drag is mouse-only and announces nothing,
+                                so a drag-only control would quietly remove this
+                                feature for keyboard and screen-reader users.
+
+                                Disabled while there are unsaved line edits: the
+                                reorder response replaces the booking and would
+                                re-derive the draft over the top of them.
+                              */}
                               <button
                                 type="button"
-                                onClick={() => moveLine(idx, -1)}
-                                disabled={idx === 0 || saving || dirty}
-                                title={dirty ? "Save your line changes first" : "Move up"}
-                                aria-label={`Move ${line.skuCode || "line"} up`}
-                                className="p-1 rounded text-slate-400 hover:text-primary-700 hover:bg-primary-50 disabled:opacity-25 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+                                draggable={reorderable}
+                                onDragStart={reorderable ? onDragStart(idx) : undefined}
+                                onKeyDown={reorderable ? onHandleKeyDown(idx) : undefined}
+                                disabled={!reorderable}
+                                title={
+                                  dirty
+                                    ? "Save your line changes first"
+                                    : "Drag to reorder, or use the arrow keys"
+                                }
+                                aria-label={`Reorder ${line.skuCode || "line"}, position ${idx + 1} of ${draft.length}. Drag, or press the up and down arrow keys.`}
+                                className={`rounded p-1 text-slate-300 transition-colors hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-25 disabled:hover:bg-transparent ${
+                                  reorderable ? "cursor-grab active:cursor-grabbing" : ""
+                                }`}
                               >
-                                <ArrowUp size={14} />
+                                <GripVertical size={15} />
                               </button>
+                              {/* The position, so a reorder can be checked
+                                  against the numbered lines on the paper PO. */}
                               <span className="text-[10px] font-bold text-slate-400 tabular-nums">
                                 {idx + 1}
                               </span>
-                              <button
-                                type="button"
-                                onClick={() => moveLine(idx, 1)}
-                                disabled={idx === draft.length - 1 || saving || dirty}
-                                title={dirty ? "Save your line changes first" : "Move down"}
-                                aria-label={`Move ${line.skuCode || "line"} down`}
-                                className="p-1 rounded text-slate-400 hover:text-primary-700 hover:bg-primary-50 disabled:opacity-25 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
-                              >
-                                <ArrowDown size={14} />
-                              </button>
                             </div>
                           </td>
                         )}
@@ -805,7 +950,17 @@ export const SalesBookingDrawer = () => {
           {/* Footer */}
           <div className="px-6 py-4 bg-white border-t border-slate-200 flex items-center justify-between shrink-0 gap-3">
             <div className="text-xs text-slate-400 font-medium">
-              {selected.lineCount} line(s) · {selected.totalQuantity} unit(s)
+              {/* The quantity readout moved here when the hero tile became the
+                  booking amount. It reports the TRUE total — confirmed plus
+                  what is still open on the indent — rather than `totalQuantity`,
+                  which counts confirmed units only and so quietly under-reported
+                  every booking carrying an indent. Falls back to the old figure
+                  when the server did not send the indent balance. */}
+              {selected.lineCount} line(s) ·{" "}
+              {selected.totals?.total ?? selected.totalQuantity} unit(s)
+              {selected.totals?.indent > 0 && (
+                <span className="text-amber-700"> ({selected.totals.indent} on indent)</span>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
