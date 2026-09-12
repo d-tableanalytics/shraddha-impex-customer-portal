@@ -608,6 +608,17 @@ export const MODULES = [
         },
       },
       {
+        key: 'stages',
+        label: 'Stages',
+        path: '/fms/o2d/stages',
+        icon: 'LayoutGrid',
+        // §27's stage-wise view: one tab per stage, and the live orders sitting
+        // in each. VIEW_O2D only — it is the same population the Order Tracker
+        // already shows, sliced by position rather than filtered by hand. What a
+        // viewer may SEE is narrowed by role scope in the service, not here.
+        actions: { view: ['view_o2d'] },
+      },
+      {
         key: 'hold',
         label: 'Hold & Resume',
         path: null,
