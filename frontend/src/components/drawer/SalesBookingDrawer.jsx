@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
   Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle, Download, FileText,
-  MapPin, Receipt, IndianRupee, Pencil,
+  MapPin, Receipt, IndianRupee, Pencil, ArrowUp, ArrowDown, SlidersHorizontal,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
@@ -12,6 +12,8 @@ import { ERPButton } from "../ui/ERPButton";
 import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { PoCountdown } from "../ui/PoCountdown";
 import { ProductSearchDropdown } from "../ui/ProductSearchDropdown";
+import { CodeValue } from "../ui/CodeValue";
+import { BookingDetailsModal } from "../modal/BookingDetailsModal";
 import { canEditBooking, canRaisePo, canViewLineItemBoxNo, canViewPricing, hasPermission, PERMISSIONS } from "../../utils/permissions";
 import { PoConfirmModal } from "../modal/PoConfirmModal";
 import { PicklistPreview } from "../pricing/PicklistPreview";
@@ -38,7 +40,7 @@ const toDraft = (booking) =>
   }));
 
 export const SalesBookingDrawer = () => {
-  const { selected, close, saveItems, raisePo, setPricing, saving } = useSalesStore();
+  const { selected, close, saveItems, raisePo, setPricing, reorderLines, saving } = useSalesStore();
   const { user } = useUserStore();
 
   const [draft, setDraft] = useState([]);
@@ -51,6 +53,8 @@ export const SalesBookingDrawer = () => {
   // dialog and this is the desk checking what each tier totals; after it,
   // because a raised PO is priced already and this is the correction.
   const [repricing, setRepricing] = useState(false);
+  // Admin-only correction of the submitted customer/order details.
+  const [editingDetails, setEditingDetails] = useState(false);
 
   // `selected` is only replaced on an explicit select / save / raise-PO, so this
   // resyncs the draft with server truth after a write without clobbering
@@ -62,6 +66,7 @@ export const SalesBookingDrawer = () => {
     setShowModal(false);
     setShowPicklist(false);
     setRepricing(false);
+    setEditingDetails(false);
   }, [selected]);
 
   if (!selected) return null;
@@ -73,6 +78,12 @@ export const SalesBookingDrawer = () => {
   const mayPrice = canViewPricing(user);
   const pricing = selected.pricing || null;
   const isOverride = locked && hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
+  /**
+   * Correcting submitted details is Admin-only, and the server enforces it with
+   * the same key. Hiding the button from Sales is a courtesy so nobody clicks
+   * into a 403 - it is not the guard.
+   */
+  const mayEditDetails = hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
 
   const dirty =
     JSON.stringify(draft.map(({ id, skuCode, quantity }) => ({ id: id || null, skuCode, quantity }))) !==
@@ -83,6 +94,50 @@ export const SalesBookingDrawer = () => {
   const removeLine = (idx) => setDraft((d) => d.filter((_, i) => i !== idx));
   const addLine = () =>
     setDraft((d) => [...d, { id: null, skuCode: "", msilCode: null, boxNo: null, quantity: 1 }]);
+
+  /**
+   * Move one line up or down and persist immediately.
+   *
+   * ── WHY UP/DOWN AND NOT DRAG-AND-DROP ──────────────────────────────────
+   * Both were offered. Buttons win here: the desk works on tablets where a
+   * drag inside a scrolling drawer fights the scroll, they are reachable by
+   * keyboard, and they need no dependency - which matters when the brief asks
+   * for minimal impact on a working system. Dragging a table row is also the
+   * classic place where a row lands one position off and nobody notices.
+   *
+   * ── WHY IT SAVES ON EVERY CLICK ────────────────────────────────────────
+   * A local reorder plus a separate Save would be a SECOND kind of unsaved
+   * change sitting beside the line edits, sharing one Save button that posts to
+   * a different endpoint. Persisting each move keeps one meaning for "saved",
+   * and the response is the booking itself, so what is on screen is what is
+   * stored.
+   *
+   * Blocked while there are unsaved line edits, the same rule pricing follows:
+   * the response replaces `selected`, which re-derives the draft and would
+   * silently discard them.
+   */
+  const moveLine = async (idx, delta) => {
+    const target = idx + delta;
+    if (target < 0 || target >= draft.length) return;
+
+    const ids = draft.map((l) => l.id);
+    // A line that has never been saved has no id for the server to order.
+    // Unreachable while `dirty` blocks the buttons, but a null here would be
+    // rejected as "does not match this booking", which is a confusing way to
+    // learn that.
+    if (ids.some((id) => !id)) {
+      return toast.error("Save the new lines before rearranging them.");
+    }
+
+    const next = [...ids];
+    [next[idx], next[target]] = [next[target], next[idx]];
+
+    const res = await reorderLines(selected.orderId, next);
+    if (!res.success) toast.error(res.error);
+  };
+
+  // Rearranging is an amendment, so it follows the same lock as one.
+  const mayReorder = editable && draft.length > 1;
 
   const handleSave = async () => {
     if (draft.length === 0) return toast.error("A booking must keep at least one line.");
@@ -299,47 +354,164 @@ export const SalesBookingDrawer = () => {
             )}
 
             {/* Info cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
-                  <User size={16} className="text-blue-600" />
-                </div>
+            {mayEditDetails && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
                 <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">Customer</p>
-                  <p className="text-sm font-bold text-slate-800 truncate">{selected.customer || "—"}</p>
-                </div>
-              </div>
-              <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center shrink-0">
-                  <Hash size={16} className="text-indigo-600" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">PO Number</p>
-                  <p className="text-sm font-bold text-slate-800 truncate">{selected.poNumber || "Not raised"}</p>
-                </div>
-              </div>
-              <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                <div className="w-8 h-8 rounded-full bg-violet-50 flex items-center justify-center shrink-0">
-                  <CalendarIcon size={16} className="text-violet-600" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">Booking Date</p>
-                  <p className="text-sm font-bold text-slate-800">
-                    {selected.date ? new Date(selected.date).toLocaleDateString() : "—"}
+                  <p className="text-xs font-bold text-slate-700">Customer &amp; order details</p>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    {locked
+                      ? "This booking is locked, but these details can still be corrected. Every change is recorded."
+                      : "Correct anything Sales captured wrongly. Every change is recorded."}
                   </p>
                 </div>
+                <button
+                  onClick={() => setEditingDetails(true)}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-bold text-primary-700 transition-all hover:bg-primary-100"
+                >
+                  <SlidersHorizontal size={13} /> Edit details
+                </button>
               </div>
-              {/* The pair the pick list prints — shown on screen so the desk
-                  can check it before printing, and spot a booking without one. */}
-              <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
-                  <MapPin size={16} className="text-emerald-600" />
+            )}
+
+            {/*
+              ── THE SUMMARY TILES ──────────────────────────────────────────
+              Redesigned for the width they actually get. This is a drawer, not
+              a page: the content column is ~830px, so five equal tiles left
+              each one ~150px, and the old layout spent 44px of that on a
+              left-aligned 32px icon plus its gap. "TOTAL QUANTITY" wrapped onto
+              two lines, "160 booked · 4 indent" broke mid-phrase, and the tiles
+              ended up at three different heights.
+
+              Three changes fix it:
+
+                1. THE ICON MOVED INLINE with the label instead of sitting in a
+                   column of its own, so the value gets the tile's full width.
+                2. TOTAL QUANTITY SPANS TWO. It is the figure the desk checks
+                   against the customer's PO first, and it is the only tile
+                   carrying a breakdown line, so it earns the room. The grid is
+                   six units at xl: 2 for the total, 1 each for the other four.
+                3. LABELS NEVER WRAP. `whitespace-nowrap` on every one, and
+                   "Location & Phone" became "Location" with the phone beneath -
+                   a label that wraps is what made the row look broken.
+
+              Heights are equalised by `items-stretch` plus `h-full`, so a tile
+              with a sub-line no longer makes its neighbours look unfinished.
+            */}
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 items-stretch">
+              {/*
+                TOTAL QUANTITY — confirmed from stock plus what is still open on
+                this booking's indent.
+
+                NOT confirmed + pendingQty: `pendingQty` is the shortfall frozen
+                onto the order row at confirmation, while the indent is the live
+                balance that shrinks as stock arrives and auto-books against it.
+                They are also the same units recorded twice, so adding both
+                double-counts the shortfall. See bookingTotals() in
+                booking.shape.js.
+
+                `total` is null, never 0, when the server did not send the indent
+                - a confident total that silently omitted it would be worse than
+                none, because nobody re-checks a number that looks right.
+              */}
+              <div className="col-span-2 h-full rounded-xl border border-primary-200 bg-primary-50/60 p-3.5 shadow-sm">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Package size={13} className="text-primary-700 shrink-0" />
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700/80 whitespace-nowrap">
+                    Total Quantity
+                  </p>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">Location &amp; Phone</p>
-                  <p className="text-sm font-bold text-slate-800 truncate">{selected.location || "—"}</p>
-                  <p className="text-xs font-semibold text-slate-500 truncate">{selected.phoneNumber || "—"}</p>
+                {selected.totals?.total == null ? (
+                  <>
+                    <p className="text-2xl font-black leading-none text-slate-400">—</p>
+                    <p className="mt-1.5 text-[11px] text-slate-500">Indent balance unavailable</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-2xl font-black leading-none text-slate-900 tabular-nums">
+                      {selected.totals.total}
+                      <span className="ml-1 text-[11px] font-bold text-slate-500">
+                        {selected.totals.total === 1 ? "unit" : "units"}
+                      </span>
+                    </p>
+                    <p className="mt-1.5 text-[11px] font-semibold text-slate-500 tabular-nums whitespace-nowrap">
+                      {selected.totals.booked} booked
+                      {selected.totals.indent > 0 && (
+                        <span className="text-amber-700"> · {selected.totals.indent} indent</span>
+                      )}
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {/* CUSTOMER */}
+              <div className="h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <User size={13} className="text-blue-600 shrink-0" />
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 whitespace-nowrap">
+                    Customer
+                  </p>
                 </div>
+                <p
+                  className="text-sm font-bold text-slate-800 truncate"
+                  title={selected.customer || ""}
+                >
+                  {selected.customer || "—"}
+                </p>
+              </div>
+
+              {/* PO NUMBER */}
+              <div className="h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Hash size={13} className="text-indigo-600 shrink-0" />
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 whitespace-nowrap">
+                    PO Number
+                  </p>
+                </div>
+                {/* Wraps rather than truncating: a PO number is an identifier the
+                    desk reads back to the customer, and half of one is unusable. */}
+                <p className="text-sm font-bold leading-snug text-slate-800 break-all">
+                  {selected.poNumber || <span className="font-semibold text-slate-400">Not raised</span>}
+                </p>
+              </div>
+
+              {/* BOOKING DATE */}
+              <div className="h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <CalendarIcon size={13} className="text-violet-600 shrink-0" />
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 whitespace-nowrap">
+                    Booked
+                  </p>
+                </div>
+                <p className="text-sm font-bold text-slate-800 tabular-nums whitespace-nowrap">
+                  {selected.date ? new Date(selected.date).toLocaleDateString() : "—"}
+                </p>
+              </div>
+
+              {/* LOCATION — the pair the pick list prints, shown so the desk can
+                  check it before printing and spot a booking without one. The
+                  phone sits under the town rather than beside it, because two
+                  values on one line in a 130px tile is what forced the old
+                  layout to truncate both. */}
+              <div className="h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <MapPin size={13} className="text-emerald-600 shrink-0" />
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 whitespace-nowrap">
+                    Location
+                  </p>
+                </div>
+                <p
+                  className="text-sm font-bold text-slate-800 truncate"
+                  title={selected.location || ""}
+                >
+                  {selected.location || "—"}
+                </p>
+                {/* Only when there is one. A second dash under the first said
+                    nothing and made the tile look like it had failed to load. */}
+                {selected.phoneNumber && (
+                  <p className="text-[11px] font-semibold text-slate-500 truncate tabular-nums">
+                    {selected.phoneNumber}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -494,16 +666,65 @@ export const SalesBookingDrawer = () => {
                           collapsed table does not carry a border along with a
                           sticky cell, so the underline would be left behind the
                           moment the list scrolls. */}
-                      <th className="px-5 py-3 w-[45%] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">SKU / Product</th>
-                      <th className="px-5 py-3 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">MSIL Code</th>
+                      {/* The reorder handle column. Narrow and first, so the
+                          arrows sit where the eye starts a row. */}
+                      {mayReorder && (
+                        <th className="px-2 py-3 w-[52px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">
+                          <span className="sr-only">Reorder</span>
+                        </th>
+                      )}
+                      {/* ── Column widths (requirement 1) ─────────────────
+                          SKU and MSIL are IDENTIFIERS and are what the desk
+                          compares against a paper PO, so they get the room.
+                          Quantity needs only a few digits and Box No a short
+                          code, so the width comes from there rather than from
+                          squeezing the codes. `min-w` on the SKU header stops
+                          a table-layout:auto column collapsing when every
+                          visible code happens to be short - which is how the
+                          long ones ended up truncated in the first place. */}
+                      <th className="px-5 py-3 w-[38%] min-w-[180px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">SKU / Product</th>
+                      <th className="px-5 py-3 w-[26%] min-w-[140px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">MSIL Code</th>
                       {showBoxNo && <th className="px-5 py-3 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Box No</th>}
-                      <th className="px-5 py-3 text-center w-[18%] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Quantity</th>
+                      <th className="px-5 py-3 text-center w-[110px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Quantity</th>
                       {editable && <th className="px-5 py-3 text-center sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Remove</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
                     {draft.map((line, idx) => (
                       <tr key={line.id || `new-${idx}`} className="align-top">
+                        {mayReorder && (
+                          <td className="px-2 py-3">
+                            <div className="flex flex-col items-center gap-0.5">
+                              {/* Disabled while there are unsaved line edits:
+                                  the reorder response replaces the booking and
+                                  would re-derive the draft over the top of
+                                  them. Same rule the pricing button follows. */}
+                              <button
+                                type="button"
+                                onClick={() => moveLine(idx, -1)}
+                                disabled={idx === 0 || saving || dirty}
+                                title={dirty ? "Save your line changes first" : "Move up"}
+                                aria-label={`Move ${line.skuCode || "line"} up`}
+                                className="p-1 rounded text-slate-400 hover:text-primary-700 hover:bg-primary-50 disabled:opacity-25 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+                              >
+                                <ArrowUp size={14} />
+                              </button>
+                              <span className="text-[10px] font-bold text-slate-400 tabular-nums">
+                                {idx + 1}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => moveLine(idx, 1)}
+                                disabled={idx === draft.length - 1 || saving || dirty}
+                                title={dirty ? "Save your line changes first" : "Move down"}
+                                aria-label={`Move ${line.skuCode || "line"} down`}
+                                className="p-1 rounded text-slate-400 hover:text-primary-700 hover:bg-primary-50 disabled:opacity-25 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+                              >
+                                <ArrowDown size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        )}
                         <td className="px-5 py-3">
                           {editable ? (
                             <ProductSearchDropdown
@@ -521,10 +742,12 @@ export const SalesBookingDrawer = () => {
                               }
                             />
                           ) : (
-                            <span className="font-bold text-slate-800">{line.skuCode}</span>
+                            <CodeValue value={line.skuCode} />
                           )}
                         </td>
-                        <td className="px-5 py-3 text-slate-500">{line.msilCode || "—"}</td>
+                        <td className="px-5 py-3">
+                          <CodeValue value={line.msilCode} tone="muted" />
+                        </td>
                         {showBoxNo && (
                           <td className="px-5 py-3">
                             {line.boxNo ? (
@@ -634,7 +857,18 @@ export const SalesBookingDrawer = () => {
           />
         )}
 
-        <PoConfirmModal
+        {mayEditDetails && editingDetails && (
+        <BookingDetailsModal
+          isOpen={editingDetails}
+          booking={selected}
+          onClose={() => setEditingDetails(false)}
+          /* The response is the whole booking, so the drawer resyncs from
+             server truth rather than from what the form believed it sent. */
+          onSaved={(updated) => useSalesStore.setState({ selected: updated })}
+        />
+      )}
+
+      <PoConfirmModal
           isOpen={showModal}
           onClose={() => setShowModal(false)}
           onConfirm={handleModalConfirm}

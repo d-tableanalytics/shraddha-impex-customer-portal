@@ -24,6 +24,7 @@ import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { useUserStore } from "../../store/userStore";
 import { useCartStore } from "../../store/cartStore";
 import { StatusBadge } from "../ui/StatusBadge";
+import { CodeValue } from "../ui/CodeValue";
 import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
@@ -660,11 +661,11 @@ export const OrderDrawer = () => {
                         {linePaging.pageItems.map((item, idx) => (
                           <tr key={idx} className="hover:bg-slate-50">
                             <td className="px-5 py-4 font-bold text-slate-800">
-                              {item.product.code}
+                              <CodeValue value={item.product.code} />
                             </td>
                             {showMsilCode && (
-                              <td className="px-5 py-4 font-medium text-slate-700">
-                                {item.product.msilCode || "—"}
+                              <td className="px-5 py-4">
+                                <CodeValue value={item.product.msilCode} tone="muted" />
                               </td>
                             )}
                             {showBoxNo && (
@@ -814,9 +815,13 @@ export const OrderDrawer = () => {
                         <tbody className="divide-y divide-slate-100 text-sm">
                           {indentPaging.pageItems.map((p) => (
                             <tr key={p._id} className="hover:bg-slate-50">
-                              <td className="px-5 py-3 font-bold text-slate-800">{p.product.code}</td>
+                              <td className="px-5 py-3">
+                                <CodeValue value={p.product.code} />
+                              </td>
                               {showMsilCode && (
-                                <td className="px-5 py-3 text-slate-500">{p.product.msilCode || "-"}</td>
+                                <td className="px-5 py-3">
+                                  <CodeValue value={p.product.msilCode} tone="muted" />
+                                </td>
                               )}
                               <td className="px-5 py-3 text-center font-black text-amber-600">{p.pendingQuantity}</td>
                             </tr>

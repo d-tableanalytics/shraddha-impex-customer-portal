@@ -69,6 +69,30 @@ export const useSalesStore = create((set, get) => ({
   },
 
   /**
+   * Persist a new line order.
+   *
+   * The server answers with the whole booking, so `selected` is replaced the
+   * same way saveItems replaces it - which is what makes the new sequence stick
+   * when the drawer re-derives its draft.
+   */
+  reorderLines: async (orderId, lineIds) => {
+    set({ saving: true });
+    try {
+      const data = await salesApi.reorderLines(orderId, lineIds);
+      set({ selected: data, saving: false });
+      await get().fetchBookings();
+      return { success: true };
+    } catch (err) {
+      set({ saving: false });
+      return {
+        success: false,
+        error: err.response?.data?.message || err.message || "Could not save the line order.",
+        locked: err.response?.status === 423,
+      };
+    }
+  },
+
+  /**
    * The tier quote for the open booking: every rate for every line.
    *
    * Kept in the store rather than the dialog so it survives the dialog being

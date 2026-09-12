@@ -45,6 +45,36 @@ export const salesApi = {
     return res.data.data;
   },
 
+  /**
+   * Rearrange the booking's lines to match the customer's actual PO.
+   *
+   * Sends the line ids in the order they should appear. The server requires a
+   * permutation of this booking's own lines, so a stale copy is refused rather
+   * than silently dropping whichever line the browser has forgotten about.
+   */
+  reorderLines: async (orderId, lineIds) => {
+    const res = await api.put(
+      `/sales/bookings/${encodeURIComponent(orderId)}/line-order`,
+      { lineIds },
+    );
+    return res.data.data;
+  },
+
+  /**
+   * Correct the customer/order details after submission. Admin only.
+   *
+   * Send ONLY the fields being changed - the endpoint treats an absent field as
+   * "leave it alone" and an empty string as "clear it", so spreading a whole
+   * form object in would rewrite fields the admin never touched.
+   */
+  updateDetails: async (orderId, patch) => {
+    const res = await api.patch(
+      `/sales/bookings/${encodeURIComponent(orderId)}/details`,
+      patch,
+    );
+    return res.data.data;
+  },
+
   /** Set, change or clear (priceType: null) the rate a booking is offered at. */
   setPricing: async (orderId, priceType) => {
     const res = await api.put(

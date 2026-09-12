@@ -133,6 +133,28 @@ export const PERMISSIONS = {
   // None of these may begin with `hrms_`: that prefix is what isHrmsRoleKey()
   // uses to recognise a role key inside User.roles[], and user.controller.js
   // refuses extra grants that compile to one.
+  // ── O2D / FMS (Order to Dispatch) ───────────────────────────────────────
+  //
+  // CAPABILITIES, not stages. Which ROLE owns stage 7 is configuration — it
+  // lives in `o2d_stage_master` and an administrator can change it without a
+  // deploy (§37). Baking twelve `complete_stage_7`-shaped keys in here would
+  // freeze that configuration into the permission vocabulary and defeat the
+  // point of having a master at all.
+  //
+  // So the vocabulary answers a different question: what KIND of thing may this
+  // person do? The engine then asks the master who owns the stage in front of
+  // them. `WORK_O2D_STAGE` means "may complete stages I own"; it is not a
+  // licence to complete anybody's.
+  VIEW_O2D: 'view_o2d',                             // see orders, tracker, Order 360
+  CREATE_O2D_ORDER: 'create_o2d_order',             // stage 1 — key a customer PO in
+  WORK_O2D_STAGE: 'work_o2d_stage',                 // complete a stage this role owns
+  HOLD_O2D: 'hold_o2d',                             // pause / resume an order
+  OVERRIDE_O2D: 'override_o2d',                     // out-of-order completion, proceed-anyway,
+                                                    // timestamp correction — §20, §28, §33
+  EXIT_O2D: 'exit_o2d',                             // cancel / void, and revive
+  VIEW_O2D_ANALYTICS: 'view_o2d_analytics',         // delay analytics, department KPIs
+  MANAGE_O2D_MASTERS: 'manage_o2d_masters',         // SLA, calendar, escalation config
+
   ACCESS_HRMS: 'access_hrms',                       // employee self-service
   MANAGE_HRMS_TEAM: 'manage_hrms_team',             // reporting manager
   MANAGE_HRMS_PEOPLE: 'manage_hrms_people',         // HR admin
@@ -234,6 +256,60 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.ADMINISTER_HRMS,
   ],
 
+  /**
+   * ── THREE ROLES ADDED FOR O2D ───────────────────────────────────────────
+   *
+   * The portal had no Billing, Accounts or Billing Head. Those three own eight
+   * of O2D's twelve stages between them, so the workflow could not express its
+   * own ownership without them — and "who owns this delay?" is the question the
+   * whole module exists to answer.
+   *
+   * They carry PORTAL_BASICS for the same reason HR does: an internal member of
+   * staff who lands in the customer portal should see their own profile rather
+   * than an empty shell. The domain fence in `utils/roleResolver.js` removes the
+   * O2D keys there and the portal keys in the employee domain, so neither set
+   * leaks into the wrong navigation.
+   */
+
+  /** Raises the PI, the order list, the invoice and the closing paperwork. */
+  Billing: [
+    ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
+  ],
+
+  /**
+   * Records advance payments — stage 5 and nothing else.
+   *
+   * Deliberately NOT given OVERRIDE_O2D. "Proceed anyway" on a partial payment
+   * is the decision §8 reserves for Billing Head or MD, and the role that
+   * records the shortfall must not also be the role that waives it.
+   */
+  Accounts: [
+    ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
+  ],
+
+  /**
+   * Billing's supervisor: everything Billing can do, plus the authority §8, §19,
+   * §28 and §29 reserve for an approver — proceed-anyway on a short payment,
+   * hold and resume, out-of-order completion, cancellation.
+   *
+   * Holding OVERRIDE_O2D without CREATE_O2D_ORDER is deliberate. Approving an
+   * exception is a different job from raising the order the exception applies
+   * to, and a single person able to do both can approve their own.
+   */
+  'Billing Head': [
+    ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
+    PERMISSIONS.HOLD_O2D,
+    PERMISSIONS.OVERRIDE_O2D,
+    PERMISSIONS.EXIT_O2D,
+    PERMISSIONS.VIEW_O2D_ANALYTICS,
+  ],
+
   Sales: [
     ...PORTAL_BASICS,
     PERMISSIONS.VIEW_ORDERS,
@@ -255,6 +331,11 @@ export const BASELINE_ROLE_PERMISSIONS = {
     // Sales needs to know what can be sold - availability only, never the
     // ledger, costs or adjustments.
     PERMISSIONS.VIEW_INVENTORY,
+    // O2D stages 1 and 2: Sales receives the customer PO and hands it to
+    // Billing. No override — amending a booking is not approving an exception.
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.CREATE_O2D_ORDER,
+    PERMISSIONS.WORK_O2D_STAGE,
   ],
 
   'Inventory Manager': [
@@ -274,6 +355,11 @@ export const BASELINE_ROLE_PERMISSIONS = {
 
   'Warehouse User': [
     ...PORTAL_BASICS,
+    // O2D stage 7 (the picking acknowledgement, which is stage 7's ACTUAL
+    // timestamp) and stage 9, the dispatch itself. §20 is explicit that the
+    // warehouse must not see pricing or invoice values; no key here grants it.
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
     PERMISSIONS.VIEW_INVENTORY,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.EXPORT_INVENTORY,
@@ -285,6 +371,14 @@ export const BASELINE_ROLE_PERMISSIONS = {
   // Oversight: read everything, approve, create nothing.
   Management: [
     ...PORTAL_BASICS,
+    // Oversight over O2D: sees everything, approves exceptions, owns no stage.
+    // Consistent with the role's existing shape — it approves adjustments and
+    // counts without being able to create them.
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.VIEW_O2D_ANALYTICS,
+    PERMISSIONS.HOLD_O2D,
+    PERMISSIONS.OVERRIDE_O2D,
+    PERMISSIONS.EXIT_O2D,
     PERMISSIONS.VIEW_INVENTORY,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.EXPORT_INVENTORY,
@@ -324,6 +418,10 @@ export const BASELINE_ROLE_PERMISSIONS = {
    */
   'Import Team': [
     ...PORTAL_BASICS,
+    // §20: "Imports — View orders from Stage 06". Read-only, and no stage of
+    // their own: they are notified when the order list is created so they can
+    // plan procurement, not so they can move the order along.
+    PERMISSIONS.VIEW_O2D,
     PERMISSIONS.VIEW_INVENTORY,
     PERMISSIONS.MANAGE_INVENTORY_MASTER,
     PERMISSIONS.EXPORT_INVENTORY,

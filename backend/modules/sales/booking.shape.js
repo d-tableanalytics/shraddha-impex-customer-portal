@@ -82,6 +82,47 @@ export const pricingSummary = (rows = []) => {
 };
 
 /**
+ * What the customer is actually waiting for on this booking.
+ *
+ * ---------------------------------------------------------------------------
+ * CONFIRMED + INDENT, AND WHY IT IS NOT `confirmedQty + pendingQty`
+ * ---------------------------------------------------------------------------
+ *
+ * `pendingQty` is the shortfall FROZEN onto the order row when the booking was
+ * confirmed. The reservation behind it is the live balance, and the two part
+ * company as soon as stock arrives and auto-books against the indent: the row
+ * still claims 20 outstanding when only 15 are. They are also the same units
+ * recorded twice (`resItem.quantity = pendingQty` at the split), so adding both
+ * would count the shortfall twice over.
+ *
+ * ---------------------------------------------------------------------------
+ * THE INDENT IS SUMMED WHOLE, NOT MATCHED PER LINE
+ * ---------------------------------------------------------------------------
+ *
+ * A line that could not be fulfilled AT ALL gets no order row - the confirmation
+ * only pushes one when `confirmedQty > 0` - so it exists solely as a
+ * reservation. Summing the indent per order row would miss those units
+ * entirely, which is the exact mismatch this card is meant to expose. Summing
+ * the booking's whole open indent counts them.
+ *
+ * ---------------------------------------------------------------------------
+ * UNKNOWN IS NULL, NEVER ZERO
+ * ---------------------------------------------------------------------------
+ *
+ * A caller that does not supply the indent map gets `null`, not `0`. This is a
+ * figure the desk uses to decide whether a booking matches the customer's PO;
+ * reporting a confident total that silently omits the indent would be worse
+ * than reporting nothing, because nobody re-checks a number that looks fine.
+ */
+const bookingTotals = (rows, indentBySku) => {
+  const booked = rows.reduce((n, r) => n + (r.confirmedQty || 0), 0);
+  if (!indentBySku) return { booked, indent: null, total: null };
+
+  const indent = [...indentBySku.values()].reduce((n, q) => n + (q || 0), 0);
+  return { booked, indent, total: booked + indent };
+};
+
+/**
  * Collapse the flat Order rows into one booking object for the review screen.
  *
  * `boxNumbers` is the map from currentBoxNumbers(). Passing an empty map (the
@@ -96,7 +137,11 @@ export const pricingSummary = (rows = []) => {
  *
  * PURE — rows and a Map in, a plain object out. Nothing here queries.
  */
-export const shapeBooking = (rows, boxNumbers = new Map(), { includePricing = false } = {}) => {
+export const shapeBooking = (
+  rows,
+  boxNumbers = new Map(),
+  { includePricing = false, indentBySku = null } = {},
+) => {
   const first = rows[0];
   const bookingDate = first.date || first.orderTimestamp || first.createdAt;
   const lock = lockState(rows);
@@ -151,7 +196,11 @@ export const shapeBooking = (rows, boxNumbers = new Map(), { includePricing = fa
     promiseDate: first.promiseDate || first.supplyByDate || null,
     ...lock,
     pricing: includePricing ? pricingSummary(rows) : null,
+    // Confirmed units only. Left exactly as it was: several readers treat it
+    // as "what is on the booking", and widening it in place would silently
+    // change what they report. The whole picture is `totals` below.
     totalQuantity: rows.reduce((n, r) => n + (r.confirmedQty || 0), 0),
+    totals: bookingTotals(rows, indentBySku),
     lineCount: rows.length,
     lines: rows.map((r) => ({
       id: r._id,

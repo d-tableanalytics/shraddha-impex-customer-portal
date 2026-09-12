@@ -91,7 +91,10 @@ export const useOrderHistoryStore = create((set, get) => ({
       // nothing. Every line is searched too, so a SKU returns every booking it
       // appears in. Shared with Indent History — see utils/historySearch.js.
       result = result.filter((o) => groupMatches(
-        [o.poNumber, o.orderNumber, o.customer],
+        // customerName as well as customer: an admin looking for a person
+        // types their name, and the two fields differ whenever the master
+        // record carries a Customer Name.
+        [o.poNumber, o.orderNumber, o.customer, o.customerName, o.customerCompany],
         // Both shapes are offered: `lineItems` is the per-SKU detail the
         // grouping builds, `items` is the mapped view. A booking always has the
         // first; the second is belt and braces for a row built elsewhere.

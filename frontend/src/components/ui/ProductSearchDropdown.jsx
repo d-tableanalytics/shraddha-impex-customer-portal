@@ -235,12 +235,20 @@ export const ProductSearchDropdown = ({
                   onClick={() => handleSelect(product)}
                   className="px-4 py-2.5 hover:bg-slate-50 cursor-pointer flex flex-col gap-1 border-b border-slate-100 last:border-0 transition-colors"
                 >
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-bold text-slate-800 truncate tracking-wide">
+                  {/* The SKU and the MSIL code are what the customer matches
+                      against their paper list, so neither is truncated. They
+                      wrap instead: `items-start` with `gap-3` lets the MSIL
+                      keep its place on the right while a long SKU takes the
+                      lines it needs, and `break-all` splits codes that have no
+                      spaces for a word-boundary break to find. A truncated
+                      code is actively dangerous here - two parts differing in
+                      their last characters look identical once cut. */}
+                  <div className="flex justify-between items-start gap-3">
+                    <span className="text-sm font-bold text-slate-800 tracking-wide font-mono break-all leading-snug">
                       {product.code}
                     </span>
                     {showMsilCode && product.msilCode && (
-                      <span className="text-xs text-slate-400 font-medium">
+                      <span className="text-xs text-slate-400 font-medium font-mono break-all text-right shrink-0 max-w-[45%] leading-snug">
                         {product.msilCode}
                       </span>
                     )}

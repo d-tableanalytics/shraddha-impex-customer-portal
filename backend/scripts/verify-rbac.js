@@ -27,8 +27,49 @@ import {
   grantsFromPermissions,
   availableActions,
   allRegistryKeys,
+  portalsOf,
+  PORTALS,
+  PORTAL_LIST,
 } from '../config/moduleRegistry.js';
 import { resolveRolePermissions, resolveUserPermissions, can, menuFor } from '../utils/roleResolver.js';
+
+/**
+ * ── DOMAIN-AWARE CAPABILITY CHECKS ────────────────────────────────────────
+ *
+ * `can()` and `menuFor()` resolve through `resolveUserPermissions`, which fences
+ * a user to the modules THIS DEPLOYMENT'S portal serves. That is correct at
+ * runtime and wrong here: this script verifies the compiled-in ROLE MODEL, which
+ * is a fact about a role rather than about a deployment. Run unchanged in the
+ * Employee Portal it reported that Sales could not raise a PO — true of the
+ * employee domain, and nothing to do with the role contract it is asserting.
+ *
+ * So each question is asked in the domain that actually serves the module it is
+ * about, taken from the registry rather than hardcoded. The script then gives
+ * the same answers in both repositories, which is the point of a shared contract
+ * check.
+ */
+const domainOf = (moduleKey) => {
+  const mod = MODULES.find((m) => m.key === moduleKey);
+  return portalsOf(mod)[0];
+};
+
+const inDomain = (portal, fn) => {
+  const previous = process.env.PORTAL;
+  process.env.PORTAL = portal;
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) delete process.env.PORTAL;
+    else process.env.PORTAL = previous;
+  }
+};
+
+/** `can()`, asked in the domain that serves `moduleKey`. */
+const canIn = (user, moduleKey, submoduleKey, action) =>
+  inDomain(domainOf(moduleKey), () => can(user, moduleKey, submoduleKey, action));
+
+/** `menuFor()`, in a named domain. */
+const menuIn = (portal, user) => inDomain(portal, () => menuFor(user));
 
 // ── The frozen "before" picture ────────────────────────────────────────────
 const BEFORE = {
@@ -110,7 +151,25 @@ const PORTAL_ADDITIONS = new Set([
  *   holds it, which the pricing suite asserts directly.
  */
 const DELIBERATE_ADDITIONS = {
-  Sales: new Set([PERMISSIONS.VIEW_PRICING]),
+  Sales: new Set([
+    PERMISSIONS.VIEW_PRICING,
+    // O2D stages 1 and 2 — Sales receives the customer PO and hands it over.
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.CREATE_O2D_ORDER,
+    PERMISSIONS.WORK_O2D_STAGE,
+  ]),
+  // O2D stage 7's acknowledgement and stage 9's dispatch.
+  'Warehouse User': new Set([PERMISSIONS.VIEW_O2D, PERMISSIONS.WORK_O2D_STAGE]),
+  // Oversight and approval; owns no stage.
+  Management: new Set([
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.VIEW_O2D_ANALYTICS,
+    PERMISSIONS.HOLD_O2D,
+    PERMISSIONS.OVERRIDE_O2D,
+    PERMISSIONS.EXIT_O2D,
+  ]),
+  // §20: read-only visibility from stage 6.
+  'Import Team': new Set([PERMISSIONS.VIEW_O2D]),
 };
 
 for (const [role, before] of Object.entries(BEFORE)) {
@@ -168,7 +227,7 @@ for (const role of ['Super Admin', 'Admin']) {
     `${role} can take every action in every module`,
     MODULES.every((m) =>
       m.submodules.every((s) =>
-        availableActions(s).every((a) => can({ role }, m.key, s.key, a)),
+        availableActions(s).every((a) => canIn({ role }, m.key, s.key, a)),
       ),
     ),
   );
@@ -197,13 +256,13 @@ for (const [mod, sub, action] of [
   ['administration', 'users', 'view'],
   ['administration', 'roles', 'edit'],
 ]) {
-  check(`Customer refused ${mod}.${sub}:${action}`, !can({ role: 'Customer' }, mod, sub, action));
+  check(`Customer refused ${mod}.${sub}:${action}`, !canIn({ role: 'Customer' }, mod, sub, action));
 }
 
 check(
   'a Customer still books, and still reads their own bookings',
-  can({ role: 'Customer' }, 'customer_portal', 'create_booking', 'create')
-  && can({ role: 'Customer' }, 'customer_portal', 'booking_history', 'view'),
+  canIn({ role: 'Customer' }, 'customer_portal', 'create_booking', 'create')
+  && canIn({ role: 'Customer' }, 'customer_portal', 'booking_history', 'view'),
 );
 
 // The fence is a CEILING, not a default. A per-user grant pointing outside the
@@ -229,20 +288,20 @@ check(
 // ───────────────────────────────────────────────────────────────────────────
 section('6. Separation of duties survived');
 
-check('Sales raises a PO', can({ role: 'Sales' }, 'sales', 'bookings', 'approve'));
+check('Sales raises a PO', canIn({ role: 'Sales' }, 'sales', 'bookings', 'approve'));
 check('Sales cannot override the PO lock it creates',
-  !can({ role: 'Sales' }, 'sales', 'bookings', 'delete'));
+  !canIn({ role: 'Sales' }, 'sales', 'bookings', 'delete'));
 check('Inventory Manager creates adjustments',
-  can({ role: 'Inventory Manager' }, 'inventory', 'adjustments', 'create'));
+  canIn({ role: 'Inventory Manager' }, 'inventory', 'adjustments', 'create'));
 check('Inventory Manager cannot approve its own adjustments',
-  !can({ role: 'Inventory Manager' }, 'inventory', 'adjustments', 'approve'));
+  !canIn({ role: 'Inventory Manager' }, 'inventory', 'adjustments', 'approve'));
 check('Management approves adjustments',
-  can({ role: 'Management' }, 'inventory', 'adjustments', 'approve'));
+  canIn({ role: 'Management' }, 'inventory', 'adjustments', 'approve'));
 check('Management cannot create adjustments',
-  !can({ role: 'Management' }, 'inventory', 'adjustments', 'create'));
+  !canIn({ role: 'Management' }, 'inventory', 'adjustments', 'create'));
 check('Box numbers stay with Super Admin alone',
   ['Sales', 'Inventory Manager', 'Warehouse User', 'Management', 'Import Team', 'Customer']
-    .every((r) => !can({ role: r }, 'inventory', 'box_numbers', 'edit')));
+    .every((r) => !canIn({ role: r }, 'inventory', 'box_numbers', 'edit')));
 check('Sales cannot manage staff accounts',
   !resolveRolePermissions('Sales').includes(PERMISSIONS.MANAGE_USERS));
 check('Sales can still manage customer accounts',
@@ -287,7 +346,10 @@ check('every sub-module offers at least one action',
 section('8. The sidebar a role gets matches the access it has');
 
 for (const role of Object.keys(BEFORE)) {
-  const menu = menuFor({ role });
+  // BOTH domains: an unpinned menuFor() would only ever exercise whichever
+  // portal this repository happens to be, and a dead link in the other one
+  // would go unnoticed until somebody deployed there.
+  const menu = PORTAL_LIST.flatMap((portal) => menuIn(portal, { role }));
   const bad = [];
   for (const mod of menu) {
     for (const item of mod.items) {
@@ -297,7 +359,7 @@ for (const role of Object.keys(BEFORE)) {
   check(`${role}: every menu entry is a real destination`, bad.length === 0, bad.join('; '));
 }
 
-const customerMenu = menuFor({ role: 'Customer' });
+const customerMenu = menuIn(PORTALS.CUSTOMER, { role: 'Customer' });
 check('a Customer sees exactly one module, the Customer Portal',
   customerMenu.length === 1 && customerMenu[0].key === 'customer_portal',
   customerMenu.map((m) => m.key).join(', '));
@@ -306,16 +368,28 @@ check('a Customer sees exactly one module, the Customer Portal',
 // capability-only (path: null) or not yet advertised (hidden) contributes no
 // menu entry, so a module made up entirely of those correctly does not appear -
 // which is the case for Reports while its screen is still a stub.
-const withVisibleScreens = MODULES.filter((m) =>
-  m.submodules.some((s) => s.path && !s.hidden));
-
-const adminMenu = menuFor({ role: 'Admin' });
-check('a Super Admin sees every module that has visible screens',
-  adminMenu.length === withVisibleScreens.length,
-  `saw ${adminMenu.length} of ${withVisibleScreens.length}: ${adminMenu.map((m) => m.key).join(', ')}`);
+/*
+ * Asked PER DOMAIN, because no single deployment serves every module any more.
+ *
+ * An unrestricted account must see everything ITS domain offers — which is the
+ * property that matters — and nothing from the other, which the portal-boundary
+ * suite asserts separately.
+ */
+for (const portal of PORTAL_LIST) {
+  const expected = MODULES.filter(
+    (m) => portalsOf(m).includes(portal) && m.submodules.some((s) => {
+      const subPortals = s.portals ?? m.portals;
+      return s.path && !s.hidden && portalsOf({ portals: subPortals }).includes(portal);
+    }),
+  );
+  const adminMenu = menuIn(portal, { role: 'Admin' });
+  check(`a Super Admin sees every ${portal}-domain module that has visible screens`,
+    adminMenu.length === expected.length,
+    `saw ${adminMenu.length} of ${expected.length}: ${adminMenu.map((m) => m.key).join(', ')}`);
+}
 
 check('no menu entry points at a hidden or capability-only sub-module',
-  menuFor({ role: 'Admin' }).every((mod) => {
+  menuIn(PORTALS.EMPLOYEE, { role: 'Admin' }).concat(menuIn(PORTALS.CUSTOMER, { role: 'Admin' })).every((mod) => {
     const registered = MODULES.find((m) => m.key === mod.key);
     return mod.items.every((item) => {
       const sub = registered.submodules.find((s) => s.key === item.key);

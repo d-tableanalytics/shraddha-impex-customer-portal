@@ -158,7 +158,8 @@ export const OrderHistoryTable = () => {
                 />
               </th>
               <th className="px-5 py-3 border-b border-slate-200">Booking ID</th>
-              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Customer</th>}
+              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Customer Name</th>}
+              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Company Name</th>}
               <th className="px-5 py-3 border-b border-slate-200">PO Number</th>
               <th
                 className="px-5 py-3 border-b border-slate-200 cursor-pointer hover:bg-slate-100"
@@ -176,7 +177,7 @@ export const OrderHistoryTable = () => {
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
             {loading ? (
-              <TableSkeleton rows={8} columns={isAdmin ? 7 : 6} cellClass="px-5 py-4" />
+              <TableSkeleton rows={8} columns={isAdmin ? 8 : 6} cellClass="px-5 py-4" />
             ) : currentOrders.length > 0 ? (
               currentOrders.map((order) => (
                 <tr
@@ -210,21 +211,23 @@ export const OrderHistoryTable = () => {
                     </div>
                   </td>
                   {isAdmin && (
-                    /* Who the customer IS, from User Management — the master
-                       name, then the company when it differs, then the
-                       registered location and phone. Stacked in one cell rather
-                       than spread over three columns: the table already carries
-                       six, and a booking list that scrolls sideways is worse
-                       than a two-line cell. */
-                    <td className="px-5 py-4 max-w-[260px]">
-                      <div className="font-bold text-slate-700 truncate" title={order.customer}>
-                        {order.customer}
+                    /* WHO the customer is. Previously this cell stacked the name
+                       over the company to save a column, on the reasoning that a
+                       booking list which scrolls sideways is worse than a
+                       two-line cell. That is still true in general, but it made
+                       the two facts impossible to scan down and impossible to
+                       tell apart when one was missing - which is exactly the
+                       complaint. They are now separate columns, and the
+                       location/phone line stays here under the name it belongs
+                       to. The table's own `overflow-x-auto` covers narrow
+                       screens. */
+                    <td className="px-5 py-4 max-w-[220px]">
+                      <div
+                        className="font-bold text-slate-700 truncate"
+                        title={order.customerName || 'No customer name on the master record'}
+                      >
+                        {order.customerName || <span className="font-normal text-slate-400">—</span>}
                       </div>
-                      {order.customerCompany && order.customerCompany !== order.customer && (
-                        <div className="text-[11px] text-slate-500 truncate" title={order.customerCompany}>
-                          {order.customerCompany}
-                        </div>
-                      )}
                       {(order.customerLocation || order.customerPhone) && (
                         <div
                           className="text-[11px] text-slate-400 truncate flex items-center gap-1.5"
@@ -245,6 +248,17 @@ export const OrderHistoryTable = () => {
                           )}
                         </div>
                       )}
+                    </td>
+                  )}
+                  {isAdmin && (
+                    /* Kept as its own column, per the requirement. Shown even
+                       when it matches the customer name: a blank here would
+                       read as "no company recorded" rather than "same as the
+                       name", and the admin cannot tell those apart. */
+                    <td className="px-5 py-4 max-w-[200px]">
+                      <div className="text-slate-600 truncate" title={order.customerCompany || ''}>
+                        {order.customerCompany || <span className="text-slate-400">—</span>}
+                      </div>
                     </td>
                   )}
                   <td className="px-5 py-4 font-medium text-slate-600">
@@ -293,7 +307,7 @@ export const OrderHistoryTable = () => {
             ) : (
               <tr>
                 <td
-                  colSpan={isAdmin ? 7 : 6}
+                  colSpan={isAdmin ? 8 : 6}
                   className="px-5 py-10 text-center text-slate-400"
                 >
                   No bookings found matching your criteria.

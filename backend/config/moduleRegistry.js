@@ -551,6 +551,92 @@ export const MODULES = [
     ],
   },
 
+  /**
+   * FMS — Fulfilment Management System. O2D is its first workflow.
+   *
+   * ⚠ THE KEY IS STILL `o2d`, AND DELIBERATELY SO.
+   *
+   * §1 renames the section to FMS, and what a rename may safely move is the
+   * LABEL and the PATH. The key must not move: it is the identity that
+   * `requirePortalModule('o2d')` fences on, that `view_o2d` and its siblings are
+   * named after, and — the part that cannot be fixed by a find-and-replace —
+   * that is already written into the `roles` rows of a live shared database.
+   * Renaming it would silently revoke FMS from every role that holds it, which
+   * presents as "the menu is empty" rather than as an error.
+   *
+   * So: FMS is what people read, `o2d` is what the system checks. The one place
+   * that must not drift is this file, which is why both appear here together.
+   *
+   * Unlike the `hrms` block above, these cells DO carry paths: FMS has no
+   * navigation of its own, so the registry is what puts it in the sidebar. The
+   * HRMS cells are grant-only precisely because HRMS draws its own menu.
+   *
+   * Employee-domain only. The module's actors are internal staff and its data is
+   * its own; nothing about it belongs in a customer-facing session.
+   */
+  {
+    key: 'o2d',
+    portals: [PORTALS.EMPLOYEE],
+    label: 'FMS',
+    description: 'Fulfilment Management System — the twelve-stage O2D workflow, its tasks and its analytics.',
+    icon: 'Truck',
+    order: 25,
+    submodules: [
+      {
+        key: 'tasks',
+        label: 'My Tasks',
+        path: '/fms/o2d/tasks',
+        icon: 'ListChecks',
+        // Everyone who can see O2D has a task inbox; it shows only what their
+        // own role owns, which the query enforces rather than the permission.
+        actions: { view: ['view_o2d'] },
+      },
+      {
+        key: 'orders',
+        label: 'Order Tracker',
+        path: '/fms/o2d/orders',
+        icon: 'LayoutGrid',
+        actions: {
+          view: ['view_o2d'],
+          create: ['create_o2d_order'],
+          // "Edit" here is completing a stage — the only way an order moves.
+          edit: ['work_o2d_stage'],
+          // Cancel / void. Not a database delete: §29 keeps the record.
+          delete: ['exit_o2d'],
+          // Hold, resume, proceed-anyway, out-of-order completion.
+          approve: ['override_o2d'],
+        },
+      },
+      {
+        key: 'hold',
+        label: 'Hold & Resume',
+        path: null,
+        hidden: true,
+        // A capability rather than a screen: holding happens from Order 360.
+        actions: { edit: ['hold_o2d'] },
+      },
+      {
+        key: 'analytics',
+        label: 'Delay Analytics',
+        path: '/fms/o2d/analytics',
+        icon: 'BarChart3',
+        actions: { view: ['view_o2d_analytics'] },
+      },
+      {
+        key: 'masters',
+        label: 'FMS Masters',
+        path: '/fms/o2d/masters',
+        icon: 'Settings',
+        // §37: SLA, calendar and escalation configuration, editable without a
+        // deploy. Its own cell so it can be granted apart from working orders.
+        actions: {
+          view: ['manage_o2d_masters'],
+          edit: ['manage_o2d_masters'],
+        },
+      },
+    ],
+  },
+
   {
     key: 'administration',
     portals: [PORTALS.CUSTOMER, PORTALS.EMPLOYEE],

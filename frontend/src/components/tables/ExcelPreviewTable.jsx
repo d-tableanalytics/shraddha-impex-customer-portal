@@ -50,8 +50,16 @@ export const ExcelPreviewTable = ({
                 </th>
               )}
               <th className="px-4 py-3">Row</th>
-              <th className="px-4 py-3">SKU Code</th>
-              {showMsilCode && <th className="px-4 py-3">MSIL Code</th>}
+              {/* ── Identifier column widths ─────────────────────────────
+                  SKU and MSIL are what the customer re-checks against their
+                  own list before importing, and both inputs were 96px wide -
+                  narrow enough to hide the end of a long code while still
+                  looking like a filled-in field. The width is set once on the
+                  column so the inputs below can simply fill it, and the table's
+                  existing `overflow-x-auto` absorbs the extra width on a narrow
+                  screen rather than squeezing the codes again. */}
+              <th className="px-4 py-3 w-[200px]">SKU Code</th>
+              {showMsilCode && <th className="px-4 py-3 w-[190px]">MSIL Code</th>}
               <th className="px-4 py-3">Product Info</th>
               <th className="px-4 py-3 text-center">Avail Stock</th>
               <th className="px-4 py-3 text-center">Req Qty</th>
@@ -86,13 +94,20 @@ export const ExcelPreviewTable = ({
                       {row.originalRowNumber}
                     </td>
                     <td className="px-4 py-3">
+                      {/* `title` carries the whole value for a hover, because an
+                          input cannot wrap the way a read-only cell can - it can
+                          only scroll, and only once focused. Monospace with
+                          tabular figures so two codes differing in one character
+                          line up when read down the column, which is what makes
+                          a mismatch visible rather than merely present. */}
                       <input
                         type="text"
                         value={row.skuCode || ""}
+                        title={row.skuCode || ""}
                         onChange={(e) =>
                           onUpdateRow(row.id, { skuCode: e.target.value })
                         }
-                        className="w-24 px-2 py-1 text-sm font-bold border border-slate-300 rounded outline-none focus:border-primary-500 bg-white"
+                        className="w-full min-w-0 px-2 py-1 text-sm font-bold font-mono tabular-nums tracking-tight border border-slate-300 rounded outline-none focus:border-primary-500 bg-white"
                       />
                     </td>
                     {showMsilCode && (
@@ -100,11 +115,12 @@ export const ExcelPreviewTable = ({
                         <input
                           type="text"
                           value={row.msilCode && row.msilCode !== "-" ? row.msilCode : ""}
+                          title={row.msilCode && row.msilCode !== "-" ? row.msilCode : ""}
                           placeholder="-"
                           onChange={(e) =>
                             onUpdateRow(row.id, { msilCode: e.target.value })
                           }
-                          className="w-24 px-2 py-1 text-sm font-bold border border-slate-300 rounded outline-none focus:border-primary-500 bg-white placeholder:text-slate-400 placeholder:font-normal"
+                          className="w-full min-w-0 px-2 py-1 text-sm font-bold font-mono tabular-nums tracking-tight border border-slate-300 rounded outline-none focus:border-primary-500 bg-white placeholder:text-slate-400 placeholder:font-normal placeholder:font-sans"
                         />
                       </td>
                     )}

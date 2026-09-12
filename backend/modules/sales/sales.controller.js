@@ -20,11 +20,14 @@ import { recordAudit } from '../../utils/auditLog.js';
 import { attachCustomerDetails } from '../../utils/customerContact.js';
 import {
   QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
+  openIndentBySku, openIndentsByOrder,
 } from '../../utils/bookingJourney.js';
 import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 import {
   buildScheduleMailParts, OPEN_BOOKING_STATUSES as SCHEDULABLE_STATUSES,
 } from '../../utils/deliverySchedule.js';
+import { reorderLines, updateDetails } from './bookingEdit.service.js';
+import { FieldValidationError } from '../../utils/bookingFields.js';
 
 /**
  * Sales desk: review confirmed bookings, amend them while the PO is pending,
@@ -238,7 +241,16 @@ export const getBookings = async (req, res, next) => {
     // One lookup for every row on the screen, not one per booking.
     const boxNumbers = await currentBoxNumbers(rows);
     const all = await attachCustomerDetails(
-      [...byBooking.values()].map((b) => shapeBooking(b, boxNumbers, { includePricing: mayPrice(req.user) })),
+      // One indent query for the whole page rather than one per booking - see
+      // openIndentsByOrder.
+      await (async () => {
+        const groups = [...byBooking.values()];
+        const indents = await openIndentsByOrder(groups.map((g) => g[0]?.orderId));
+        return groups.map((b) => shapeBooking(b, boxNumbers, {
+          includePricing: mayPrice(req.user),
+          indentBySku: indents.get(String(b[0]?.orderId)) ?? new Map(),
+        }));
+      })(),
     );
 
     // Counts come from the UNFILTERED set (search still applies) so the tabs
@@ -273,7 +285,10 @@ export const getBookingDetail = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: (await attachCustomerDetails([
-        shapeBooking(rows, await currentBoxNumbers(rows), { includePricing: mayPrice(req.user) }),
+        shapeBooking(rows, await currentBoxNumbers(rows), {
+          includePricing: mayPrice(req.user),
+          indentBySku: await openIndentBySku(rows[0]?.orderId),
+        }),
       ]))[0],
     });
   } catch (error) {
@@ -726,7 +741,10 @@ export const updateBookingItems = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: (await attachCustomerDetails([
-        shapeBooking(updated, await currentBoxNumbers(updated), { includePricing: mayPrice(req.user) }),
+        shapeBooking(updated, await currentBoxNumbers(updated), {
+          includePricing: mayPrice(req.user),
+          indentBySku: await openIndentBySku(updated[0]?.orderId),
+        }),
       ]))[0],
       changes,
     });
@@ -1026,7 +1044,10 @@ export const raisePo = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: (await attachCustomerDetails([
-        shapeBooking(updated, new Map(), { includePricing: mayPrice(req.user) }),
+        shapeBooking(updated, new Map(), {
+          includePricing: mayPrice(req.user),
+          indentBySku: await openIndentBySku(updated[0]?.orderId),
+        }),
       ]))[0],
     });
   } catch (error) {
@@ -1135,7 +1156,10 @@ export const setBookingPricing = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: (await attachCustomerDetails([
-        shapeBooking(updated, await currentBoxNumbers(updated), { includePricing: true }),
+        shapeBooking(updated, await currentBoxNumbers(updated), {
+          includePricing: true,
+          indentBySku: await openIndentBySku(updated[0]?.orderId),
+        }),
       ]))[0],
       pricing: result,
     });
@@ -1144,7 +1168,82 @@ export const setBookingPricing = async (req, res, next) => {
   }
 };
 
+
+
+// ---------------------------------------------------------------------------
+// Line order and header details
+// ---------------------------------------------------------------------------
+
+/**
+ * The rules for both live in `bookingEdit.service.js`, not here.
+ *
+ * This module imports `io` from `server.js`, and `server.js` mounts
+ * `order.routes.js`, which imports back from this module. That cycle makes this
+ * file impossible to import from a test — which is why the existing suites
+ * assert on its SOURCE TEXT rather than calling anything. Keeping the rules in
+ * a module free of that cycle is what lets them be tested by being run.
+ *
+ * What stays here is what a controller should own: the socket broadcast and the
+ * response shape.
+ */
+
+/** Errors from the service already carry `.status`; pass them through unchanged. */
+const sendServiceError = (error, res, next) => {
+  if (error instanceof FieldValidationError) {
+    return res.status(400).json({ success: false, message: error.message, field: error.field });
+  }
+  if (error?.status) {
+    return res.status(error.status).json({ success: false, message: error.message });
+  }
+  return next(error);
+};
+
+/** The booking, shaped exactly as every other sales response shapes it. */
+const respondWithBooking = async (rows, req, res) =>
+  res.status(200).json({
+    success: true,
+    data: (await attachCustomerDetails([
+      shapeBooking(rows, await currentBoxNumbers(rows), {
+        includePricing: mayPrice(req.user),
+        indentBySku: await openIndentBySku(rows[0]?.orderId),
+      }),
+    ]))[0],
+  });
+
+/** PUT /api/sales/bookings/:orderId/line-order */
+export const reorderBookingLines = async (req, res, next) => {
+  try {
+    const { rows, changed } = await reorderLines({
+      orderId: req.params.orderId,
+      lineIds: req.body?.lineIds,
+      actor: req.user,
+      req,
+    });
+    if (changed) io.emit('booking-updated', { orderId: req.params.orderId });
+    return respondWithBooking(rows, req, res);
+  } catch (error) {
+    return sendServiceError(error, res, next);
+  }
+};
+
+/** PATCH /api/sales/bookings/:orderId/details */
+export const updateBookingDetails = async (req, res, next) => {
+  try {
+    const { rows, changes } = await updateDetails({
+      orderId: req.params.orderId,
+      patch: req.body,
+      actor: req.user,
+      req,
+    });
+    if (changes.length) io.emit('booking-updated', { orderId: req.params.orderId });
+    return respondWithBooking(rows, req, res);
+  } catch (error) {
+    return sendServiceError(error, res, next);
+  }
+};
+
 export default {
   getBookings, getBookingDetail, updateBookingItems, raisePo,
+  reorderBookingLines, updateBookingDetails,
   getBookingPricing, setBookingPricing,
 };

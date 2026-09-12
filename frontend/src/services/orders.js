@@ -68,6 +68,25 @@ export const mapOrder = (order) => {
     // Kept separately so a screen can show both when they differ, rather than
     // silently picking one.
     customerCompany: customerProfile?.company || order.company || null,
+    /**
+     * The customer's OWN name, and deliberately never the company.
+     *
+     * `customer` above falls back to `order.company`, which is why Booking
+     * History appeared to show nothing but company names: for any account whose
+     * master record has no Customer Name, the fallback quietly filled the cell
+     * with the company, and the "show the company too" line was then suppressed
+     * for being identical. Two customers at one company were indistinguishable.
+     *
+     * The fallback here is the CONTACT name (`User.user`), not the company -
+     * still a name that identifies the person, which is the whole point of the
+     * column. When neither exists the screen shows a dash, because an honest
+     * blank tells the admin the master record needs filling in and a company
+     * name in a Customer Name column does not.
+     *
+     * User Management labels these exactly: `customerName` is "Customer Name"
+     * (legal / trading name), `user` is "Contact name", `company` is "Company".
+     */
+    customerName: customerProfile?.customerName || customerProfile?.contactName || null,
     // Contact pair for display. The profile is the customer's registered pair;
     // the booking's own snapshot is the fallback and is what a raised PO used.
     customerPhone: customerProfile?.phone || order.phoneNumber || null,

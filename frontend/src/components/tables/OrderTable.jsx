@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Trash2, PackagePlus } from "lucide-react";
 import toast from "react-hot-toast";
 import { Pagination } from "../ui/Pagination";
+import { CodeValue } from "../ui/CodeValue";
 import { usePagination } from "../../hooks/usePagination";
 
 const PAGE_SIZE = 10;
@@ -158,7 +159,7 @@ export const OrderTable = ({ items, onUpdateQty, onRemoveItem, onBulkRemove, onR
                   {/* SKU & Name */}
                   <td className="px-4 py-4">
                     <div className="flex flex-col">
-                      <span className="font-bold text-slate-900 select-all">{item.product.code}</span>
+                      <CodeValue value={item.product.code} className="select-all" />
                       <span className="text-slate-500 text-[11px] font-medium line-clamp-1">{item.product.name}</span>
                     </div>
                   </td>

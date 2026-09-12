@@ -30,6 +30,69 @@ export const QTY_EDIT_ACTIONS = {
   customer: 'Booking Edited (Customer)',
 };
 
+// -- The live indent balance ------------------------------------------------
+
+/** A booking and its indent share a sequence number: BO-2026-001312 -> PI-2026-001312. */
+export const indentIdFor = (orderId) => String(orderId).replace(/^[A-Z]+-/, 'PI-');
+
+/**
+ * Open indent quantity per SKU, for one or many bookings.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE RESERVATION AND NOT `Order.pendingQty`
+ * ---------------------------------------------------------------------------
+ *
+ * `pendingQty` is the remainder FROZEN onto the order row at confirmation. The
+ * reservation is the live balance, and the two diverge the moment stock arrives
+ * and auto-books part of the indent ('Indent Auto-Booked'): the snapshot still
+ * says 20 pcs are outstanding when only 15 are.
+ *
+ * They are also the SAME UNITS - `resItem.quantity = pendingQty` at the split -
+ * so adding a booking's `pendingQty` to its indent would count the shortfall
+ * twice. Only one of them may be used, and the live one is the right one.
+ *
+ * ---------------------------------------------------------------------------
+ * BATCHED ON PURPOSE
+ * ---------------------------------------------------------------------------
+ *
+ * Takes an ARRAY so a list of bookings costs one query rather than one per row.
+ * The sales list renders every pending booking, and a per-booking lookup there
+ * is the classic N+1 that only shows up once the desk has a few hundred.
+ *
+ * @param {string[]} orderIds
+ * @returns {Promise<Map<string, Map<string, number>>>} orderId -> (skuCode -> qty)
+ */
+export const openIndentsByOrder = async (orderIds = []) => {
+  const ids = [...new Set(orderIds.filter(Boolean).map(String))];
+  const out = new Map(ids.map((id) => [id, new Map()]));
+  if (ids.length === 0) return out;
+
+  // Map the indent number back to the booking it belongs to, so one query
+  // serves them all.
+  const bookingByIndent = new Map(ids.map((id) => [indentIdFor(id), id]));
+
+  const rows = await Reservation.find({
+    indentNumber: { $in: [...bookingByIndent.keys()] },
+    // Only what is still outstanding. A Confirmed or Cancelled reservation has
+    // either become stock on the booking or gone away, and counting it would
+    // report units the customer is no longer waiting for.
+    status: { $in: ['Pending', 'Partially Confirmed'] },
+  }).select('indentNumber skuCode quantity').lean();
+
+  for (const r of rows) {
+    const orderId = bookingByIndent.get(r.indentNumber);
+    if (!orderId) continue;
+    const bySku = out.get(orderId);
+    bySku.set(r.skuCode, (bySku.get(r.skuCode) || 0) + (r.quantity || 0));
+  }
+  return out;
+};
+
+/** The single-booking case. */
+export const openIndentBySku = async (orderId) =>
+  (await openIndentsByOrder([orderId])).get(String(orderId)) ?? new Map();
+
+
 // ── Change replay (moved verbatim from sales.controller) ───────────────────
 
 export const buildChangeSummary = async (rows, orderId) => {
@@ -86,19 +149,9 @@ export const buildChangeSummary = async (rows, orderId) => {
     }
   }
 
-  // LIVE indent balance, not the pendingQty frozen on the order row. An indent
-  // shrinks as stock arrives against it ('Indent Auto-Booked'), so the snapshot
-  // would tell the customer 20 pcs are still outstanding when only 15 are.
-  // Scoped to THIS booking's indent — a booking and its indent share a sequence
-  // number and differ only in the prefix.
-  const openIndents = await Reservation.find({
-    indentNumber: String(orderId).replace(/^[A-Z]+-/, 'PI-'),
-    status: { $in: ['Pending', 'Partially Confirmed'] },
-  }).lean();
-  const indentBySku = new Map();
-  for (const r of openIndents) {
-    indentBySku.set(r.skuCode, (indentBySku.get(r.skuCode) || 0) + (r.quantity || 0));
-  }
+  // The LIVE indent balance - see openIndentsByOrder for why the reservation
+  // and not the pendingQty frozen on the order row.
+  const indentBySku = await openIndentBySku(orderId);
 
   const lines = rows.map((r) => {
     const booked = r.confirmedQty || 0;

@@ -11,6 +11,7 @@ import toast from "react-hot-toast";
 
 import { OrderTable } from "../../components/tables/OrderTable";
 import { ProductSearchDropdown } from "../../components/ui";
+import { CodeValue } from "../../components/ui/CodeValue";
 import { Modal } from "../../components/ui/Modal";
 import { Button } from "../../components/ui/Button";
 import { Package, Hash, Tag, MessageSquare, Receipt, ArrowRight, AlertTriangle, Clock, PackageCheck } from "lucide-react";
@@ -243,9 +244,13 @@ export const CustomerOrders = () => {
                     <Hash size={14} className="text-[#1a5b9e]" />
                     <span className="text-[10px] font-bold text-slate-500 tracking-widest uppercase">MSIL Code</span>
                   </div>
-                  <span className={`text-sm font-black ${selectedProduct?.msilCode ? "text-slate-800" : "text-slate-400"}`}>
-                    {selectedProduct ? (selectedProduct.msilCode || "—") : "---"}
-                  </span>
+                  {/* The customer re-checks this against their own paperwork
+                      before booking, so it is shown whole however long it is. */}
+                  {selectedProduct ? (
+                    <CodeValue value={selectedProduct.msilCode} className="text-sm" />
+                  ) : (
+                    <span className="text-sm font-black text-slate-400">---</span>
+                  )}
                 </div>
               )}
 
