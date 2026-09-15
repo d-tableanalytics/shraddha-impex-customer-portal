@@ -173,22 +173,70 @@ export function refreshHashMatches(a, b) {
 }
 
 /**
+ * Is the SPA served from a different site than this API?
+ *
+ * ---------------------------------------------------------------------------
+ * THE SPLIT-HOST DEPLOYMENT, AND WHY THIS CANNOT BE INFERRED
+ * ---------------------------------------------------------------------------
+ *
+ * AD-14 assumed one origin serves both halves, which is true behind the nginx
+ * config in `deploy/` and false the moment the SPA goes to Vercel and the API to
+ * Render: `app.vercel.app` and `api.onrender.com` are different registrable
+ * domains, so every request between them is CROSS-SITE.
+ *
+ * A `SameSite=Strict` cookie is simply not sent on a cross-site request. The
+ * failure is quiet and looks like nothing at all: login succeeds, the app works
+ * for one access-token lifetime, and then every refresh 401s with "No refresh
+ * token" because the browser never attached it. Users describe it as "it logs
+ * me out every fifteen minutes".
+ *
+ * EXPLICIT, not inferred. The API cannot reliably know its own public origin —
+ * behind a proxy it sees an internal host — so comparing it with FRONTEND_URL
+ * would be guesswork that fails open. `SameSite=None` genuinely widens the CSRF
+ * surface, so it should be a decision somebody made, recorded in the
+ * deployment's environment, rather than something a hostname comparison turned
+ * on by accident.
+ */
+const crossSiteCookies = () => process.env.CROSS_SITE_COOKIES === 'true';
+
+/**
  * Cookie options for the refresh token.
  *
  *   httpOnly  JavaScript cannot read it, so XSS cannot exfiltrate it
  *   secure    HTTPS only in production; disabled in development so local
- *             http://localhost still works
- *   sameSite  'strict' - AD-14 keeps everything same-site, so nothing legitimate
- *             is lost. Ports do not affect SameSite, so the dev server on :5173
- *             talking to the API on :5000 still sends it
+ *             http://localhost still works. FORCED ON when cross-site, because
+ *             browsers reject `SameSite=None` without `Secure` outright — the
+ *             pair is not a recommendation, it is a requirement, and getting it
+ *             half-right means the cookie is silently never stored
+ *   sameSite  'strict' when the SPA and the API share a site — AD-14's case,
+ *             and nothing legitimate is lost. Ports do not affect SameSite, so
+ *             the dev server on :5173 talking to the API on :5000 still sends
+ *             it. 'none' only for a split-host deployment; see above
  *   path      scoped to the auth routes: the cookie is not attached to the
  *             hundreds of ordinary API calls that have no use for it
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT `SameSite=None` COSTS, HONESTLY
+ * ---------------------------------------------------------------------------
+ *
+ * A third-party page can cause the browser to POST /auth/refresh with this
+ * cookie attached. It cannot READ the response — CORS allows only the
+ * configured origins — so no token is disclosed. What it can do is rotate the
+ * refresh token; the browser stores the new one from the same response, and the
+ * user's own tabs carry on, with the grace window in `refresh` covering the
+ * race. So the exposure is a nuisance, not a session takeover and not a logout.
+ *
+ * The cost is still real, and the way to avoid paying it is to put both halves
+ * on one registrable domain — `app.example.com` and `api.example.com` are
+ * same-site, and `strict` keeps working. Prefer that when a custom domain
+ * exists; this flag is for when one does not.
  */
 export function refreshCookieOptions() {
+  const crossSite = crossSiteCookies();
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    secure: crossSite || process.env.NODE_ENV === 'production',
+    sameSite: crossSite ? 'none' : 'strict',
     path: '/api/v1/auth',
     maxAge: refreshCookieMaxAgeMs(),
   };

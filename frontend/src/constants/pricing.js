@@ -70,6 +70,14 @@ export const GST_RATE = 0.18;
 export const GST_LABEL = `GST @ ${Math.round(GST_RATE * 1000) / 10}%`;
 
 /**
+ * The rate again, as an exact integer in basis points (18% -> 1800).
+ *
+ * Derived from GST_RATE so the two cannot drift, and used INSTEAD of it for the
+ * arithmetic below. See withGst() for why a decimal rate cannot do this job.
+ */
+const GST_BASIS_POINTS = Math.round(GST_RATE * 10000);
+
+/**
  * A subtotal, its GST and the payable total.
  *
  * GST is rounded to paise BEFORE being added, so the printed grand total is
@@ -79,18 +87,41 @@ export const GST_LABEL = `GST @ ${Math.round(GST_RATE * 1000) / 10}%`;
  * A null subtotal — nothing on this document has a rate — yields nulls rather
  * than zeroes: no tax is due on an amount that does not exist, and every
  * formatter here prints null as an em dash.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS COUNTS IN PAISE INSTEAD OF MULTIPLYING BY 0.18
+ * ---------------------------------------------------------------------------
+ *
+ * It used to read `Math.round(base * GST_RATE * 100) / 100`, and that is wrong
+ * on roughly one subtotal in 260 — always by one paisa, and always UNDER.
+ *
+ * 0.18 is not representable in binary floating point, so a product whose exact
+ * value sits on a half-paisa boundary lands a hair BELOW it and Math.round then
+ * goes down instead of up. On ₹1.25 the exact tax is 0.225, which rounds to
+ * 0.23; the float product is 22.499999999999996, so it rounded to ₹0.22.
+ *
+ * The error is not confined to small amounts — it is just as common on a
+ * ₹1,00,000 order — and because it only ever rounds down it is a systematic
+ * under-statement of tax rather than noise that cancels out.
+ *
+ * So the rate is applied as an exact integer ratio (1800/10000) to an exact
+ * integer number of paise, and the half-up rounding is done with integer
+ * arithmetic that has no fractional part to lose. `base` is already 2-decimal
+ * — asPrice() guarantees it — and positive, so `+ 5000` before the floor is
+ * exactly "round half up".
  */
 export const withGst = (subtotal) => {
   const base = asPrice(subtotal);
   if (base === null) {
     return { subtotal: null, gstRate: GST_RATE, gstAmount: null, grandTotal: null };
   }
-  const gstAmount = Math.round(base * GST_RATE * 100) / 100;
+  const basePaise = Math.round(base * 100);
+  const gstPaise = Math.floor((basePaise * GST_BASIS_POINTS + 5000) / 10000);
   return {
     subtotal: base,
     gstRate: GST_RATE,
-    gstAmount,
-    grandTotal: Math.round((base + gstAmount) * 100) / 100,
+    gstAmount: gstPaise / 100,
+    grandTotal: (basePaise + gstPaise) / 100,
   };
 };
 

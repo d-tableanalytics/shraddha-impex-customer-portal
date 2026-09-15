@@ -170,9 +170,13 @@ export const getPendingReservations = async (req, res, next) => {
       // Read from the user record rather than stamped on the reservation for
       // the same reason attachCustomerDetails() does it on bookings: a detail
       // filled in after the indent was raised still appears on it.
+      // `phone` rides along for the same reason `location` does: Indent History
+      // names the customer the way Booking History does, and that cell carries
+      // the contact pair under the name. Without it the indent table could show
+      // half the pair and the two screens would disagree about the same person.
       .populate(
         'customerId',
-        'user name email company customerCategory customerName shopNumber location',
+        'user name email company customerCategory customerName shopNumber location phone',
       )
       .sort({ updatedAt: -1 });
 

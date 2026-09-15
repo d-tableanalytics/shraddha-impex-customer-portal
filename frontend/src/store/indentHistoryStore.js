@@ -12,7 +12,12 @@ export const INDENT_STATUSES = ["Pending", "Partially Confirmed"];
 // History represents several underlying line items.
 //
 // Rows without an indentNumber are legacy/ungrouped and each stand alone.
-const groupIndents = (items) => {
+//
+// EXPORTED for `indentCustomerName.test.js`. It resolves the Customer Name the
+// way Booking History does, and that resolution has already been got wrong once
+// on the booking side — so it is worth being able to test without standing a
+// zustand store and a fetch up around it.
+export const groupIndents = (items) => {
   const byIndent = new Map();
   const rows = [];
 
@@ -47,8 +52,43 @@ const groupIndents = (items) => {
       date: primary.updatedAt || null,
       // The booking behind this indent, for the export's Booking Date column.
       bookingDate: primary.bookingDate || null,
+      /**
+       * The display name, and what the customer FILTER matches on.
+       *
+       * Left exactly as it was: the toolbar's customer dropdown and the search
+       * box both key on this string, so changing what it resolves to would
+       * silently change which indents a saved filter selects. The columns below
+       * are additive.
+       */
       customer: primary.customer?.name || "—",
       customerProfile: primary.customerProfile || null,
+
+      /**
+       * WHO the customer is, resolved exactly as services/orders.js resolves it
+       * for Booking History.
+       *
+       * The fallback order is copied deliberately, not approximated. That file
+       * writes out at length why `customerName` must never fall back to the
+       * company: for any account whose master record has no Customer Name, a
+       * company fallback quietly fills the cell, the "show the company too"
+       * line is then suppressed for being identical, and two customers at one
+       * company become indistinguishable. Indent History showed precisely that
+       * — its single `customer` string falls back to company and then to the
+       * login email — which is what this splits apart.
+       *
+       * So: the contact name is the fallback here, because it still identifies
+       * a PERSON, and a dash is the answer when neither exists. An honest blank
+       * tells the admin the master record needs filling in; a company name in a
+       * Customer Name column does not.
+       */
+      customerName:
+        primary.customerProfile?.customerName
+        || primary.customerProfile?.contactName
+        || null,
+      /** Kept separate so a screen can show both when they differ. */
+      customerCompany: primary.customerProfile?.company || null,
+      customerLocation: primary.customerProfile?.location || null,
+      customerPhone: primary.customerProfile?.phone || null,
       status: primary.status,
       lines,
       itemCount: lines.length,
@@ -130,6 +170,9 @@ export const useIndentHistoryStore = create((set, get) => ({
                 contactName: c.user || null,
                 shopNumber: c.shopNumber || null,
                 location: c.location || null,
+                // The contact pair Indent History prints under the customer
+                // name, exactly as Booking History does.
+                phone: c.phone || null,
                 customerCategory: c.customerCategory || null,
               }
               : null,

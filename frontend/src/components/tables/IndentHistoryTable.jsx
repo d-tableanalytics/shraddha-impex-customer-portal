@@ -1,4 +1,4 @@
-import { ChevronUp, ChevronDown, Eye, FileDown, FileSpreadsheet, PackageCheck } from "lucide-react";
+import { ChevronUp, ChevronDown, Eye, FileDown, FileSpreadsheet, PackageCheck, MapPin, Phone } from "lucide-react";
 import toast from "react-hot-toast";
 import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
@@ -96,7 +96,7 @@ export const IndentHistoryTable = () => {
     );
   };
 
-  const colCount = isAdmin ? 8 : 7;
+  const colCount = isAdmin ? 9 : 7;
 
   return (
     <div className="flex flex-col gap-4">
@@ -117,7 +117,8 @@ export const IndentHistoryTable = () => {
               </th>
               <th className="px-5 py-3 border-b border-slate-200">Indent No</th>
               <th className="px-5 py-3 border-b border-slate-200">Booking ID</th>
-              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Customer</th>}
+              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Customer Name</th>}
+              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Company Name</th>}
               <th
                 className="px-5 py-3 border-b border-slate-200 cursor-pointer hover:bg-slate-100"
                 onClick={() => handleSort("date")}
@@ -180,11 +181,51 @@ export const IndentHistoryTable = () => {
                     )}
                   </td>
                   {isAdmin && (
-                    <td
-                      className="px-5 py-4 font-bold text-slate-700 truncate max-w-[200px]"
-                      title={indent.customer}
-                    >
-                      {indent.customer}
+                    /* WHO the customer is — the same two columns, in the same
+                       order, that Booking History settled on. This used to be a
+                       single "Customer" cell showing a string that falls back
+                       from the master name to the company and then to the login
+                       email, so an account with no Customer Name on file showed
+                       a company here and there was no way to tell that apart
+                       from a customer who is named after their company. The
+                       table's own `overflow-auto` covers narrow screens. */
+                    <td className="px-5 py-4 max-w-[220px]">
+                      <div
+                        className="font-bold text-slate-700 truncate"
+                        title={indent.customerName || 'No customer name on the master record'}
+                      >
+                        {indent.customerName || <span className="font-normal text-slate-400">—</span>}
+                      </div>
+                      {(indent.customerLocation || indent.customerPhone) && (
+                        <div
+                          className="text-[11px] text-slate-400 truncate flex items-center gap-1.5"
+                          title={[indent.customerLocation, indent.customerPhone].filter(Boolean).join(' · ')}
+                        >
+                          {indent.customerLocation && (
+                            <span className="inline-flex items-center gap-1 min-w-0">
+                              <MapPin size={10} className="shrink-0" />
+                              <span className="truncate">{indent.customerLocation}</span>
+                            </span>
+                          )}
+                          {indent.customerLocation && indent.customerPhone && <span>·</span>}
+                          {indent.customerPhone && (
+                            <span className="inline-flex items-center gap-1 shrink-0">
+                              <Phone size={10} />
+                              {indent.customerPhone}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  )}
+                  {isAdmin && (
+                    /* Shown even when it matches the customer name: a blank here
+                       would read as "no company recorded" rather than "same as
+                       the name", and the admin cannot tell those apart. */
+                    <td className="px-5 py-4 max-w-[200px]">
+                      <div className="text-slate-600 truncate" title={indent.customerCompany || ''}>
+                        {indent.customerCompany || <span className="text-slate-400">—</span>}
+                      </div>
                     </td>
                   )}
                   <td className="px-5 py-4 text-slate-600">

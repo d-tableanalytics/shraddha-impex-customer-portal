@@ -74,6 +74,65 @@ describe("withGst", () => {
   test("the label is derived from the rate, so the two cannot disagree", () => {
     expect(GST_LABEL).toBe(`GST @ ${Math.round(GST_RATE * 1000) / 10}%`);
   });
+
+  /**
+   * The tax is the RIGHT number, not merely a self-consistent one.
+   *
+   * The "add up exactly" test above cannot catch a rounding fault, because it
+   * builds its expectation with the same `Math.round(x * 100) / 100` the
+   * implementation uses — two copies of one formula agree with each other
+   * whether or not the formula is correct. It passed while `withGst` was
+   * under-charging one subtotal in roughly 260.
+   *
+   * So the expectation here is computed a DIFFERENT WAY: in exact integer
+   * paise, where 18% is the integer ratio 1800/10000 and nothing has a binary
+   * fraction to lose. Half-up, which is what a rupee document rounds at.
+   */
+  const exactGstPaise = (rupees) => {
+    const paise = Math.round(rupees * 100);
+    return Math.floor((paise * 1800 + 5000) / 10000);
+  };
+
+  test("₹1.25 — the half-paisa boundary that float rounding gets wrong", () => {
+    // 18% of 1.25 is exactly 0.225, so it rounds UP to 0.23. Computed as
+    // `1.25 * 0.18 * 100` the product is 22.499999999999996 and Math.round
+    // takes it DOWN to 0.22. This is the single case the whole fix is about.
+    expect(withGst(1.25).gstAmount).toBe(0.23);
+    expect(withGst(1.25).grandTotal).toBe(1.48);
+  });
+
+  test("matches exact integer-paise arithmetic across the realistic range", () => {
+    const wrong = [];
+    // Dense through small values, then sparse into order-sized ones. The old
+    // implementation failed 810 of the first band alone.
+    for (let paise = 1; paise <= 200000; paise += 1) {
+      const subtotal = paise / 100;
+      const { gstAmount } = withGst(subtotal);
+      if (Math.round(gstAmount * 100) !== exactGstPaise(subtotal)) wrong.push(subtotal);
+    }
+    for (let paise = 200001; paise <= 20000000; paise += 7919) {
+      const subtotal = paise / 100;
+      const { gstAmount } = withGst(subtotal);
+      if (Math.round(gstAmount * 100) !== exactGstPaise(subtotal)) wrong.push(subtotal);
+    }
+
+    expect(
+      wrong.slice(0, 10),
+      `${wrong.length} subtotal(s) taxed incorrectly, e.g. ${wrong.slice(0, 3).join(", ")}`,
+    ).toEqual([]);
+  });
+
+  test("never rounds the tax DOWN — an error that only ever under-charges", () => {
+    // The old fault was one-directional: it never over-charged, so it could not
+    // be dismissed as noise that averages out. Pinned so a future change to the
+    // rounding cannot quietly reintroduce a systematic under-statement.
+    let under = 0;
+    for (let paise = 1; paise <= 200000; paise += 1) {
+      const subtotal = paise / 100;
+      if (Math.round(withGst(subtotal).gstAmount * 100) < exactGstPaise(subtotal)) under += 1;
+    }
+    expect(under).toBe(0);
+  });
 });
 
 describe("the figure as the tile renders it", () => {
