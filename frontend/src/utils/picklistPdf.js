@@ -225,6 +225,12 @@ export const downloadPicklistPdf = async (docModel) => {
     const moneySpan = labelSpan + 2;            // ...and on through Qty and Rate
     const boxPad = docModel.showBoxNo ? [{ content: "", styles: {} }] : [];
     const GRAND_FILL = [226, 232, 240];
+    // Same two guards the on-screen document applies: an absent or unvalued
+    // indent prints nothing at all, never a row of zeroes.
+    const indent = docModel.totals.indent?.grandTotal != null ? docModel.totals.indent : null;
+    const orderValue = docModel.totals.orderValue?.grandTotal != null
+      ? docModel.totals.orderValue
+      : null;
 
     const foot = [[
       {
@@ -262,6 +268,60 @@ export const downloadPicklistPdf = async (docModel) => {
       ]);
     }
 
+    /*
+     * ── What is still on indent ───────────────────────────────────
+     *
+     * The same four rows the on-screen document prints, in the same order, and
+     * read from the same fields. This file exists to be the PDF of THAT paper -
+     * if the two ever disagree about a figure, the one the customer keeps is
+     * the one that is wrong.
+     *
+     * They sit below the Grand Total and change nothing above it: the document
+     * still charges for what shipped.
+     */
+    if (hasMoney && indent) {
+      foot.push([
+        {
+          content: "Not included above — still on indent",
+          colSpan: moneySpan + 1 + boxPad.length,
+          styles: { halign: "right", fontSize: 6.5, textColor: [100, 116, 139] },
+        },
+      ]);
+      foot.push([
+        {
+          content: `On indent (${indent.quantity} unit${indent.quantity === 1 ? "" : "s"})`,
+          colSpan: moneySpan,
+          styles: { halign: "right" },
+        },
+        { content: money(indent.amount), styles: { halign: "right" } },
+        ...boxPad,
+      ]);
+      foot.push([
+        { content: `${GST_LABEL} on indent`, colSpan: moneySpan, styles: { halign: "right" } },
+        { content: money(indent.gstAmount), styles: { halign: "right" } },
+        ...boxPad,
+      ]);
+      foot.push([
+        { content: "Indent Total", colSpan: moneySpan, styles: { halign: "right", fontStyle: "bold" } },
+        { content: money(indent.grandTotal), styles: { halign: "right", fontStyle: "bold" } },
+        ...boxPad,
+      ]);
+      if (orderValue) {
+        foot.push([
+          {
+            content: "Order Value (booked + indent)",
+            colSpan: moneySpan,
+            styles: { halign: "right", fontStyle: "bold", fillColor: GRAND_FILL },
+          },
+          {
+            content: money(orderValue.grandTotal),
+            styles: { halign: "right", fontStyle: "bold", fillColor: GRAND_FILL },
+          },
+          ...boxPad.map(() => ({ content: "", styles: { fillColor: GRAND_FILL } })),
+        ]);
+      }
+    }
+
     autoTable(pdf, {
       startY: pdf.lastAutoTable.finalY + 4,
       margin: { left: margin, right: margin, bottom: 24 },
@@ -280,7 +340,11 @@ export const downloadPicklistPdf = async (docModel) => {
         pdf.setFont("helvetica", "normal").setFontSize(7).setTextColor(...SLATE);
         pdf.text(
           hasMoney
-            ? `Amounts are in Indian Rupees. ${GST_LABEL} is charged on the subtotal and included in the grand total.`
+            ? `Amounts are in Indian Rupees. ${GST_LABEL} is charged on the subtotal and included in the grand total.${
+              indent
+                ? " Anything still on indent is listed below it and is invoiced when it is supplied."
+                : ""
+            }`
             : "No pricing has been applied to this order.",
           margin, pageH - 11,
         );

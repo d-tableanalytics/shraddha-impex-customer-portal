@@ -1,4 +1,4 @@
-import { asPrice, lineAmount, labelForPriceType, withGst } from "../constants/pricing";
+import { asPrice, lineAmount, labelForPriceType, withGstParts } from "../constants/pricing";
 import { isMsilCustomer } from "./moq";
 
 /**
@@ -50,19 +50,49 @@ const poRaised = (booking) =>
   Boolean(booking?.locked)
   && asText(booking?.poNumber) !== null;
 
-/** Rows to a document. Shared tail of both adapters. */
+/**
+ * Rows to a document. Shared tail of both adapters.
+ *
+ * ---------------------------------------------------------------------------
+ * THE DOCUMENT'S OWN TOTAL IS THE BOOKED STOCK, AND ONLY THAT
+ * ---------------------------------------------------------------------------
+ *
+ * `amount`, `gstAmount` and `grandTotal` value `confirmedQty` alone. That is
+ * what the purchase order charges for: an indent remainder has not shipped and
+ * does not belong on the document the customer pays against. Widening them
+ * would silently re-value every PO ever raised.
+ *
+ * The indent is reported BESIDE them instead, as its own subtotal, its own GST
+ * and its own total, so the paper can be reconciled line for line against the
+ * desk's Total Amount card without either figure moving.
+ *
+ * `indentValue` is the booking's OPEN indent, taken from the server. It is not
+ * derived from the lines' `pendingQty`, and that is deliberate: `pendingQty` is
+ * the shortfall frozen onto the order row at confirmation, so it drifts as
+ * stock arrives and auto-books, and a SKU that could not be fulfilled at all
+ * never got an order row to carry it. Summing the rows would quietly under-count
+ * exactly the orders this breakdown exists to check.
+ *
+ * Absent (`null`) means "not valued", which prints nothing at all - never a
+ * zero, which would read as "there is no indent".
+ */
 const assemble = ({
   audience, orderId, poNumber, poDate, date, status, customer,
   lines, priceTypeLabel, paymentTerm, promiseDate, showBoxNo, showMsilCode,
+  indentValue = null,
 }) => {
   const totalQuantity = lines.reduce((n, l) => n + (l.quantity || 0), 0);
   const priced = lines.filter((l) => l.unitPrice !== null);
   const totalAmount = priced.length
     ? Math.round(lines.reduce((n, l) => n + (l.amount || 0), 0) * 100) / 100
     : null;
-  // Tax on the subtotal, not per line — see the note on withGst(). An unpriced
+
+  // Tax on the subtotal, not per line — see the note on withGst(). Each side is
+  // taxed on its own, because the two are invoiced separately. An unpriced
   // document gets nulls, not zeroes, and prints no tax section at all.
-  const { gstRate, gstAmount, grandTotal } = withGst(totalAmount);
+  const money = withGstParts({ booked: totalAmount, indent: indentValue?.amount ?? null });
+  const { gstRate } = money.booked;
+  const { gstAmount, grandTotal } = money.booked;
 
   return {
     audience,
@@ -81,14 +111,30 @@ const assemble = ({
     lines: lines.map((l, i) => ({ ...l, sr: i + 1 })),
     totals: {
       quantity: totalQuantity,
-      // `amount` is the SUBTOTAL — goods only, before tax. It keeps its name
-      // because that is what every caller already reads it as.
+      // `amount` is the SUBTOTAL — booked goods only, before tax. It keeps its
+      // name because that is what every caller already reads it as.
       amount: totalAmount,
       gstRate,
       gstAmount,
       grandTotal,
       pricedLines: priced.length,
       unpricedLines: lines.length - priced.length,
+
+      // ── Cross-verification against the desk's Total Amount card ────────
+      // Null when the booking has no open indent, or has one that could not be
+      // valued. Never zero — see the note above.
+      indent: indentValue
+        ? {
+          quantity: indentValue.quantity ?? 0,
+          amount: money.indent.subtotal,
+          gstAmount: money.indent.gstAmount,
+          grandTotal: money.indent.grandTotal,
+          unpricedSkus: indentValue.unpricedSkus ?? 0,
+        }
+        : null,
+      // Booked + indent, with the two taxes added rather than re-derived, so
+      // this equals the card exactly. Null when neither side could be valued.
+      orderValue: money.orderValue.subtotal === null ? null : money.orderValue,
     },
   };
 };
@@ -175,6 +221,9 @@ export const picklistFromSalesBooking = (booking, { showBoxNo = false } = {}) =>
     // and a Sales user's own category would put an MSIL column on a document
     // for a customer who has nothing to do with MSIL.
     showMsilCode: isMsilCustomer(profile),
+    // The same `value.indent` the Total Amount card reads, so the two cannot
+    // disagree about what is outstanding.
+    indentValue: booking.value?.indent ?? null,
   });
 };
 
@@ -237,6 +286,10 @@ export const picklistFromCustomerOrder = (order) => {
     promiseDate: order.promiseDate || order.supplyByDate || null,
     showBoxNo: false,
     showMsilCode: isMsilCustomer(order.customerProfile),
+    // Served by /orders only once the PO is raised and only on the reader's own
+    // booking — the same gate the unit rate passes through. Absent otherwise,
+    // and an absent indent prints nothing rather than a zero.
+    indentValue: order.value?.indent ?? null,
   });
 };
 

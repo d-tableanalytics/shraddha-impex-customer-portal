@@ -125,6 +125,62 @@ export const withGst = (subtotal) => {
   };
 };
 
+/**
+ * Exact sum of rupee figures that are already 2-decimal.
+ *
+ * Counts in paise for the same reason withGst() does - adding floats and
+ * rounding afterwards is usually right and occasionally a paisa out, and these
+ * figures sit side by side on a document where the parts must equal the whole.
+ *
+ * A null is ABSENT, not zero: summing nothing at all gives null, so a booking
+ * with neither side valued keeps printing an em dash instead of gaining a
+ * confident ₹0.00.
+ */
+export const sumRupees = (...values) => {
+  const present = values.map(asPrice).filter((v) => v !== null);
+  if (!present.length) return null;
+  return present.reduce((paise, v) => paise + Math.round(v * 100), 0) / 100;
+};
+
+/**
+ * The booked side, the indent side, and the order as a whole.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY GST IS TAKEN ON EACH SIDE SEPARATELY RATHER THAN ON THE COMBINED SUBTOTAL
+ * ---------------------------------------------------------------------------
+ *
+ * These two are invoiced at different times - the booked stock ships now, the
+ * indent when it arrives - so each carries its own tax and its own rounding.
+ * Taxing the combined subtotal instead would produce a figure that is up to a
+ * paisa away from the two invoices that eventually settle it, and would leave
+ * the desk's Total Amount card unable to reconcile against the picklist's two
+ * halves, which is the whole reason the breakdown exists.
+ *
+ * So the order total is the SUM OF THE PARTS, and every figure on both
+ * documents adds up against every other.
+ *
+ * Either side may be null - an unpriced booking, or one with no indent - and a
+ * null side contributes nothing rather than zero.
+ */
+export const withGstParts = ({ booked = null, indent = null } = {}) => {
+  const bookedMoney = withGst(booked);
+  const indentMoney = withGst(indent);
+
+  const subtotal = sumRupees(bookedMoney.subtotal, indentMoney.subtotal);
+  return {
+    booked: bookedMoney,
+    indent: indentMoney,
+    orderValue:
+      subtotal === null
+        ? { subtotal: null, gstAmount: null, grandTotal: null }
+        : {
+          subtotal,
+          gstAmount: sumRupees(bookedMoney.gstAmount, indentMoney.gstAmount),
+          grandTotal: sumRupees(bookedMoney.grandTotal, indentMoney.grandTotal),
+        },
+  };
+};
+
 /** Rate x quantity, or null when there is no rate. */
 export const lineAmount = (unitPrice, quantity) => {
   const price = asPrice(unitPrice);
@@ -143,4 +199,6 @@ export default {
   GST_RATE,
   GST_LABEL,
   withGst,
+  withGstParts,
+  sumRupees,
 };

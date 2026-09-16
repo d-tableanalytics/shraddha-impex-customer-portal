@@ -118,6 +118,13 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
   if (!doc) return null;
 
   const money = doc.totals.pricedLines > 0;
+  /**
+   * The indent block renders only when there IS one and it could be valued. A
+   * booking with nothing outstanding gets no rows at all rather than a run of
+   * zeroes, which would read as a statement that the indent is worth nothing.
+   */
+  const indent = doc.totals.indent?.grandTotal != null ? doc.totals.indent : null;
+  const orderValue = doc.totals.orderValue?.grandTotal != null ? doc.totals.orderValue : null;
   // Cells to the left of Qty, and to the left of the amount — the two spans the
   // totals rows need. Counted, because the MSIL code column is optional.
   const labelSpan = 2 + (doc.showMsilCode ? 1 : 0);
@@ -387,6 +394,74 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
                     {doc.showBoxNo && <td className="px-2 py-2 border border-slate-300" />}
                   </tr>
                 )}
+
+                {/*
+                  ── What is still on indent ────────────────────────────────
+
+                  BELOW the Grand Total, and deliberately so. The total above is
+                  what this document charges for, and nothing here changes it.
+                  These rows report the remainder so the paper can be reconciled
+                  against the sales desk's Total Amount card without anyone
+                  having to add two figures up by hand.
+
+                  Its own GST line, because the indent is invoiced separately
+                  when the stock lands and each invoice rounds its own tax.
+                */}
+                {money && indent && (
+                  <>
+                    <tr className="text-xs">
+                      <td
+                        colSpan={moneySpan}
+                        className="px-2 pt-3 pb-1 text-right text-[10px] font-bold uppercase tracking-wider text-slate-500"
+                      >
+                        Not included above — still on indent
+                      </td>
+                      <td />
+                      {doc.showBoxNo && <td />}
+                    </tr>
+                    <tr className="bg-slate-50 text-xs">
+                      <td colSpan={moneySpan} className="px-2 py-2 border border-slate-300 text-right font-bold text-slate-600">
+                        On indent
+                        <span className="ml-1 font-semibold text-slate-500">
+                          ({indent.quantity} unit{indent.quantity === 1 ? "" : "s"})
+                        </span>
+                      </td>
+                      <td className="px-2 py-2 border border-slate-300 text-right font-bold text-slate-800">
+                        {formatRupees(indent.amount)}
+                      </td>
+                      {doc.showBoxNo && <td className="px-2 py-2 border border-slate-300" />}
+                    </tr>
+                    <tr className="bg-slate-50 text-xs">
+                      <td colSpan={moneySpan} className="px-2 py-2 border border-slate-300 text-right font-bold text-slate-600">
+                        {GST_LABEL} on indent
+                      </td>
+                      <td className="px-2 py-2 border border-slate-300 text-right font-bold text-slate-800">
+                        {formatRupees(indent.gstAmount)}
+                      </td>
+                      {doc.showBoxNo && <td className="px-2 py-2 border border-slate-300" />}
+                    </tr>
+                    <tr className="bg-slate-50 text-xs">
+                      <td colSpan={moneySpan} className="px-2 py-2 border border-slate-300 text-right font-bold text-slate-600">
+                        Indent Total
+                      </td>
+                      <td className="px-2 py-2 border border-slate-300 text-right font-black text-slate-900">
+                        {formatRupees(indent.grandTotal)}
+                      </td>
+                      {doc.showBoxNo && <td className="px-2 py-2 border border-slate-300" />}
+                    </tr>
+                    {orderValue && (
+                      <tr className="bg-slate-200 text-xs">
+                        <td colSpan={moneySpan} className="px-2 py-2 border border-slate-300 text-right font-black text-slate-800">
+                          Order Value (booked + indent)
+                        </td>
+                        <td className="px-2 py-2 border border-slate-300 text-right font-black text-slate-900">
+                          {formatRupees(orderValue.grandTotal)}
+                        </td>
+                        {doc.showBoxNo && <td className="px-2 py-2 border border-slate-300" />}
+                      </tr>
+                    )}
+                  </>
+                )}
               </tfoot>
             </table>
 
@@ -407,7 +482,11 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
 
             <p className="mt-4 pt-3 border-t border-slate-200 text-[10px] text-slate-400 leading-relaxed">
               {money
-                ? `Amounts are in Indian Rupees. ${GST_LABEL} is charged on the subtotal and included in the grand total.`
+                ? `Amounts are in Indian Rupees. ${GST_LABEL} is charged on the subtotal and included in the grand total.${
+                  indent
+                    ? " The Grand Total covers the goods supplied against this order; anything still on indent is listed below it and is invoiced when it is supplied."
+                    : ""
+                }`
                 : "This document lists the items on the order. No pricing has been applied to it."}
               {" "}Generated from the Shraddha Impex customer portal on {fmtDate(new Date())}.
             </p>

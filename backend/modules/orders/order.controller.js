@@ -14,6 +14,7 @@ import { isBookingLocked, canOverrideLock } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS, isSuperAdmin} from '../../middlewares/rbac.js';
 import { withBoxNoVisibility } from '../../utils/boxNoVisibility.js';
 import { withPricingVisibility } from '../../utils/pricingVisibility.js';
+import { attachBookingValues } from '../../utils/bookingIndentValue.js';
 import { attachCustomerDetails } from '../../utils/customerContact.js';
 import { findProductBySku, consumeStock, releaseStock } from '../../utils/stockLedger.js';
 import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
@@ -109,9 +110,12 @@ export const getOrders = async (req, res, next) => {
     // bookings, and a hidden column is still in the response.
     // Box number and pricing are both stripped for readers who may not have
     // them, in that order, so a customer's own bookings arrive without either.
+    const visible = withPricingVisibility(withBoxNoVisibility(orders, req.user), req.user);
     res.status(200).json({
       success: true,
-      data: withPricingVisibility(withBoxNoVisibility(orders, req.user), req.user),
+      // `orders` rather than `visible` as the source: eligibility is decided
+      // from the UNREDACTED rows, which still carry `user` and the PO stamp.
+      data: await attachBookingValues(visible, req.user, orders),
     });
   } catch (error) {
     next(error);

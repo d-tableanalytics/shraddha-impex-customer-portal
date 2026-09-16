@@ -100,11 +100,63 @@ box numbers, the customer's carries neither.
 It is on screen and as a PDF, from the Sales Desk drawer (Picklist) and from the
 customer's Booking History drawer (PO Preview, once the PO exists).
 
-**There is no GST column.** The reference invoice this is modelled on has one,
-and the portal holds no tax rate for any SKU — `gstCode` on an order is the
-customer's GSTIN, an identifier rather than a rate. A tax column computed from a
-rate nobody entered would be a number on a commercial document that no data
-supports, so the document prices the goods and says the amounts exclude tax.
+### GST
+
+**There is no GST COLUMN, but there is a GST LINE.** The portal holds no tax
+rate for any SKU — there is no HSN code, and `gstCode` on an order is the
+customer's GSTIN, an identifier rather than a rate — so a per-line tax column
+would be a number no data supports. Instead one rate applies to the whole
+document, defined once in `frontend/src/constants/pricing.js`:
+
+| | |
+|---|---|
+| Rate | 18%, flat, every SKU |
+| Applied to | the subtotal, not per line |
+| Rounding | half-up to the paisa, in integer arithmetic |
+| Computed in | `withGst()` / `withGstParts()` — the only place |
+
+The rounding is done by counting paise rather than multiplying by `0.18`,
+because 0.18 has no exact binary representation: the old float version rounded
+DOWN on any subtotal whose exact tax landed on a half-paisa boundary, which was
+about one subtotal in 260 and always in the customer's favour. `gst.test.js`
+checks the result against exact integer arithmetic rather than against the same
+formula.
+
+The backend computes no GST at all. It returns subtotals; the rate and the
+rounding live on one side so the screen, the print and the PDF cannot quote
+three different numbers.
+
+### Bookings and indents on the document
+
+A booking splits into what stock covered and what is still on indent, and the
+two are priced separately because they are INVOICED separately — the booked
+stock ships now, the indent when it arrives.
+
+| Figure | What it values |
+|---|---|
+| Subtotal / GST / **Grand Total** | booked stock only — what this PO charges for |
+| On indent / GST / **Indent Total** | the open indent, reported below the Grand Total |
+| **Order Value** | the two added, tax included |
+
+The Grand Total never includes the indent. Widening it would silently re-value
+every PO ever raised, and the customer would be asked to pay for goods that have
+not shipped.
+
+Each side carries its own GST, added afterwards rather than taken on the
+combined subtotal. That is what lets the Sales Desk's **Total Amount** card and
+the picklist's two halves reconcile to the paisa; taxing the combined figure
+once would leave them up to a paisa apart with nothing to explain it.
+
+**The indent is never summed from the lines.** `pendingQty` on an order row is
+the shortfall frozen at confirmation — it drifts as stock arrives and
+auto-books, and a SKU that could not be fulfilled at all never got an order row
+to carry it. Both documents read `value.indent` from `valueBooking()`, which is
+the live reservation balance.
+
+The indent value is a price, so it passes the same gate as the rate: a
+`view_pricing` reader, or the owner of a booking whose PO has been raised.
+`utils/bookingIndentValue.js` attaches it, and it is absent — not zero — for
+anyone else.
 
 The company letterhead comes from `frontend/src/constants/company.js`. Its postal
 address is **blank** — the portal has never stored one, and it is not worth

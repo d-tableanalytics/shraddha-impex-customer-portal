@@ -19,7 +19,7 @@ import { PoConfirmModal } from "../modal/PoConfirmModal";
 import { PicklistPreview } from "../pricing/PicklistPreview";
 import { PriceTypeSelector } from "../pricing/PriceTypeSelector";
 import { picklistFromSalesBooking } from "../../utils/picklistDocument";
-import { formatRupees, withGst, GST_LABEL } from "../../constants/pricing";
+import { formatRupees, withGstParts, GST_LABEL } from "../../constants/pricing";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
 //
@@ -85,12 +85,23 @@ export const SalesBookingDrawer = () => {
   /**
    * The FULL order value - booked plus indent - with GST.
    *
-   * `value.subtotal` comes from valueBooking() on the server, which has to
-   * find a rate for each indent SKU; `withGst` is the same helper the
-   * picklist and the PDF use, so the three cannot quote different tax.
+   * `value.booking` and `value.indent` come from valueBooking() on the server,
+   * which has to find a rate for each indent SKU. `withGstParts` is the same
+   * helper the picklist and the PDF use, so the three cannot quote different
+   * tax.
+   *
+   * TAXED PER SIDE, THEN ADDED - not taxed on the combined subtotal. The two
+   * are invoiced at different times, so each carries its own rounding; and it
+   * is what lets the picklist print the two halves separately and still add up
+   * to the figure on this card. Rounding the combined subtotal once would leave
+   * the two documents a paisa apart and nothing to explain it with.
    */
   const value = selected.value || null;
-  const money = withGst(value?.subtotal ?? null);
+  const money = withGstParts({
+    booked: value?.booking?.amount ?? null,
+    indent: value?.indent?.amount ?? null,
+  });
+  const orderValue = money.orderValue;
   const isOverride = locked && hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
   /**
    * Correcting submitted details is Admin-only, and the server enforces it with
@@ -690,7 +701,7 @@ export const SalesBookingDrawer = () => {
                   </div>
                 </div>
 
-                {money.grandTotal == null ? (
+                {orderValue.grandTotal == null ? (
                   <div className="px-5 py-6 text-center">
                     <p className="text-sm font-semibold text-slate-500">
                       No rate on this booking yet.
@@ -735,20 +746,20 @@ export const SalesBookingDrawer = () => {
                       <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-slate-100 pt-2">
                         <dt className="text-slate-600">Subtotal</dt>
                         <dd className="font-semibold text-slate-800 tabular-nums">
-                          {formatRupees(money.subtotal)}
+                          {formatRupees(orderValue.subtotal)}
                         </dd>
                       </div>
                       <div className="flex items-baseline justify-between gap-3">
                         <dt className="text-slate-600">{GST_LABEL}</dt>
                         <dd className="font-semibold text-slate-800 tabular-nums">
-                          {formatRupees(money.gstAmount)}
+                          {formatRupees(orderValue.gstAmount)}
                         </dd>
                       </div>
 
                       <div className="mt-1 flex items-baseline justify-between gap-3 border-t-2 border-slate-200 pt-2">
                         <dt className="text-sm font-bold text-slate-900">Total payable</dt>
                         <dd className="text-lg font-black text-slate-900 tabular-nums">
-                          {formatRupees(money.grandTotal)}
+                          {formatRupees(orderValue.grandTotal)}
                         </dd>
                       </div>
                     </dl>

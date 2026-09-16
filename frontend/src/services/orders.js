@@ -190,6 +190,23 @@ const groupIntoBookings = (rawOrders) => {
       items,
       lineItems,
       pricing,
+      /**
+       * The booking's OPEN INDENT and what it is worth, when the server sent it.
+       *
+       * Stamped on every row of a booking by the orders endpoint, so it is read
+       * off whichever row is to hand. It arrives only for a reader entitled to
+       * see money on this booking - the same gate the unit rate passes - so an
+       * absent `value` is the normal case rather than a failure, and the PO
+       * preview simply prints no indent section.
+       *
+       * NOT the same thing as `totalIndentQuantity` below. That is the sum of
+       * each row's `pendingQty`, the shortfall FROZEN at confirmation, which
+       * drifts as stock arrives and misses any SKU that never got a row. This
+       * is the live reservation balance, and it is what the sales desk's Total
+       * Amount card reads - which is the point, because the two documents are
+       * meant to reconcile.
+       */
+      value: rows.find((r) => r.value)?.value ?? null,
       totalQuantity,
       // What the CUSTOMER originally asked for across the booking, indent
       // included. Distinct from totalQuantity, which is what the booking holds
