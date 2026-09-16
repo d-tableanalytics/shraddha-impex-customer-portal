@@ -9,6 +9,20 @@
  *   AD-1  Single tenant, so there is no organisation dimension. `org` scope means
  *         "the whole company".
  *
+ * One module key has been ADDED since: `academy` (SI Academy, internal
+ * learning), taking the count to 32. It is additive in the strict sense - no
+ * existing key, action, scope or role grant changed - which is what makes it
+ * safe to land in a file both portals must hold byte-identical.
+ *
+ * SHARED-CONTRACT.md §2 is worth re-reading before touching this file again.
+ * The failure it warns about is a key being REMOVED, because `Role.grants` is
+ * recompiled from config/moduleRegistry.js on every role save. Nothing in THIS
+ * file is ever written back to the `roles` collection, and the registry's
+ * `hrms` block is grant-only (`path: null`) because HRMS draws its own menu -
+ * so the Customer Portal needs no matching behaviour to keep working; it simply
+ * never evaluates the key. It carries the same bytes regardless, because
+ * identical-or-drifted is the only state the verifier can check.
+ *
  * This file is dependency-free on purpose (see ../README.md).
  */
 
@@ -27,6 +41,17 @@ export const HRMS_MODULES = Object.freeze({
   DOCUMENTS: 'documents',
   ENGAGE: 'engage',
   PERFORMANCE: 'performance',
+  /**
+   * SI Academy - internal learning: paths, courses, lessons, assessments and
+   * certificates.
+   *
+   * Beside PERFORMANCE rather than under ONBOARDING because the module outlives
+   * onboarding: a compliance refresher reassigned every year to existing staff
+   * is the same machinery. Nesting it would also have made
+   * `onboarding:view:self` - which every employee already holds - the grant
+   * that silently opens a whole second module.
+   */
+  ACADEMY: 'academy',
   HIRING: 'hiring',
   ASSETS: 'assets',
   HELPDESK: 'helpdesk',

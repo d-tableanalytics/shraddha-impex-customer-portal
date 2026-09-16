@@ -92,6 +92,57 @@ export const openIndentsByOrder = async (orderIds = []) => {
 export const openIndentBySku = async (orderId) =>
   (await openIndentsByOrder([orderId])).get(String(orderId)) ?? new Map();
 
+/**
+ * The open indent for ONE booking, as lines.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY LINES AND NOT THE SUM openIndentsByOrder ALREADY GIVES
+ * ---------------------------------------------------------------------------
+ * The desk cross-checks a booking against the customer's paper PO. The indent
+ * is the half of that with nothing to look at: a line stock could not cover AT
+ * ALL never became an order row — the confirmation only pushes one when
+ * `confirmedQty > 0` — so it exists solely as a reservation and appears nowhere
+ * in Booking Items. A summed quantity says how much is outstanding; only the
+ * lines say WHICH SKUs, which is what makes the two documents comparable.
+ *
+ * Same filter as `openIndentsByOrder`, and for the same reason: a Confirmed or
+ * Cancelled reservation has either become stock on the booking or gone away,
+ * and listing it would show the customer units they are no longer waiting for.
+ *
+ * Rows are the LIVE balance, never `Order.pendingQty` — see the note on that
+ * function. The two diverge the moment stock arrives and auto-books part of the
+ * indent, and this section exists precisely to expose that kind of mismatch.
+ *
+ * DETAIL ONLY. The bookings LIST does not call this: it needs a total per
+ * booking, which the batched `openIndentsByOrder` already gives it in one
+ * query, and fetching every reservation line for a whole page would be a
+ * query per row for something no list column shows.
+ */
+export const openIndentLinesFor = async (orderId) => {
+  const indentNumber = indentIdFor(orderId);
+
+  const rows = await Reservation.find({
+    indentNumber,
+    status: { $in: ['Pending', 'Partially Confirmed'] },
+  })
+    .select('reservationId skuCode msilCode quantity status reservationDate expiryDate')
+    .sort({ skuCode: 1 })
+    .lean();
+
+  return {
+    indentNumber,
+    lines: rows.map((r) => ({
+      reservationId: r.reservationId,
+      skuCode: r.skuCode,
+      msilCode: r.msilCode || null,
+      quantity: r.quantity || 0,
+      status: r.status,
+      reservedOn: r.reservationDate || null,
+      expiresOn: r.expiryDate || null,
+    })),
+  };
+};
+
 
 // ── Change replay (moved verbatim from sales.controller) ───────────────────
 

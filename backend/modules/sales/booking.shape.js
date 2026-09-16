@@ -140,7 +140,7 @@ const bookingTotals = (rows, indentBySku) => {
 export const shapeBooking = (
   rows,
   boxNumbers = new Map(),
-  { includePricing = false, indentBySku = null, value = null } = {},
+  { includePricing = false, indentBySku = null, value = null, indent = null } = {},
 ) => {
   const first = rows[0];
   const bookingDate = first.date || first.orderTimestamp || first.createdAt;
@@ -265,6 +265,36 @@ export const shapeBooking = (
         amount: lineAmount(r.unitPrice, r.confirmedQty || 0),
       } : {}),
     })),
+
+    /**
+     * THE OPEN INDENT, line by line — what the customer is still waiting for.
+     *
+     * Null when the caller did not ask for it, which is every LIST response:
+     * only the detail drawer shows the section, and fetching reservation lines
+     * for a whole page would be a query per row for something no column reads.
+     * Null rather than `[]` so "not requested" stays distinguishable from
+     * "requested, and there is no open indent" — the screen says different
+     * things for the two.
+     *
+     * The lines arrive ALREADY RATED (`valueIndentLines`), because this
+     * function is pure and rating an orphan SKU needs the product master. Their
+     * money is therefore the same money `value.indent` was totalled from.
+     */
+    indent: indent
+      ? {
+        indentNumber: indent.indentNumber,
+        lines: indent.lines,
+        totalQuantity: indent.lines.reduce((n, l) => n + (l.quantity || 0), 0),
+        // Present only alongside the rest of the pricing, same rule as a line's.
+        ...(includePricing ? {
+          amount: indent.lines.reduce(
+            (sum, l) => (l.amount === null ? sum : sum + l.amount),
+            0,
+          ),
+          unpricedLines: indent.lines.filter((l) => l.amount === null).length,
+        } : {}),
+      }
+      : null,
   };
 };
 

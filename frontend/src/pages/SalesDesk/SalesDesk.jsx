@@ -21,6 +21,37 @@ const SCOPES = [
   { key: "generated", label: "PO Generated", countKey: "generated" },
 ];
 
+/**
+ * THE CUSTOMER NAME NEVER FALLS BACK TO THE COMPANY.
+ *
+ * That rule is not a preference here — it is pinned by
+ * `services/customerName.test.js`, which records the bug it fixes: when the
+ * Customer Name slot fell through to the company, two customers at one company
+ * were indistinguishable, and the failure "looks filled in", so nobody reports
+ * it. The chain is the Customer Master name, then the CONTACT person, then
+ * nothing.
+ *
+ * Identical to how `services/orders.js#mapOrder` resolves `customerName` for
+ * Booking History, so the two screens cannot drift. Deliberately NOT
+ * `customerExportRow`, whose chain does include the company: that helper serves
+ * the history EXPORTS, where a filled cell beats an empty one, and borrowing it
+ * here would have quietly reintroduced the exact defect the test guards.
+ */
+export const customerNameOf = (booking) =>
+  booking?.customerProfile?.customerName
+  || booking?.customerProfile?.contactName
+  || null;
+
+/**
+ * The company, which is a different fact and gets its own column.
+ *
+ * The PROFILE's company leads because it is current; the booking's stamped
+ * `company` is the fallback, and the only value available at all for a row
+ * whose customer account has since been deleted.
+ */
+export const companyNameOf = (booking) =>
+  booking?.customerProfile?.company || booking?.customer || null;
+
 export const SalesDesk = () => {
   const { bookings, meta, scope, search, loading, error, fetchBookings, setScope, setSearch, select } =
     useSalesStore();
@@ -64,7 +95,8 @@ export const SalesDesk = () => {
     const rows = bookings.map((b, i) => ({
       sr: i + 1,
       orderId: b.orderId,
-      customer: b.customer || "-",
+      customerName: customerNameOf(b) || "-",
+      customer: companyNameOf(b) || "-",
       date: b.date ? new Date(b.date).toLocaleDateString() : "-",
       poStatus: b.locked ? "PO Generated" : "PO Pending",
       poNumber: b.poNumber || "-",
@@ -74,7 +106,8 @@ export const SalesDesk = () => {
     const columns = [
       { key: "sr", label: "S.No" },
       { key: "orderId", label: "Booking ID" },
-      { key: "customer", label: "Customer" },
+      { key: "customerName", label: "Customer Name" },
+      { key: "customer", label: "Company Name" },
       { key: "date", label: "Date" },
       { key: "poStatus", label: "PO Status" },
       { key: "poNumber", label: "PO Number" },
@@ -226,7 +259,8 @@ export const SalesDesk = () => {
           <thead className="sticky top-0 bg-slate-50 z-10 shadow-sm">
             <tr className="text-xs text-slate-500 font-bold uppercase select-none">
               <th className="px-5 py-3 border-b border-slate-200">Booking ID</th>
-              <th className="px-5 py-3 border-b border-slate-200">Customer</th>
+              <th className="px-5 py-3 border-b border-slate-200">Customer Name</th>
+              <th className="px-5 py-3 border-b border-slate-200">Company Name</th>
               <th className="px-5 py-3 border-b border-slate-200">Date</th>
               <th className="px-5 py-3 border-b border-slate-200">PO Status</th>
               <th className="px-5 py-3 border-b border-slate-200">PO Deadline</th>
@@ -237,8 +271,11 @@ export const SalesDesk = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
+            {/* The skeleton's ten columns: Booking ID, Customer Name, Company
+                Name, Date, PO Status, PO Deadline, PO Number, Items, Qty,
+                Review. */}
             {loading ? (
-              <TableSkeleton rows={8} columns={9} cellClass="px-5 py-4" />
+              <TableSkeleton rows={8} columns={10} cellClass="px-5 py-4" />
             ) : bookings.length > 0 ? (
               bookings.map((b) => (
                 <tr
@@ -247,8 +284,23 @@ export const SalesDesk = () => {
                   className="hover:bg-slate-50 transition-colors cursor-pointer"
                 >
                   <td className="px-5 py-4 font-bold text-slate-800">{b.orderId}</td>
-                  <td className="px-5 py-4 font-semibold text-slate-700 truncate max-w-[200px]" title={b.customer}>
-                    {b.customer || "—"}
+                  <td
+                    className="px-5 py-4 font-semibold text-slate-700 truncate max-w-[200px]"
+                    title={customerNameOf(b) || undefined}
+                  >
+                    {customerNameOf(b) || <span className="text-slate-400">—</span>}
+                  </td>
+                  {/*
+                    Its own column, and shown even when it matches the customer
+                    name — the same call Booking History makes. A blank here
+                    would read as "no company recorded" rather than "same as the
+                    name", and the desk cannot tell those apart.
+                  */}
+                  <td
+                    className="px-5 py-4 text-slate-600 truncate max-w-[200px]"
+                    title={companyNameOf(b) || undefined}
+                  >
+                    {companyNameOf(b) || <span className="text-slate-400">—</span>}
                   </td>
                   <td className="px-5 py-4 text-slate-600">
                     {b.date ? new Date(b.date).toLocaleDateString() : "—"}
@@ -282,7 +334,7 @@ export const SalesDesk = () => {
               ))
             ) : (
               <tr>
-                <td colSpan={9} className="px-5 py-10 text-center text-slate-400">
+                <td colSpan={10} className="px-5 py-10 text-center text-slate-400">
                   {scope === "pending"
                     ? "No bookings are waiting for a PO."
                     : "No bookings found matching your criteria."}

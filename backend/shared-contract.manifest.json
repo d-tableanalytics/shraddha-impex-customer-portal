@@ -7,11 +7,11 @@
   "models/Role.js": "679b1e2aed31846c439d0f30cb7c7e6cc6670fabbcd1fee3ffeaf47f1293a281",
   "models/User.js": "233f9067c517854a0451acfbb958bd5da511a762fece7a87f8775f693c32489f",
   "shared/permissions/assignment.js": "21b9f340ff03b160ca411497956f861061a6af2beecf3e2115b2d92be0837013",
-  "shared/permissions/constants.js": "638f4a44f477c29a6af654e41fc2db9eafe6a0b359374967e7feb856598fa03f",
+  "shared/permissions/constants.js": "87042f3efb0417bd81ddd98536050b26cd002f221db28bd0c2f56434e397a4c4",
   "shared/permissions/has-permission.js": "e4349bb78832e10478a433a72b6ea78acd87d0c37420095bbb1ec1650b405a1d",
   "shared/permissions/index.js": "0c4963342acc238a5ffad29e03a2c21598fc13d75a9d7013254c1f9cbdf21d13",
   "shared/permissions/legacy.js": "42819d2b6829e06934e44d4e8eea95428990066371e26b179a447fcacb7ac6ad",
-  "shared/permissions/matrix.js": "af93d0019dc75095d0e649c57a60f8823abdb9a844749fafea053934df610fb4",
+  "shared/permissions/matrix.js": "543c536073493a7cb6be72fa770ce95fc1a345d1da0937e0bce91b449d5a2060",
   "utils/hrmsRoleGuard.js": "fd597f1ab51273f86d0da4b0ee457b51f9d713548223693a4410225315dabb9b",
   "utils/roleResolver.js": "af522e82c759a44453c1d969fb62269ac7ef18a3fc92b52ec1f174e7f321f9e4",
   "utils/tokens.js": "8a3bfb43e39541b4263fc4dc46adc6f9d56b1f4b88da50330b0b9303107d9b69"

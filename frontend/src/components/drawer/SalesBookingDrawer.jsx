@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
@@ -37,10 +37,30 @@ const toDraft = (booking) =>
     // edit endpoint takes: "make this line 15" means fifteen units for the
     // customer, however stock splits them.
     quantity: (l.confirmedQty || 0) + (l.pendingQty || 0),
+
+    /*
+     * READ-ONLY, and never sent back.
+     *
+     * `handleSave` maps the draft down to { id, skuCode, quantity }, so these
+     * three ride along purely so the Price column has something to render. They
+     * are ABSENT — not zero — on a response whose reader lacks view_pricing,
+     * and `?? null` keeps that distinction: the column is not rendered at all
+     * for those users, and a zero here would have looked like a free line.
+     *
+     * `confirmedQty` is carried because `amount` is rate x CONFIRMED quantity,
+     * not rate x the line total above. The two differ on any line stock could
+     * only partly cover, and the cell has to be able to say so rather than
+     * silently show a figure that does not match the quantity beside it.
+     */
+    unitPrice: l.unitPrice ?? null,
+    amount: l.amount ?? null,
+    confirmedQty: l.confirmedQty ?? null,
   }));
 
 export const SalesBookingDrawer = () => {
-  const { selected, close, saveItems, raisePo, setPricing, reorderLines, saving } = useSalesStore();
+  const {
+    selected, close, saveItems, raisePo, setPricing, reorderLines, saving, reloadSelected,
+  } = useSalesStore();
   const { user } = useUserStore();
 
   const [draft, setDraft] = useState([]);
@@ -73,6 +93,33 @@ export const SalesBookingDrawer = () => {
     setDragIdx(null);
     setDragOverIdx(null);
   }, [selected]);
+
+  /**
+   * THE DRAWER OPENS ON THE LIST ROW, WHICH HAS NO INDENT LINES.
+   *
+   * `select(b)` hands the drawer whatever the bookings table already had, so it
+   * paints immediately rather than on a spinner. What the list deliberately
+   * does NOT carry is `indent`: listing reservation lines is a query per
+   * booking, and no column on that table shows them (see `openIndentLinesFor`).
+   *
+   * So the detail is fetched once per booking, and `indent == null` is the
+   * signal — a DETAIL response always carries the block, with an empty `lines`
+   * array when there is no open indent, so "absent" and "none" stay different
+   * facts. A save already returns the detail shape, which is why this does not
+   * fire again afterwards.
+   *
+   * The ref is what stops a failed fetch retrying forever: `reloadSelected`
+   * swallows its error and keeps the row it has, which would otherwise leave
+   * `indent` null and re-trigger this effect on every render.
+   */
+  const indentAsked = useRef(null);
+  useEffect(() => {
+    const orderId = selected?.orderId;
+    if (!orderId || selected.indent != null) return;
+    if (indentAsked.current === orderId) return;
+    indentAsked.current = orderId;
+    reloadSelected();
+  }, [selected?.orderId, selected?.indent, reloadSelected]);
 
   if (!selected) return null;
 
@@ -882,6 +929,17 @@ export const SalesBookingDrawer = () => {
                       <th className="px-5 py-3 w-[26%] min-w-[140px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">MSIL Code</th>
                       {showBoxNo && <th className="px-5 py-3 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Box No</th>}
                       <th className="px-5 py-3 text-center w-[110px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Quantity</th>
+                      {/* Money sits after quantity, which is the order the eye
+                          multiplies in and the order a paper PO prints. Gated on
+                          view_pricing exactly like the section below: the server
+                          omits `unitPrice` entirely for a reader without it, so
+                          rendering the column would show a row of dashes that
+                          look like unrated lines. */}
+                      {mayPrice && (
+                        <th className="px-5 py-3 text-right w-[130px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">
+                          Price
+                        </th>
+                      )}
                       {editable && <th className="px-5 py-3 text-center sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Remove</th>}
                     </tr>
                   </thead>
@@ -1001,6 +1059,72 @@ export const SalesBookingDrawer = () => {
                             onChange={(e) => setLine(idx, { quantity: e.target.value })}
                           />
                         </td>
+                        {mayPrice && (
+                          /*
+                            THE RATE LEADS, and the line total follows it.
+
+                            The rate is what the desk actually cross-checks
+                            against the customer's paper PO — it is the number
+                            that is quoted, argued about and agreed. The amount
+                            is the arithmetic, useful as a check but derived.
+
+                            A line the booking cannot rate says so in words. An
+                            em dash would read as zero, and the one thing this
+                            column must not do is make an unrated line look
+                            free — the server is careful to omit the price
+                            rather than zero it for exactly that reason.
+                          */
+                          <td className="px-5 py-3 text-right whitespace-nowrap">
+                            {line.unitPrice == null ? (
+                              <span
+                                className="text-[11px] font-semibold text-amber-600"
+                                title="No rate on this line yet. Set one in Customer Pricing, or when the PO is raised."
+                              >
+                                Not rated
+                              </span>
+                            ) : (
+                              <>
+                                <div className="font-bold text-slate-800 tabular-nums">
+                                  {formatRupees(line.unitPrice)}
+                                </div>
+                                {line.amount != null && (
+                                  /*
+                                    `amount` is rate x CONFIRMED quantity, which
+                                    is not always the quantity in the box beside
+                                    it: a line stock could only partly cover
+                                    carries the rest on the indent, and that part
+                                    is valued in the Indent section below rather
+                                    than here.
+
+                                    Saying which quantity the figure covers is
+                                    the difference between a total somebody can
+                                    check and one they have to take on trust —
+                                    and it is spelled out on the row, not only in
+                                    a tooltip, whenever the two differ.
+                                  */
+                                  <div
+                                    className="text-[11px] text-slate-500 tabular-nums"
+                                    title={`${formatRupees(line.unitPrice)} x ${line.confirmedQty ?? 0} confirmed pc(s)`}
+                                  >
+                                    {formatRupees(line.amount)}
+                                  </div>
+                                )}
+                                {/*
+                                  On its OWN line, not appended to the amount:
+                                  the column is 130px and `whitespace-nowrap`,
+                                  so a qualifier on the same row pushes the
+                                  figure out of the cell rather than wrapping.
+                                */}
+                                {line.confirmedQty != null
+                                  && Number(line.quantity) !== line.confirmedQty && (
+                                  <div className="text-[10px] font-semibold text-amber-600">
+                                    {line.confirmedQty} of {line.quantity} confirmed
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </td>
+                        )}
                         {editable && (
                           <td className="px-5 py-3 text-center">
                             <button
@@ -1031,6 +1155,155 @@ export const SalesBookingDrawer = () => {
                 </div>
               )}
             </div>
+
+            {/*
+              ── THE OPEN INDENT ───────────────────────────────────────────────
+
+              What the customer is still waiting for, as lines rather than the
+              single number the tiles above carry.
+
+              This is the half of the booking with nothing to look at in the
+              table above it. A line stock could not cover AT ALL never became an
+              order row — confirmation only pushes one when `confirmedQty > 0` —
+              so it exists purely as a reservation and appears NOWHERE in Booking
+              Items. That is precisely the case the desk needs to catch when
+              checking a booking against the customer's paper PO, and until now
+              the screen could not show it.
+
+              Rendered for everyone who can open the drawer. The quantities are
+              not pricing — the money inside is gated separately, on the same
+              `mayPrice` the column above uses.
+            */}
+            {selected.indent && (
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Timer size={18} className="text-amber-600" />
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-800">
+                        Indent
+                        {selected.indent.indentNumber && (
+                          <span className="ml-2 font-mono text-xs font-bold text-slate-500">
+                            {selected.indent.indentNumber}
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        {selected.indent.lines.length === 0
+                          ? "Nothing outstanding — stock covered this booking in full."
+                          : `${selected.indent.totalQuantity} pc(s) still reserved against this booking`}
+                      </p>
+                    </div>
+                  </div>
+                  {mayPrice && selected.indent.amount != null && selected.indent.lines.length > 0 && (
+                    <span className="text-base font-black text-slate-900 tabular-nums">
+                      {formatRupees(selected.indent.amount)}
+                    </span>
+                  )}
+                </div>
+
+                {selected.indent.lines.length > 0 && (
+                  <div>
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        <tr>
+                          <th className="px-5 py-3 w-[38%] min-w-[180px]">SKU / Product</th>
+                          <th className="px-5 py-3 w-[26%] min-w-[140px]">MSIL Code</th>
+                          <th className="px-5 py-3 text-center w-[110px]">Quantity</th>
+                          <th className="px-5 py-3">Status</th>
+                          {mayPrice && <th className="px-5 py-3 text-right w-[130px]">Price</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-sm">
+                        {selected.indent.lines.map((line) => {
+                          /*
+                            THE WHOLE POINT OF THE SECTION.
+
+                            A SKU on the indent that has no line in the table
+                            above is one stock could not cover at all. It is on
+                            the customer's PO, it is reserved, and it is invisible
+                            everywhere else on this screen — so it is called out
+                            rather than left to be spotted by comparing two lists
+                            by eye.
+                          */
+                          const inBooking = draft.some((l) => l.skuCode === line.skuCode);
+                          return (
+                            <tr key={line.reservationId || line.skuCode} className="align-top">
+                              <td className="px-5 py-3">
+                                <CodeValue value={line.skuCode} />
+                                {!inBooking && (
+                                  <div
+                                    className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
+                                    title="Stock could not cover any of this line, so it never became a booking item. It exists only as a reservation."
+                                  >
+                                    <AlertTriangle size={10} />
+                                    Not in booking items
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-5 py-3">
+                                <CodeValue value={line.msilCode} tone="muted" />
+                              </td>
+                              <td className="px-5 py-3 text-center font-bold text-slate-700 tabular-nums">
+                                {line.quantity}
+                              </td>
+                              <td className="px-5 py-3">
+                                <span className="text-[11px] font-semibold text-slate-600">
+                                  {line.status}
+                                </span>
+                                {line.expiresOn && (
+                                  <div
+                                    className="text-[10px] text-slate-400"
+                                    title="The reservation lapses on this date unless it is filled first."
+                                  >
+                                    expires {new Date(line.expiresOn).toLocaleDateString()}
+                                  </div>
+                                )}
+                              </td>
+                              {mayPrice && (
+                                <td className="px-5 py-3 text-right whitespace-nowrap">
+                                  {line.unitPrice == null ? (
+                                    <span
+                                      className="text-[11px] font-semibold text-amber-600"
+                                      title="No rate for this SKU on the booking or in the product master."
+                                    >
+                                      Not rated
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <div className="font-bold text-slate-800 tabular-nums">
+                                        {formatRupees(line.unitPrice)}
+                                      </div>
+                                      {line.amount != null && (
+                                        <div className="text-[11px] text-slate-500 tabular-nums">
+                                          {formatRupees(line.amount)}
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+
+                    <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 rounded-b-xl text-xs text-slate-500">
+                      These are the LIVE reservations, not the quantity frozen onto the booking at
+                      confirmation — the two diverge as soon as stock arrives and auto-books part of
+                      the indent.
+                      {mayPrice && selected.indent.unpricedLines > 0 && (
+                        <span className="text-amber-700 font-semibold">
+                          {" "}{selected.indent.unpricedLines} line(s) could not be rated, so the total
+                          above leaves them out.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Footer */}

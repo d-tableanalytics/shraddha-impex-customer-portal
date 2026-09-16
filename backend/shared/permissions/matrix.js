@@ -98,6 +98,21 @@ const SELF_BASELINE = Object.freeze([
   p(M.ASSETS, A.SUBMIT, S.SELF),
   p(M.EXITS, A.VIEW, S.SELF),
   p(M.ENGAGE, A.VIEW, S.SELF),
+
+  /**
+   * SI Academy. Assigned training is something an employee is REQUIRED to
+   * complete, so the baseline carries it for the same reason it carries leave
+   * and attendance - withholding it would leave a mandatory task unreachable.
+   *
+   * SUBMIT is what marks a lesson complete, records video progress and submits
+   * an assessment attempt. It is separated from VIEW deliberately, following
+   * the DOCUMENTS note above: a read grant must never be what authorises a
+   * write. Nothing here grants sight of anybody else's progress - that is
+   * `academy/view/team` and `/org`, which only a manager, HR and an auditor
+   * hold.
+   */
+  p(M.ACADEMY, A.VIEW, S.SELF),
+  p(M.ACADEMY, A.SUBMIT, S.SELF),
 ]);
 
 export const HRMS_PERMISSION_MATRIX = Object.freeze({
@@ -130,6 +145,10 @@ export const HRMS_PERMISSION_MATRIX = Object.freeze({
     p(M.EXPENSES, A.APPROVE, S.ORG),
     p(M.PERFORMANCE, A.VIEW, S.ORG),
     p(M.PERFORMANCE, A.APPROVE, S.ORG),
+    // SI Academy: author the catalogue, assign it, see everyone's progress.
+    p(M.ACADEMY, A.VIEW, S.ORG),
+    p(M.ACADEMY, A.EDIT, S.ORG),
+    p(M.ACADEMY, A.ASSIGN, S.ORG),
     p(M.HIRING, A.VIEW, S.ORG),
     p(M.HIRING, A.EDIT, S.ORG),
     p(M.ASSETS, A.VIEW, S.ORG),
@@ -174,6 +193,15 @@ export const HRMS_PERMISSION_MATRIX = Object.freeze({
     p(M.EXPENSES, A.APPROVE, S.ORG), // policy-level approvals
     p(M.PERFORMANCE, A.VIEW, S.ORG),
     p(M.PERFORMANCE, A.APPROVE, S.ORG),
+    /**
+     * SI Academy, in full. HR owns the learning catalogue the way it owns the
+     * onboarding templates beside it, and `academy/assign/org` is what the
+     * automatic assignment rules run AS when a new employee is created - so
+     * withholding it here would break onboarding for the role that performs it.
+     */
+    p(M.ACADEMY, A.VIEW, S.ORG),
+    p(M.ACADEMY, A.EDIT, S.ORG),
+    p(M.ACADEMY, A.ASSIGN, S.ORG),
     p(M.HIRING, A.VIEW, S.ORG),
     p(M.HIRING, A.EDIT, S.ORG),
     p(M.ASSETS, A.VIEW, S.ORG),
@@ -215,6 +243,13 @@ export const HRMS_PERMISSION_MATRIX = Object.freeze({
     p(M.EXPENSES, A.APPROVE, S.TEAM),
     p(M.PERFORMANCE, A.VIEW, S.TEAM),
     p(M.PERFORMANCE, A.APPROVE, S.TEAM),
+    /**
+     * A manager sees their reports' training progress and nothing wider - the
+     * same line every other TEAM grant here draws. Read only: a manager cannot
+     * author a course, cannot assign one, and cannot complete a lesson on
+     * somebody's behalf.
+     */
+    p(M.ACADEMY, A.VIEW, S.TEAM),
     p(M.ONBOARDING, A.VIEW, S.TEAM),
     p(M.EXITS, A.APPROVE, S.TEAM),
     p(M.HIRING, A.VIEW, S.TEAM), // interviewer view
@@ -262,6 +297,10 @@ export const HRMS_PERMISSION_MATRIX = Object.freeze({
     p(M.PAYROLL, A.VIEW, S.ORG),
     p(M.EXPENSES, A.VIEW, S.ORG),
     p(M.PERFORMANCE, A.VIEW, S.ORG),
+    // Mandatory-training completion is a compliance record, which is squarely
+    // what an auditor is here to read. Read only, like everything else in this
+    // role, and no SELF_BASELINE - an auditor reviews, they do not learn here.
+    p(M.ACADEMY, A.VIEW, S.ORG),
     p(M.HIRING, A.VIEW, S.ORG),
     p(M.ASSETS, A.VIEW, S.ORG),
     p(M.REPORTS, A.VIEW, S.ORG),

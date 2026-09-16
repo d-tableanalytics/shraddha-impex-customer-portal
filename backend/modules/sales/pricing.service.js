@@ -160,6 +160,86 @@ export const quoteBooking = async (rows) => {
  * @param {object[]} rows          the booking's Order rows
  * @param {Map<string,number>} indentBySku  open indent quantity per SKU
  */
+/**
+ * The rate that applies to each of `skus`, under the booking's own price type.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS IS NOT JUST A PRODUCT LOOKUP
+ * ---------------------------------------------------------------------------
+ * A SKU the booking already carries is rated at the price THAT CUSTOMER WAS
+ * GIVEN, snapshotted on the order row by `applyPricing`. Re-reading it from the
+ * product master would quietly re-rate a booking at today's price, which is the
+ * one thing a raised purchase order must never do.
+ *
+ * The master is consulted only for the ORPHANS — indent SKUs that never became
+ * an order row, so the booking holds no rate for them. Those are exactly the
+ * lines that could not be fulfilled at all (see the note on `bookingTotals` in
+ * booking.shape.js), and they have no snapshot to prefer.
+ *
+ * Extracted from `valueBooking`, which did this inline, because the indent
+ * LINES now need the same answer. Two copies of "what does this SKU cost" is
+ * how a total and the lines under it come to disagree.
+ *
+ * @returns {Promise<Map<string, number>>} sku -> rate. A SKU with no rate
+ *   anywhere is ABSENT rather than zero: "we do not know" and "it is free" are
+ *   different facts and the callers count them separately.
+ */
+export const ratesForSkus = async ({ rows = [], skus = [] } = {}) => {
+  const rateBySku = new Map();
+  if (!rows.length) return rateBySku;
+
+  const type = normalisePriceType(rows[0]?.priceType);
+  if (!type) return rateBySku;
+
+  // What the customer was actually given, per line.
+  for (const row of rows) {
+    const rate = asPrice(row.unitPrice);
+    if (rate !== null) rateBySku.set(row.skuCode, rate);
+  }
+
+  // Only the SKUs the booking cannot rate itself need the master.
+  const orphans = [...new Set(skus)].filter((sku) => !rateBySku.has(sku));
+  if (orphans.length) {
+    const brand = rows[0].brand;
+    const products = await Product.find(
+      { skuCode: { $in: orphans } },
+      'skuCode brand prices',
+    ).lean();
+    const book = new Map(products.map((pr) => [boxKey(pr.skuCode, pr.brand), pr.prices || {}]));
+    for (const sku of orphans) {
+      const rate = asPrice((book.get(boxKey(sku, brand)) || {})[type]);
+      if (rate !== null) rateBySku.set(sku, rate);
+    }
+  }
+
+  return rateBySku;
+};
+
+/**
+ * The open indent, as LINES rather than a total.
+ *
+ * The desk cross-checks a booking against the customer's paper PO, and the
+ * indent is the half of it that has no order row to look at — a line stock
+ * could not cover at all exists ONLY as a reservation. A summed quantity says
+ * how much is outstanding; it cannot say which SKUs, which is what makes the
+ * two documents comparable.
+ *
+ * Rates come from `ratesForSkus`, so an indent line shows the same money the
+ * booking's own total was built from. A line with no rate keeps `unitPrice:
+ * null` and `amount: null` rather than zero, and the caller reports it as
+ * unpriced.
+ */
+export const valueIndentLines = async ({ rows = [], lines = [] } = {}) => {
+  if (!lines.length) return [];
+
+  const rateBySku = await ratesForSkus({ rows, skus: lines.map((l) => l.skuCode) });
+
+  return lines.map((line) => {
+    const unitPrice = rateBySku.get(line.skuCode) ?? null;
+    return { ...line, unitPrice, amount: lineAmount(unitPrice, line.quantity || 0) };
+  });
+};
+
 export const valueBooking = async ({ rows = [], indentBySku = new Map() } = {}) => {
   const empty = {
     booking: { amount: null, pricedLines: 0, unpricedLines: 0 },
@@ -187,26 +267,9 @@ export const valueBooking = async ({ rows = [], indentBySku = new Map() } = {}) 
   }
 
   // ── What is still on indent ─────────────────────────────────────────────
-  const rateBySku = new Map();
-  for (const row of rows) {
-    const rate = asPrice(row.unitPrice);
-    if (rate !== null) rateBySku.set(row.skuCode, rate);
-  }
-
-  // Only the indent SKUs the booking cannot rate itself need the master.
-  const orphans = [...indentBySku.keys()].filter((sku) => !rateBySku.has(sku));
-  if (orphans.length) {
-    const brand = rows[0].brand;
-    const products = await Product.find(
-      { skuCode: { $in: orphans } },
-      'skuCode brand prices',
-    ).lean();
-    const book = new Map(products.map((pr) => [boxKey(pr.skuCode, pr.brand), pr.prices || {}]));
-    for (const sku of orphans) {
-      const rate = asPrice((book.get(boxKey(sku, brand)) || {})[type]);
-      if (rate !== null) rateBySku.set(sku, rate);
-    }
-  }
+  // One rate table, shared with the indent LINES the detail response carries,
+  // so the section under Booking Items and this total cannot disagree.
+  const rateBySku = await ratesForSkus({ rows, skus: [...indentBySku.keys()] });
 
   let indentAmount = 0;
   let pricedSkus = 0;

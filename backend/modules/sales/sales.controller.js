@@ -10,7 +10,9 @@ import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { assertBookingEditable, isPlaceholderPo } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { boxKey, currentBoxNumbers, shapeBooking, pricingSummary } from './booking.shape.js';
-import { quoteBooking, applyPricing, valueBooking } from './pricing.service.js';
+import {
+  quoteBooking, applyPricing, valueBooking, valueIndentLines,
+} from './pricing.service.js';
 import { PRICE_TYPES, normalisePriceType } from '../../config/pricing.js';
 import {
   findProductBySku, reserveStock, releaseStock, consumeStock,
@@ -20,7 +22,7 @@ import { recordAudit } from '../../utils/auditLog.js';
 import { attachCustomerDetails } from '../../utils/customerContact.js';
 import {
   QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
-  openIndentBySku, openIndentsByOrder,
+  openIndentBySku, openIndentsByOrder, openIndentLinesFor,
 } from '../../utils/bookingJourney.js';
 import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 import {
@@ -56,9 +58,32 @@ const loadBooking = async (orderId, session = null) => {
  */
 const shapedWithValue = async (rows, req, { includePricing, boxNumbers = null } = {}) => {
   const indentBySku = await openIndentBySku(rows[0]?.orderId);
+
+  /**
+   * The open indent, line by line, for the section under Booking Items.
+   *
+   * DETAIL ONLY, which is what this helper serves — every caller of it is a
+   * single booking. The LIST builds its own shape a few functions down and
+   * deliberately does not ask for these: it needs one total per booking, which
+   * the batched `openIndentsByOrder` already gives it in a single query.
+   *
+   * Rated here rather than in `shapeBooking`, which is pure: pricing an indent
+   * SKU the booking never carried has to reach the product master. Unrated when
+   * the viewer may not see pricing, so the lines carry quantities and no money
+   * at all rather than money the response is trusted not to render.
+   */
+  const indentRaw = await openIndentLinesFor(rows[0]?.orderId);
+  const indent = {
+    ...indentRaw,
+    lines: includePricing
+      ? await valueIndentLines({ rows, lines: indentRaw.lines })
+      : indentRaw.lines,
+  };
+
   return shapeBooking(rows, boxNumbers ?? await currentBoxNumbers(rows), {
     includePricing,
     indentBySku,
+    indent,
     value: includePricing ? await valueBooking({ rows, indentBySku }) : null,
   });
 };

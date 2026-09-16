@@ -273,9 +273,19 @@ export const UserManagement = ({ audience = 'internal' }) => {
   );
 
   const q = search.trim().toLowerCase();
+  /*
+   * `customerName` is searchable, and on the customer list it is the field
+   * people actually search by.
+   *
+   * The edit form has always collected it — it is the Customer Master name, the
+   * legal entity we trade with — but the list neither showed it nor matched on
+   * it, so an admin who had filled it in could not then find the account by it.
+   * Harmless on the internal list: staff accounts carry no customerName, so the
+   * extra term never matches and never costs anything.
+   */
   const filteredUsers = q
     ? audienceUsers.filter((u) =>
-        [u.user, u.company, u.email]
+        [u.customerName, u.user, u.company, u.email]
           .some((v) => String(v || '').toLowerCase().includes(q)),
       )
     : audienceUsers;
@@ -473,7 +483,11 @@ export const UserManagement = ({ audience = 'internal' }) => {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, company or email..."
+              placeholder={
+                isCustomerAudience
+                  ? 'Search by customer, contact, company or email...'
+                  : 'Search by name, company or email...'
+              }
               className="w-full pl-9 pr-8 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 text-slate-800"
             />
             {search && (
@@ -507,8 +521,26 @@ export const UserManagement = ({ audience = 'internal' }) => {
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  <th className="px-6 py-4 font-bold text-slate-600">User</th>
-                  <th className="px-6 py-4 font-bold text-slate-600">Role</th>
+                  <th className="px-6 py-4 font-bold text-slate-600">
+                    {isCustomerAudience ? 'Customer' : 'User'}
+                  </th>
+                  {/*
+                    ROLE IS AN INTERNAL-LIST COLUMN.
+
+                    Every row on the customer list is `role === 'Customer'` by
+                    construction — `audienceUsers` filters on exactly that — so
+                    the column printed the same word on every row and carried no
+                    information at all. What actually distinguishes one customer
+                    from another is the Customer Category beside it, which is
+                    MSIL vs non-MSIL and is editable in place.
+
+                    It stays on the INTERNAL list, where it is the column that
+                    matters: Admin, Sales, Inventory Manager and a Super Admin's
+                    custom roles all appear there.
+                  */}
+                  {!isCustomerAudience && (
+                    <th className="px-6 py-4 font-bold text-slate-600">Role</th>
+                  )}
                   {/*
                     CUSTOMER-ONLY COLUMNS.
                     `customerCategory` is MSIL vs non-MSIL, and `brandAccess`
@@ -535,20 +567,51 @@ export const UserManagement = ({ audience = 'internal' }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
+                {/* The skeleton tracks the header count — five on the customer
+                    list (User, Category, Brands, Status, Actions), four on the
+                    internal one (User, Role, Status, Actions). A fixed 6 drew
+                    phantom columns on both. */}
                 {loading ? (
-                  <TableSkeleton rows={PAGE_SIZE} columns={6} />
+                  <TableSkeleton rows={PAGE_SIZE} columns={isCustomerAudience ? 5 : 4} />
                 ) : filteredUsers.length === 0 ? (
                   <tr>
-                    {/* Must track the header count, which is two shorter on the
-                        internal list — a fixed 6 would leave the empty-state row
+                    {/* Must track the header count: five on the customer list
+                        and four on the internal one, now that Role is shown only
+                        on the latter. A fixed number leaves the empty-state row
                         spanning past the last column. */}
-                    <td colSpan={isCustomerAudience ? 6 : 4} className="px-6 py-12 text-center text-slate-400">
+                    <td colSpan={isCustomerAudience ? 5 : 4} className="px-6 py-12 text-center text-slate-400">
                       {q ? `No users match "${search}".` : 'No users found.'}
                     </td>
                   </tr>
                 ) : (
                   visibleUsers.map((u) => {
-                    const displayName = u.user || u.company || u.email;
+                    /*
+                     * WHAT THIS ACCOUNT IS CALLED.
+                     *
+                     * On the CUSTOMER list the Customer Master name leads, which
+                     * is the same order Booking History, the Sales Desk and
+                     * every export resolve a customer in (see
+                     * utils/historyExportColumns.js). Before this, an account
+                     * with a customerName filled in was still listed by its
+                     * contact person, so the screen that captures the field was
+                     * the one screen that did not show it.
+                     *
+                     * The INTERNAL list is unchanged: staff have no
+                     * customerName, and `u.customerName` is null for every one
+                     * of them, so the leading term simply falls through.
+                     */
+                    const displayName =
+                      (isCustomerAudience ? u.customerName : null)
+                      || u.user || u.company || u.email;
+                    /*
+                     * The contact person, shown only when it is not already the
+                     * headline. Two customers at one company are otherwise
+                     * indistinguishable in the list — the defect
+                     * services/orders.js records for Booking History, which had
+                     * the same cause.
+                     */
+                    const contactLine =
+                      isCustomerAudience && u.user && u.user !== displayName ? u.user : null;
                     // A customer category belongs to CUSTOMERS. Testing against
                     // Admin alone meant every staff role — Sales, Inventory
                     // Manager, Warehouse, Management — was offered an
@@ -563,17 +626,25 @@ export const UserManagement = ({ audience = 'internal' }) => {
                             <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold uppercase">
                               {displayName?.charAt(0) || 'U'}
                             </div>
-                            <div className="flex flex-col">
-                              <span className="font-bold text-slate-800">{displayName}</span>
-                              <span className="text-xs text-slate-500 flex items-center gap-1"><Mail size={12} />{u.email}</span>
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-bold text-slate-800 truncate">{displayName}</span>
+                              {contactLine && (
+                                <span className="text-xs text-slate-500 truncate">{contactLine}</span>
+                              )}
+                              <span className="text-xs text-slate-500 flex items-center gap-1 min-w-0">
+                                <Mail size={12} className="shrink-0" />
+                                <span className="truncate">{u.email}</span>
+                              </span>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="px-2 py-1 bg-primary-50 text-primary-700 text-xs font-semibold rounded flex items-center gap-1 w-fit">
-                            <Shield size={12} /> {u.role || 'Customer'}
-                          </span>
-                        </td>
+                        {!isCustomerAudience && (
+                          <td className="px-6 py-4">
+                            <span className="px-2 py-1 bg-primary-50 text-primary-700 text-xs font-semibold rounded flex items-center gap-1 w-fit">
+                              <Shield size={12} /> {u.role || 'Customer'}
+                            </span>
+                          </td>
+                        )}
                         {isCustomerAudience && (
                           <>
                         <td className="px-6 py-4">
