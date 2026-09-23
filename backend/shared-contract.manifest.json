@@ -1,6 +1,6 @@
 {
-  "config/moduleRegistry.js": "a102ea2ede74f980111c3fa3831c71dca8bb6563c39809ef828ff47ea2a5f8aa",
-  "config/permissions.js": "8877f581c19e00acaa590ffebe5298126732cb53ae4569af5f859d810e4f106e",
+  "config/moduleRegistry.js": "cf6c6b6a9a6ccb4fe054c1a1c39738c647ffe67fcad6cd72f57a5350daac231f",
+  "config/permissions.js": "d045a10911ba0665b492b31e5fddf749594cb882dc423123f678a5db532e40bb",
   "middlewares/auth.js": "6703eadb56c0de1550e7ee3039a13c619d3a031951e514652ae8e8f82c806c28",
   "middlewares/portalGuard.js": "bfbb22d974441a2cec30512530ace7c72949154df43ed264e869bdf9f9091211",
   "middlewares/rbac.js": "06cec9bbbf87049c01f23a7c2fb6a40c59617e1e5469c508bdec47553d6042a2",
@@ -13,6 +13,6 @@
   "shared/permissions/legacy.js": "42819d2b6829e06934e44d4e8eea95428990066371e26b179a447fcacb7ac6ad",
   "shared/permissions/matrix.js": "543c536073493a7cb6be72fa770ce95fc1a345d1da0937e0bce91b449d5a2060",
   "utils/hrmsRoleGuard.js": "fd597f1ab51273f86d0da4b0ee457b51f9d713548223693a4410225315dabb9b",
-  "utils/roleResolver.js": "af522e82c759a44453c1d969fb62269ac7ef18a3fc92b52ec1f174e7f321f9e4",
+  "utils/roleResolver.js": "d6eef7a8e58512d3c490485ab7c3e18dda880ca9aa61baff7af7847ab256fb74",
   "utils/tokens.js": "8a3bfb43e39541b4263fc4dc46adc6f9d56b1f4b88da50330b0b9303107d9b69"
 }

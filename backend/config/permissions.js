@@ -41,6 +41,36 @@ export const PERMISSIONS = {
   MANAGE_USERS: 'manage_users',                // every account, any role
   MANAGE_CUSTOMER_USERS: 'manage_customer_users', // CUSTOMER accounts only
   MANAGE_ROLES: 'manage_roles',
+
+  /**
+   * ── ADMINISTRATION, SPLIT PER ACTION ───────────────────────────────────
+   *
+   * `manage_users` and `manage_roles` used to back ALL FOUR actions on their
+   * sub-modules - view, create, edit and delete were the same key. So the
+   * matrix showed four checkboxes that could not disagree: granting View
+   * compiled to `manage_users`, and `manage_users` is what the POST, PATCH and
+   * PUT routes asked for. A read-only user administrator could create accounts,
+   * which is the exact failure "View only means view only" describes.
+   *
+   * The two originals keep their meaning - ENTRY to the screen - and each
+   * write gets a key of its own.
+   *
+   * Nobody loses anything on the day this ships: `manage_users` and
+   * `manage_roles` are held only by Super Admin and Admin, both of which
+   * resolve to the wildcard, and the wildcard satisfies every key ever written.
+   * Any other role reaching these screens does so through the matrix, where the
+   * new cells are ticked or not on purpose.
+   *
+   * DELETE_USERS is deliberately separate from EDIT_USERS rather than folded
+   * into it. Removing an account is not a correction - it orphans every
+   * document that points at it - and it is the one action here with no undo.
+   */
+  CREATE_USERS: 'create_users',
+  EDIT_USERS: 'edit_users',
+  DELETE_USERS: 'delete_users',
+  CREATE_ROLES: 'create_roles',
+  EDIT_ROLES: 'edit_roles',
+  DELETE_ROLES: 'delete_roles',
   VIEW_REPORTS: 'view_reports',
   // Sales-desk capabilities
   VIEW_ALL_BOOKINGS: 'view_all_bookings',     // see other customers' bookings
@@ -155,6 +185,34 @@ export const PERMISSIONS = {
   VIEW_O2D_ANALYTICS: 'view_o2d_analytics',         // delay analytics, department KPIs
   MANAGE_O2D_MASTERS: 'manage_o2d_masters',         // SLA, calendar, escalation config
 
+  // ── Work Queue (Delegation / My Day / Checklist) ────────────────────────
+  //
+  // Until now the whole delegation router (My Day, Delegation, Checklist, the
+  // Trash Bin) was gated on the single blanket key VIEW_O2D - view, create,
+  // edit, complete and delete were all the same question. These six keys let
+  // the Super Admin compose that access instead of granting it as one lump.
+  VIEW_WORK_QUEUE: 'view_work_queue',               // task lists, My Day, drilldowns
+  CREATE_WORK_QUEUE_TASK: 'create_work_queue_task', // delegate a new task
+  ASSIGN_WORK_QUEUE_TASK: 'assign_work_queue_task', // set or change who a task is delegated to
+  EDIT_WORK_QUEUE_TASK: 'edit_work_queue_task',     // subtasks, remarks, due date, reminders, follow-ups
+  COMPLETE_WORK_QUEUE_TASK: 'complete_work_queue_task', // verify & complete
+  MANAGE_WORK_QUEUE: 'manage_work_queue',           // delete a task, and bulk status/delete
+  /**
+   * The Trash Bin: OTHER PEOPLE'S deleted tasks, and putting them back.
+   *
+   * Split from MANAGE_WORK_QUEUE because that key was answering two questions
+   * at once. Deleting a task you own is ordinary work - the roles that run the
+   * queue have always been able to do it, and it is recoverable. Reading the
+   * bin is not: it is the one screen in the module that shows every deleted
+   * task in the company regardless of who raised it, and restoring one undoes
+   * somebody else's decision.
+   *
+   * With one key behind both, granting the Work Queue at all put a "Deleted
+   * Tasks" entry in every task-doer's sidebar. Two keys let the delete stay
+   * with the doer and the bin stay with an administrator.
+   */
+  MANAGE_WORK_QUEUE_TRASH: 'manage_work_queue_trash',
+
   ACCESS_HRMS: 'access_hrms',                       // employee self-service
   MANAGE_HRMS_TEAM: 'manage_hrms_team',             // reporting manager
   MANAGE_HRMS_PEOPLE: 'manage_hrms_people',         // HR admin
@@ -181,6 +239,34 @@ const PORTAL_BASICS = [
   PERMISSIONS.VIEW_PROFILE,
   PERMISSIONS.EDIT_PROFILE,
   PERMISSIONS.VIEW_HELP,
+];
+
+/**
+ * What a task-DOER holds: everything needed to run the queue day to day.
+ *
+ * Granted as a block to every role that reached the delegation router through
+ * the old blanket VIEW_O2D gate, so splitting that gate into separate keys does
+ * not, on its own, stop anybody doing their job. MANAGE_WORK_QUEUE is in here
+ * for exactly that reason - these roles have always been able to delete a task
+ * and bulk-update statuses, and that is recoverable work rather than
+ * administration.
+ *
+ * MANAGE_WORK_QUEUE_TRASH IS DELIBERATELY NOT HERE. The Trash Bin shows every
+ * deleted task in the company and puts them back; a task-doer needs neither in
+ * order to do tasks, and including it is what put a "Deleted Tasks" entry in
+ * every Billing, Accounts, Sales and Warehouse sidebar.
+ *
+ * Super Admin and Admin hold it through the wildcard. Any other role that needs
+ * it gets it as a deliberate tick in the matrix, which is the difference
+ * between granting it and defaulting to it.
+ */
+const WORK_QUEUE_DOER = [
+  PERMISSIONS.VIEW_WORK_QUEUE,
+  PERMISSIONS.CREATE_WORK_QUEUE_TASK,
+  PERMISSIONS.ASSIGN_WORK_QUEUE_TASK,
+  PERMISSIONS.EDIT_WORK_QUEUE_TASK,
+  PERMISSIONS.COMPLETE_WORK_QUEUE_TASK,
+  PERMISSIONS.MANAGE_WORK_QUEUE,
 ];
 
 /**
@@ -276,6 +362,7 @@ export const BASELINE_ROLE_PERMISSIONS = {
     ...PORTAL_BASICS,
     PERMISSIONS.VIEW_O2D,
     PERMISSIONS.WORK_O2D_STAGE,
+    ...WORK_QUEUE_DOER,
   ],
 
   /**
@@ -289,6 +376,7 @@ export const BASELINE_ROLE_PERMISSIONS = {
     ...PORTAL_BASICS,
     PERMISSIONS.VIEW_O2D,
     PERMISSIONS.WORK_O2D_STAGE,
+    ...WORK_QUEUE_DOER,
   ],
 
   /**
@@ -308,6 +396,7 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.OVERRIDE_O2D,
     PERMISSIONS.EXIT_O2D,
     PERMISSIONS.VIEW_O2D_ANALYTICS,
+    ...WORK_QUEUE_DOER,
   ],
 
   Sales: [
@@ -336,6 +425,7 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_O2D,
     PERMISSIONS.CREATE_O2D_ORDER,
     PERMISSIONS.WORK_O2D_STAGE,
+    ...WORK_QUEUE_DOER,
   ],
 
   'Inventory Manager': [
@@ -366,6 +456,7 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.POST_STOCK_IN,
     PERMISSIONS.PERFORM_COUNT,
     PERMISSIONS.TRANSFER_STOCK,
+    ...WORK_QUEUE_DOER,
   ],
 
   // Oversight: read everything, approve, create nothing.
@@ -385,6 +476,7 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.APPROVE_ADJUSTMENT,
     PERMISSIONS.APPROVE_COUNT,
     PERMISSIONS.VIEW_REPORTS,
+    ...WORK_QUEUE_DOER,
   ],
 
   /**

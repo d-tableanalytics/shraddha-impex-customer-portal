@@ -648,6 +648,172 @@ export const MODULES = [
     ],
   },
 
+  /**
+   * WORK QUEUE — My Day, Delegation, the in-loop and all-tasks views, the
+   * Trash Bin, and the checklist that sits behind them.
+   *
+   * The delegation router used to gate every one of those on a single blanket
+   * key, VIEW_O2D — view, create, edit, complete and delete were all the same
+   * question. These four rows let the Super Admin compose that access instead:
+   * "Tasks" is the ordinary screen and its own edits, "Task Assignment" is
+   * deciding WHO a task lands on, "Task Completion" is closing one out — the
+   * same edit/complete split O2D's own Order Tracker makes for stage
+   * completion above — and "Work Queue Administration" is the trash bin,
+   * restore and bulk operations.
+   *
+   * Employee-domain only: the delegation module has no customer-portal route
+   * to gate.
+   */
+  {
+    key: 'work_queue',
+    portals: [PORTALS.EMPLOYEE],
+    label: 'Work Queue',
+    description: 'My Day, Delegation and the shared task queue.',
+    icon: 'ListChecks',
+    order: 27,
+    submodules: [
+      {
+        key: 'tasks',
+        label: 'Tasks',
+        path: '/work-queue',
+        icon: 'ListChecks',
+        actions: {
+          view: ['view_work_queue'],
+          create: ['create_work_queue_task'],
+          edit: ['edit_work_queue_task'],
+          // Both were reachable from this screen with no cell naming them: the
+          // row delete menu, and Verify & Complete. They resolve to the keys
+          // `administration` and `completion` already carry — the point is that
+          // the matrix can now describe the BUTTONS on the Tasks screen, which
+          // is where an administrator looks for them.
+          delete: ['manage_work_queue'],
+          approve: ['complete_work_queue_task'],
+        },
+      },
+      {
+        // A capability, not a screen: assignment happens inside the task
+        // create/edit dialogs, never on a page of its own.
+        key: 'assignment',
+        label: 'Task Assignment',
+        path: null,
+        actions: { edit: ['assign_work_queue_task'] },
+      },
+      {
+        key: 'completion',
+        label: 'Task Completion',
+        path: null,
+        actions: { edit: ['complete_work_queue_task'] },
+      },
+      {
+        /**
+         * The Checklist — recurring routines and the dated occurrences they
+         * generate.
+         *
+         * Its own sub-module rather than a corner of `tasks`, because the
+         * router behind it was gated on ONE blanket key for all fifteen of its
+         * routes: eight reads and seven writes, create/edit/stop/complete/
+         * reassign alike, all answered by `view_o2d`. A view permission that
+         * also lets you stop a routine is not a view permission.
+         *
+         * The keys are the ones Work Queue already uses. That is deliberate:
+         * new CELLS re-describe access that exists, new KEYS would change who
+         * holds it, and this change is meant to split a grant apart rather than
+         * hand anybody something new.
+         */
+        key: 'checklist',
+        label: 'Checklist & Routines',
+        path: '/wq/checklist',
+        icon: 'CheckSquare',
+        actions: {
+          view: ['view_work_queue'],
+          create: ['create_work_queue_task'],
+          edit: ['edit_work_queue_task'],
+          // Stopping a routine ends every future occurrence of it. That is the
+          // destructive end of the module, so it sits with the trash bin's key
+          // rather than with ordinary editing.
+          delete: ['manage_work_queue'],
+          // Completing and verifying an occurrence, and marking one
+          // non-functional — the same act `completion` covers for delegated
+          // tasks, named here so the checklist can be granted on its own.
+          approve: ['complete_work_queue_task'],
+        },
+      },
+      {
+        /**
+         * The Executive Scoreboard. Reading it is a Work Queue view; SETTING a
+         * department's goal is not — it is the number everyone else is measured
+         * against, which is why `POST /scoreboard/goals` needed a key of its
+         * own rather than riding in on the same permission as the chart.
+         */
+        key: 'scoreboard',
+        label: 'Executive Scoreboard',
+        path: '/wq/executivescoreboard',
+        icon: 'Trophy',
+        actions: {
+          view: ['view_work_queue'],
+          edit: ['manage_work_queue'],
+        },
+      },
+      {
+        /**
+         * The Activities log — who changed what, across the Work Queue.
+         *
+         * Read-only by nature: nothing writes to it through this module, so it
+         * offers `view` and nothing else. A cell with no create/edit/delete is
+         * the honest description of a screen that has none.
+         */
+        key: 'activity',
+        label: 'Activity Log',
+        path: '/wq/activities',
+        icon: 'BarChart3',
+        actions: {
+          view: ['view_work_queue'],
+        },
+      },
+      {
+        /**
+         * The Trash Bin — deleted tasks, and restoring them.
+         *
+         * A screen, so it carries a path: it was reachable from the sidebar
+         * with no cell behind it, which meant the one destination in the module
+         * that shows other people's deleted work was the one the matrix could
+         * not describe.
+         */
+        key: 'trash',
+        label: 'Deleted Tasks',
+        path: '/wq/deletedtasks',
+        icon: 'Trash2',
+        /**
+         * Its OWN key, not `manage_work_queue`.
+         *
+         * Sharing that key made the bin visible to everyone who could delete a
+         * task - which is every role that runs the queue - so the one screen
+         * showing the whole company's deleted work sat in a task-doer's
+         * sidebar. Deleting your own task and reading everybody's deletions are
+         * different powers and now have different keys.
+         */
+        actions: {
+          view: ['manage_work_queue_trash'],
+          delete: ['manage_work_queue_trash'],
+          approve: ['manage_work_queue_trash'],
+        },
+      },
+      {
+        key: 'administration',
+        label: 'Work Queue Administration',
+        path: null,
+        // The trash bin, restore and bulk status/delete — kept apart from
+        // ordinary edit/complete for the same reason MANAGE_ORDERS is its own
+        // cell on Booking History: undoing or bulk-changing other people's
+        // tasks is not the same grant as working your own.
+        actions: {
+          delete: ['manage_work_queue'],
+          approve: ['manage_work_queue'],
+        },
+      },
+    ],
+  },
+
   {
     key: 'administration',
     portals: [PORTALS.CUSTOMER, PORTALS.EMPLOYEE],
@@ -730,11 +896,22 @@ export const MODULES = [
          * `manage_users` gates it, and no customer-facing role holds that.
          */
         portals: [PORTALS.CUSTOMER, PORTALS.EMPLOYEE],
+        /*
+         * FOUR ACTIONS, FOUR KEYS.
+         *
+         * All four used to be `manage_users`, which made them one checkbox
+         * wearing four hats: ticking View compiled to the key the create and
+         * edit ROUTES ask for, so a view-only grant was a full grant. See the
+         * note beside CREATE_USERS in config/permissions.js.
+         *
+         * `view` keeps `manage_users` so that entry to the screen is unchanged
+         * for everyone who has it today.
+         */
         actions: {
           view: ['manage_users'],
-          create: ['manage_users'],
-          edit: ['manage_users'],
-          delete: ['manage_users'],
+          create: ['create_users'],
+          edit: ['edit_users'],
+          delete: ['delete_users'],
         },
       },
       {
@@ -753,11 +930,14 @@ export const MODULES = [
          * rather than trying to merge around it.
          */
         portals: [PORTALS.EMPLOYEE],
+        // Four keys, for the same reason `users` above has four: one key across
+        // all four actions cannot express "may read the matrix, may not rewrite
+        // it" - and the matrix is where every other permission is decided.
         actions: {
           view: ['manage_roles'],
-          create: ['manage_roles'],
-          edit: ['manage_roles'],
-          delete: ['manage_roles'],
+          create: ['create_roles'],
+          edit: ['edit_roles'],
+          delete: ['delete_roles'],
         },
       },
     ],

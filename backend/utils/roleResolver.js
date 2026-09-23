@@ -200,10 +200,39 @@ const isPortalOnly = (roleName, roleDoc) =>
 /**
  * The permission set for a role NAME, cached.
  *
- * The union is deliberately one-directional - baseline, then grants, then the
- * legacy flat list, and nothing subtracts. See the note on BASELINE in
- * config/permissions.js for why revocation is a code change rather than a
- * checkbox.
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE MATRIX IS THE ANSWER. THE BASELINE ONLY ANSWERS FOR A ROLE WITH NO ROW.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * This function used to return `baseline(role) UNION grants`, which made the
+ * baseline a FLOOR: a permission compiled into config/permissions.js could not
+ * be taken away by any amount of unticking, because the union put it straight
+ * back. That is a defensible reading of "preserve all existing access", and it
+ * is the reading this file shipped with.
+ *
+ * It is not compatible with the rule the product actually needs: a role with
+ * View and nothing else must not be able to create, edit, delete or approve.
+ * Under a floor that sentence is unsayable for every built-in role — the
+ * Super Admin unticks Create, saves, and the button is still there. A matrix
+ * whose cells do not change anything is not an access control model, it is
+ * decoration.
+ *
+ * So the rule is now: IF THE ROLE HAS A DATABASE ROW, THAT ROW IS THE WHOLE
+ * ANSWER. Ticking grants, unticking revokes, and what an administrator sees in
+ * the matrix is what the server enforces.
+ *
+ * The baseline survives for the one job that genuinely needs a compiled-in
+ * answer: a role with NO row at all. That covers a cold process before the
+ * first `loadRoles()`, a roles collection that has not been seeded, and a
+ * database that cannot be reached — the cases the old comment was really
+ * protecting against. A database problem still cannot lock the business out of
+ * its own ERP.
+ *
+ * `scripts/seed-role-baselines.js` is what makes the switch safe: it writes
+ * each built-in role's baseline into its row as matrix cells, so the first
+ * resolve after this change returns exactly what the role held the day before.
+ * RUN IT BEFORE DEPLOYING. Without it, a role whose row exists but was never
+ * populated resolves to nothing, which presents as "my menu is empty".
  */
 export const resolveRolePermissions = (roleName) => {
   if (!roleName) return [];
@@ -223,9 +252,11 @@ export const resolveRolePermissions = (roleName) => {
     return wildcard;
   }
 
-  const permissions = new Set(baseline);
+  const permissions = new Set();
 
   if (role) {
+    // The row exists, so the row decides. Nothing from the baseline is mixed
+    // in: that is what makes unticking a cell take the permission away.
     for (const key of compileGrants(role.grants)) permissions.add(key);
     for (const key of role.permissions || []) {
       // '*' is not grantable through the matrix or the legacy list. Promoting a
@@ -233,6 +264,9 @@ export const resolveRolePermissions = (roleName) => {
       // visible decision rather than a string somebody can paste into an array.
       if (key && key !== '*') permissions.add(key);
     }
+  } else {
+    // No row: the compiled-in baseline is all there is. See the header above.
+    for (const key of baseline) permissions.add(key);
   }
 
   // Requirement 1: a portal-only role cannot hold anything outside the Customer
@@ -322,6 +356,34 @@ export const setHas = (permissions, key) =>
   permissions.includes('*') || permissions.includes(key);
 
 /**
+ * Does this permission set satisfy a CELL — one sub-module's key list for one
+ * action?
+ *
+ * ANY, not every. A cell lists the keys that ADMIT you, not a set you must hold
+ * all of. Seven cells in the registry name two keys, and every one of them is an
+ * either:
+ *
+ *   administration.customers.view  [manage_customer_users, manage_users]
+ *   inventory.imports.create       [manage_inventory_master, post_stock_in]
+ *   customer_portal.create_booking.view [create_order, view_all_bookings]
+ *
+ * Sales holds `manage_customer_users` and is the audience Customer Management
+ * exists for. Under `every` they failed the check — so `can()` refused the
+ * screen while `menuFor()`, which already asked ANY, put it in their sidebar.
+ * Two functions reading the same registry gave opposite answers about the same
+ * user, and `authorize('manage_customer_users', 'manage_users')` — the guard the
+ * route actually uses — has been OR since the day it was written.
+ *
+ * One predicate now, so a cell means the same thing to the guard, the menu and
+ * the UI's copy of the grants.
+ *
+ * An empty or missing key list satisfies NOBODY. A cell that grants nothing
+ * must not read as permission to do the thing.
+ */
+export const satisfiesCell = (permissions, keys) =>
+  Array.isArray(keys) && keys.length > 0 && keys.some((key) => setHas(permissions, key));
+
+/**
  * May this user take `action` on this sub-module?
  *
  * The matrix-shaped question, for code that would rather ask
@@ -335,8 +397,7 @@ export const setHas = (permissions, key) =>
 export const can = (user, moduleKey, submoduleKey, action) => {
   const keys = keysForGrant(moduleKey, submoduleKey, action);
   if (!keys.length) return false;
-  const permissions = resolveUserPermissions(user);
-  return keys.every((key) => setHas(permissions, key));
+  return satisfiesCell(resolveUserPermissions(user), keys);
 };
 
 /**
@@ -370,20 +431,16 @@ export const menuFor = (user) => {
         // administration module both portals serve.
         .filter((sub) => servesPortal({ portals: sub.portals ?? mod.portals }, portal))
         .filter((sub) => sub.path && !sub.hidden)
-        .filter((sub) => {
-          const keys = sub.actions?.view;
-          if (!Array.isArray(keys) || !keys.length) return false;
-          // ANY, not every: two audiences reach the booking screens by two
-          // different keys, and requiring both would hide them from each.
-          return keys.some((key) => setHas(permissions, key));
-        })
+        // ANY, not every — see satisfiesCell. Two audiences reach the booking
+        // screens by two different keys, and requiring both hides them from each.
+        .filter((sub) => satisfiesCell(permissions, sub.actions?.view))
         .map((sub) => ({
           key: sub.key,
           label: sub.label,
           path: sub.path,
           icon: sub.icon,
           actions: availableActions(sub).filter((action) =>
-            sub.actions[action].every((key) => setHas(permissions, key)),
+            satisfiesCell(permissions, sub.actions[action]),
           ),
         })),
     }))
@@ -402,7 +459,7 @@ export const grantsForUser = (user) => {
   for (const mod of MODULES) {
     for (const sub of mod.submodules) {
       const actions = availableActions(sub).filter((action) =>
-        sub.actions[action].every((key) => setHas(permissions, key)),
+        satisfiesCell(permissions, sub.actions[action]),
       );
       if (actions.length) grants.push({ module: mod.key, submodule: sub.key, actions });
     }
@@ -422,6 +479,7 @@ export default {
   resolveRolePermissions,
   resolveUserPermissions,
   setHas,
+  satisfiesCell,
   can,
   menuFor,
   grantsForUser,
