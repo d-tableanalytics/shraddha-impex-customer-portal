@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite'
+import { fileURLToPath, URL } from 'node:url'
 import react from '@vitejs/plugin-react'
 
 /*
@@ -24,11 +25,26 @@ import react from '@vitejs/plugin-react'
  * If a future portal needs to share code with this one, do NOT reintroduce a
  * relative path into a sibling project: publish it, or duplicate it deliberately
  * the way `Employee portal module/SHARED-CONTRACT.md` describes.
+ *
+ * `@shared` IS BACK, BUT IT POINTS INSIDE THIS FOLDER.
+ *
+ * The FMS screens (src/fms/) are the Employee Portal's own files, duplicated
+ * deliberately and kept verbatim by scripts/fms-port.mjs — which is exactly the
+ * route the paragraph above asks for. They import `@shared/constants/o2d.js`,
+ * so the alias resolves to the vendored copies in src/fms/shared/ rather than
+ * to any sibling project. Nothing outside src/fms/ uses it, the build still
+ * reads nothing outside this directory, and neither workaround above returns:
+ * those two files import nothing at all.
  */
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      '@shared': fileURLToPath(new URL('./src/fms/shared', import.meta.url)),
+    },
+  },
   build: {
     rollupOptions: {
       // Use default chunking strategy

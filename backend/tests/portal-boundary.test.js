@@ -113,7 +113,11 @@ describe('customer vs internal user management', () => {
     // ...and must NOT reach Internal User Management, which is the escalation
     // path: a salesperson who could create staff could create an Admin.
     assert.ok(!users.actions.create.includes('manage_customer_users'));
-    assert.deepEqual(users.actions.create, ['manage_users']);
+    // Creating staff has had its own key since the per-action split
+    // (CREATE_USERS in config/permissions.js); it used to be manage_users.
+    assert.deepEqual(users.actions.create, ['create_users']);
+    // And the customer cell must not carry the staff one.
+    assert.ok(!customers.actions.create.includes('create_users'));
   });
 
   test('the role matrix is editable in exactly one domain', () => {

@@ -13,7 +13,7 @@ import { TableSkeleton } from '../../../components/ui/TableSkeleton';
 import { UserAccessModal } from '../../../components/admin/UserAccessModal';
 import toast from 'react-hot-toast';
 import {
-  canOpenUserManagement, canManageAllUsers, canManageAccount, assignableRolesFor, canManageRoles,
+  canOpenUserManagement, canManageAllUsers, canManageAccount, assignableRolesFor, canManageRoles, canAction,
 } from '../../../utils/permissions';
 
 /**
@@ -227,6 +227,11 @@ export const UserManagement = ({ audience = 'internal' }) => {
    * custom role built with user management and nothing else.
    */
   const mayGrantExtraAccess = isAdmin && canManageRoles(user);
+
+  // Add User follows the create cell for this screen's population — the same
+  // one the server checks. An older server sends no grants: keep the button.
+  const mayAdd = !Array.isArray(user?.grants)
+    || canAction(user, "administration", isCustomerAudience ? "customers" : "users", "create");
 
   // The roles a Super Admin has created. Only an actor who may manage every
   // account can assign one, so nobody else pays for the fetch.
@@ -498,6 +503,7 @@ export const UserManagement = ({ audience = 'internal' }) => {
               />
             )}
           </div>
+          {mayAdd && (
           <Button
             size="sm"
             variant="primary"
@@ -512,6 +518,7 @@ export const UserManagement = ({ audience = 'internal' }) => {
             <UserPlus size={16} className="mr-2" />
             Add User
           </Button>
+          )}
         </div>
       </div>
 

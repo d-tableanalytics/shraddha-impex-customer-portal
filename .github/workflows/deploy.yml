@@ -30,6 +30,12 @@ env:
   # Baked into the bundle at build time; must equal the origin the SPA is served
   # from, or every API call becomes cross-origin and CORS rejects it.
   VITE_API_URL: https://erp.shraddhaimpex.net
+  # The Employee Portal API the FMS screens call (src/fms/). A repository
+  # VARIABLE (Settings → Secrets and variables → Actions → Variables), because
+  # it is an origin, not a secret. Unset builds a bundle with FMS hidden — the
+  # rest of the portal is unaffected. That API must also list SITE_URL in its
+  # CORS_ORIGINS.
+  VITE_EMPLOYEE_API_URL: ${{ vars.EMPLOYEE_API_URL }}
 
 jobs:
   deploy:

@@ -34,6 +34,12 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      # src/fms/ holds verbatim copies of the Employee Portal's FMS screens.
+      # This fails if one was edited here instead of upstream + `npm run fms:sync`.
+      - name: FMS port unmodified
+        working-directory: frontend
+        run: npm run fms:check
+
       - name: Build
         working-directory: frontend
         env:
@@ -41,6 +47,7 @@ jobs:
           # a secret only meant CI could build against an empty value if it went
           # missing. Keep in step with deploy.yml.
           VITE_API_URL: https://erp.shraddhaimpex.net
+          VITE_EMPLOYEE_API_URL: ${{ vars.EMPLOYEE_API_URL }}
         run: npm run build
 
   backend:

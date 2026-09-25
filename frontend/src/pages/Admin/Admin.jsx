@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Users, Boxes, Store, Image as ImageIcon } from "lucide-react";
+import { Users, Boxes, Store, Image as ImageIcon, Key } from "lucide-react";
 import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
 import { Badge } from "../../components/ui/Badge";
 import { useUserStore } from "../../store/userStore";
+import { canManageRoles } from "../../utils/permissions";
 
 export const Admin = () => {
   const navigate = useNavigate();
@@ -22,13 +23,18 @@ export const Admin = () => {
       path: "/admin/users",
     },
     /*
-     * Roles & Permissions is NOT here.
-     *
-     * The matrix grants access across both portals' modules and both
-     * repositories write the same `roles` collection, so it has exactly one
-     * editor — in the Employee Portal. Linking it from here would offer a tile
-     * that 404s: the route is gone from this SPA and the API is portal-gated.
+     * Roles & Permissions — this portal's modules only. The server keeps every
+     * Employee Portal cell as stored on each save (backend/utils/portalGrants.js),
+     * so the two portals' editors cannot strip each other's grants.
      */
+    ...(canManageRoles(user)
+      ? [{
+          name: "Roles & Permissions",
+          desc: "What each role may do in the Customer Portal, screen by screen.",
+          icon: Key,
+          path: "/admin/permissions",
+        }]
+      : []),
     {
       name: "Product Details",
       desc: "Descriptions, product images and videos, by SKU.",

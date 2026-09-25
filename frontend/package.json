@@ -9,7 +9,10 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "fms:check": "node scripts/fms-port.mjs check",
+    "fms:diff": "node scripts/fms-port.mjs diff",
+    "fms:sync": "node scripts/fms-port.mjs sync"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

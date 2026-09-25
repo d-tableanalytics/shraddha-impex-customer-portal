@@ -195,7 +195,8 @@ export const useAdminStore = create((set, get) => ({
   updateRole: async (roleId, updates) => {
     try {
       const role = await adminApi.updateRole(roleId, updates);
-      set((state) => ({ roles: state.roles.map((r) => (r._id === roleId ? role : r)) }));
+      // Merged: the save response carries no `userCount`, which the list shows.
+      set((state) => ({ roles: state.roles.map((r) => (r._id === roleId ? { ...r, ...role } : r)) }));
       return { success: true, role };
     } catch (err) {
       return { success: false, error: err.response?.data?.message || "Failed to update role" };

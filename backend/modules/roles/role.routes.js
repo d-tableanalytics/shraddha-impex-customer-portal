@@ -9,9 +9,8 @@ import {
   getMyAccess,
 } from './role.controller.js';
 import { protect } from '../../middlewares/auth.js';
-import { authorize, PERMISSIONS } from '../../middlewares/rbac.js';
+import { authorize, authorizeModule, PERMISSIONS } from '../../middlewares/rbac.js';
 import { auditLogger } from '../../middlewares/auditLogger.js';
-import { requirePortalModule } from '../../middlewares/portalGuard.js';
 
 const router = express.Router();
 
@@ -31,39 +30,43 @@ router.get('/my-access', getMyAccess);
 /*
  * Everything past this point administers OTHER people's access.
  *
- * TWO GATES, and they answer different questions:
+ * THIS PORTAL HAS ITS OWN EDITOR NOW, SCOPED TO ITS OWN MODULES.
  *
- *   requirePortalModule  is this DOMAIN allowed to offer the role matrix at
- *                        all? The matrix grants access across both portals'
- *                        modules, and both repositories write the same `roles`
- *                        collection — so two editors mean one can strip cells
- *                        the other wrote (see SHARED-CONTRACT.md). The single
- *                        editor lives in the employee domain; here these routes
- *                        404 as though they were never written.
+ * These routes used to sit behind requirePortalModule('administration','roles')
+ * and 404 here, because both repositories write the same `roles` collection and
+ * a second editor could strip cells the first one wrote. That risk is closed on
+ * the server rather than by keeping the screen out: every save here goes
+ * through mergeServedGrants (utils/portalGrants.js), so this portal can change
+ * only the Customer Portal's cells and keeps every Employee Portal cell exactly
+ * as stored. `/registry` offers only this portal's modules.
  *
- *   authorize            does this USER hold manage_roles? Unchanged.
+ * WHO GETS IN. `manage_roles` and its per-action keys are reachable only through
+ * `administration.roles`, which the shared registry tags as the Employee
+ * Portal's. So this portal's domain fence removes them from every non-wildcard
+ * account, and only Super Admin / Admin pass. Widening that needs a registry
+ * change, which is a shared-contract change in both repositories.
  *
- * The portal gate is FIRST and is not a permission check, deliberately: a Super
- * Admin holds the wildcard and satisfies every permission ever written, so a
- * domain fence built out of permissions would fail on exactly the accounts it
- * most needs to contain.
- *
- * `/my-access` above stays open to every signed-in account in both domains — it
- * reports what the caller may do, which is how any sidebar gets drawn.
+ * `/my-access` above stays open to every signed-in account — it reports what
+ * the caller may do, which is how any sidebar gets drawn.
  */
-router.use(requirePortalModule('administration', 'roles'));
 router.use(authorize(PERMISSIONS.MANAGE_ROLES));
+
+// One key per write, as in the Employee Portal: reading the matrix and
+// rewriting it are different authorities.
+const canCreate = authorizeModule('administration', 'roles', 'create');
+const canEdit = authorizeModule('administration', 'roles', 'edit');
+const canDelete = authorizeModule('administration', 'roles', 'delete');
 
 router.get('/', getRoles);
 
 // Static path, declared before any ':id' route would shadow it.
 router.get('/registry', getRegistry);
 
-router.post('/', auditLogger('Create Role'), createRole);
-router.patch('/:id', auditLogger('Update Role'), updateRole);
-router.delete('/:id', auditLogger('Delete Role'), deleteRole);
+router.post('/', canCreate, auditLogger('Create Role'), createRole);
+router.patch('/:id', canEdit, auditLogger('Update Role'), updateRole);
+router.delete('/:id', canDelete, auditLogger('Delete Role'), deleteRole);
 
 // Legacy flat-permission endpoint. Still served - see the note on the handler.
-router.put('/:id/permissions', auditLogger('Update Role Permissions'), updateRolePermissions);
+router.put('/:id/permissions', canEdit, auditLogger('Update Role Permissions'), updateRolePermissions);
 
 export default router;

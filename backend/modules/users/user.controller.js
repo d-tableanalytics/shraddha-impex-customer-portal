@@ -10,8 +10,10 @@ import {
   assignableRoleNames,
   resolveUserPermissions,
   grantsForUser,
+  can,
 } from '../../utils/roleResolver.js';
 import { validateGrants, compileGrants } from '../../config/moduleRegistry.js';
+import { mergeServedGrants, normaliseExtraGrants } from '../../utils/portalGrants.js';
 
 /**
  * Roles an admin may assign.
@@ -103,14 +105,31 @@ const denyIfRoleCombinationInvalid = (res, role, roles) => {
 /**
  * Refuse when the actor may not act on this account. Returns true when it has
  * already answered the request, so callers `if (denied(...)) return;`.
+ *
+ * Asked of the matrix CELL for the action, not of the screen's view key. The
+ * router lets in anyone who may OPEN user administration; which accounts they
+ * may create or change is decided here, per target:
+ *
+ *   a Customer account  administration.customers.<action>  (Sales holds it)
+ *   anyone else         administration.users.<action>      (create_users / edit_users)
+ *
+ * Before this, every write was answered by the view key alone, so a role
+ * granted "view Internal User Management" could create and edit staff. The
+ * built-in roles resolve the same way as before: Sales holds the customers
+ * cells and none of the users cells, and Super Admin / Admin hold everything.
+ *
+ * Suspending an account is an EDIT here, not a delete: it is reversible (the
+ * account is archived and can be reactivated), and Sales suspends customers
+ * today. Delete cells gate nothing yet, because nothing deletes an account.
  */
-const denyIfOutOfScope = (req, res, target, verb) => {
-  if (canManageAllUsers(req.user)) return false;
-  if (isCustomerAccount(target)) return false;
-  res.status(403).json({
-    success: false,
-    message: `You can only ${verb} customer accounts.`,
-  });
+const denyIfOutOfScope = (req, res, target, verb, action = 'edit') => {
+  const customer = isCustomerAccount(target);
+  if (can(req.user, 'administration', customer ? 'customers' : 'users', action)) return false;
+  let message;
+  if (customer) message = `You do not have permission to ${verb} customer accounts.`;
+  else if (canManageAllUsers(req.user)) message = `You do not have permission to ${verb} internal accounts.`;
+  else message = `You can only ${verb} customer accounts.`;
+  res.status(403).json({ success: false, message });
   return true;
 };
 
@@ -163,7 +182,7 @@ export const createUser = async (req, res, next) => {
     // A Sales actor may only create CUSTOMERS. Checked against the role being
     // requested, before anything is written — otherwise the obvious escalation
     // is to POST /users with role: 'Admin'.
-    if (denyIfOutOfScope(req, res, { role: requestedRole }, 'create')) return;
+    if (denyIfOutOfScope(req, res, { role: requestedRole }, 'create', 'create')) return;
     if (denyIfRoleCombinationInvalid(res, requestedRole, req.body.roles)) return;
 
     // Master details are mandatory for a NEW customer, and only meaningful for
@@ -479,8 +498,11 @@ export const updateUserAccess = async (req, res, next) => {
 
     const { extraGrants } = req.body;
 
-    const { grants, error } = validateGrants(extraGrants || []);
+    const { grants: validated, error } = validateGrants(extraGrants || []);
     if (error) return res.status(400).json({ success: false, message: error });
+    // Only this portal's cells are this portal's to change; the rest are
+    // dropped here and kept as stored below.
+    const grants = mergeServedGrants([], validated);
 
     // Rule 3. Compared against the flat keys, because that is what a grant
     // actually means once resolved - a cell the actor cannot satisfy is a cell
@@ -532,7 +554,14 @@ export const updateUserAccess = async (req, res, next) => {
      */
     if (denyIfRoleCombinationInvalid(res, target.role, target.roles)) return;
 
-    target.extraGrants = grants;
+    // Merged, not replaced: extras for the other portal's modules are kept as
+    // stored and cannot be changed from here. See utils/portalGrants.js.
+    const next = normaliseExtraGrants({
+      storedGrants: (target.extraGrants || []).map((g) => (g.toObject ? g.toObject() : g)),
+      incomingGrants: grants,
+    });
+    if (next.error) return res.status(400).json({ success: false, message: next.error });
+    target.extraGrants = next.grants;
     await target.save({ validateBeforeSave: false });
 
     const updated = target.toObject();

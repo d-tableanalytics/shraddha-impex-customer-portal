@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, lazy, Suspense } from "react";
 import {
   Bell,
   Moon,
@@ -17,6 +17,11 @@ import { Drawer } from "../ui/Drawer";
 import toast from "react-hot-toast";
 
 import { isSuperAdmin } from "../../utils/permissions";
+import { useUserStore as useFmsUserStore } from "../../fms/store/userStore";
+import { canUseO2d } from "../../fms/utils/permissions";
+
+// The FMS bell, loaded only for someone who can use FMS.
+const O2dBell = lazy(() => import("../../fms/pages/O2d/O2dBell").then((m) => ({ default: m.O2dBell })));
 const timeAgo = (iso) => {
   if (!iso) return "";
   const diff = Date.now() - new Date(iso).getTime();
@@ -32,6 +37,7 @@ const timeAgo = (iso) => {
 export const Navbar = () => {
   const navigate = useNavigate();
   const { user, logout } = useUserStore();
+  const fmsUser = useFmsUserStore((s) => s.user);
   const {
     sidebarOpen,
     toggleSidebar,
@@ -133,6 +139,12 @@ export const Navbar = () => {
         >
           {isDark ? <Sun size={18} /> : <Moon size={18} />}
         </button>
+
+        {canUseO2d(fmsUser) && (
+          <Suspense fallback={null}>
+            <O2dBell />
+          </Suspense>
+        )}
 
         <button
           onClick={() => setNotificationsOpen(true)}

@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Navbar from "./Navbar";
 import { CommandPalette } from "./CommandPalette";
+import { FmsSession } from "../../fms/FmsSession";
 import { useUserStore } from "../../store/userStore";
 import { Loader2 } from "lucide-react";
 
@@ -21,6 +22,8 @@ export const MainLayout = () => {
         </main>
       </div>
       <CommandPalette />
+      {/* Resolves FMS access against the Employee API; renders nothing. */}
+      <FmsSession />
     </div>
   );
 };

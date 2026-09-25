@@ -10,8 +10,22 @@ import { login } from '../modules/auth/auth.controller.js';
 import { loginLimiter } from '../middlewares/rateLimiters.js';
 import { allowedBrandModels, brandFilter } from '../utils/brandAccess.js';
 
-import { isSuperAdmin } from '../middlewares/rbac.js';
+import { isSuperAdmin, authorize, hasPermission, PERMISSIONS } from '../middlewares/rbac.js';
 const router = express.Router();
+
+/*
+ * THESE ROUTES USED TO NEED NO LOGIN AT ALL.
+ *
+ * This router is mounted at both /api and /api/v1. Under /api/v1 the module
+ * routers mounted first answer these paths, but under /api they were reached
+ * directly: POST /api/orders deducted stock and created an order for anyone,
+ * and GET /api/orders returned every order with its customer's email. They now
+ * carry the same checks as their /api/v1 equivalents:
+ *
+ *   GET  /products/:brand[/:skuCode]  signed in (as /api/v1/products)
+ *   POST /orders                      create_order, for yourself unless you are the desk
+ *   GET  /orders                      view_all_bookings — it lists every customer's orders
+ */
 
 // Helper to match brand parameter to correct Mongoose model
 const getProductModel = (brand) => {
@@ -23,7 +37,7 @@ const getProductModel = (brand) => {
 };
 
 // 1. GET /api/products/:brand - list products with category filter and search on skuCode
-router.get('/products/:brand', async (req, res, next) => {
+router.get('/products/:brand', protect, async (req, res, next) => {
   try {
     const { brand } = req.params;
     const { category, search, limit } = req.query;
@@ -52,7 +66,7 @@ router.get('/products/:brand', async (req, res, next) => {
 });
 
 // 2. GET /api/products/:brand/:skuCode - single product lookup
-router.get('/products/:brand/:skuCode', async (req, res, next) => {
+router.get('/products/:brand/:skuCode', protect, async (req, res, next) => {
   try {
     const { brand, skuCode } = req.params;
     const Model = getProductModel(brand);
@@ -73,7 +87,7 @@ router.get('/products/:brand/:skuCode', async (req, res, next) => {
 });
 
 // 3. POST /api/orders - create an order and adjust product inventory
-router.post('/orders', async (req, res, next) => {
+router.post('/orders', protect, authorize(PERMISSIONS.CREATE_ORDER), async (req, res, next) => {
   /*
    * TRADEOFF NOTE ON CONRENCY AND CONSISTENCY:
    * To ensure bookedQuantity and availableForSale values remain consistent during parallel purchases,
@@ -124,15 +138,18 @@ router.post('/orders', async (req, res, next) => {
     // Total available quantity remains unchanged as stock was just moved from available to booked
     await product.save({ session });
 
-    // Find User by email
-    let userEmail = email ? String(email).trim().toLowerCase() : null;
-    let userDoc = await User.findOne({ email: userEmail }).session(session);
-    if (!userDoc) {
-      // Use default admin or system user
-      userDoc = await User.findOne({ role: 'Admin' }).session(session);
+    // Whose order this is. A customer books for themselves, whatever `email`
+    // says; only the desk (view_all_bookings) books on behalf of an account.
+    // An unknown email is refused — it used to be charged to the first Admin.
+    let userDoc;
+    if (hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS) && email) {
+      const userEmail = String(email).trim().toLowerCase();
+      userDoc = await User.findOne({ email: userEmail }).session(session);
       if (!userDoc) {
-        throw new Error('No user found to associate with the order.');
+        throw new Error(`No account with the email ${userEmail}.`);
       }
+    } else {
+      userDoc = await User.findById(req.user._id).session(session);
     }
 
     const orderId = `SHR-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -164,7 +181,7 @@ router.post('/orders', async (req, res, next) => {
 });
 
 // 4. GET /api/orders - list/filter orders by company and status
-router.get('/orders', async (req, res, next) => {
+router.get('/orders', protect, authorize(PERMISSIONS.VIEW_ALL_BOOKINGS), async (req, res, next) => {
   try {
     const { company, status } = req.query;
     const query = {};

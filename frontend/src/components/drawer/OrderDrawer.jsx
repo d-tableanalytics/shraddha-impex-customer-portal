@@ -72,6 +72,10 @@ export const OrderDrawer = () => {
   // number is limited to the desk that acts on the booking.
   const showBoxNo = canViewLineItemBoxNo(user);
   const isAdmin = isSuperAdmin(user);
+  // The status, PO and resend controls below call routes guarded by
+  // manage_orders, so they are offered on that key rather than on the role
+  // name — a role granted it in Roles & Permissions gets the controls too.
+  const mayManageOrders = hasPermission(user, PERMISSIONS.MANAGE_ORDERS);
 
   const [busy, setBusy] = useState(false);
   const [isEditingPO, setIsEditingPO] = useState(false);
@@ -548,7 +552,7 @@ export const OrderDrawer = () => {
                       </p>
                       {/* Once the PO exists the booking is locked; only an Admin
                           may change it, and the server enforces this regardless. */}
-                      {isAdmin && (
+                      {mayManageOrders && (
                         <button
                           onClick={() => {
                             setNewPO(poRaised ? selectedOrder.poNumber : "");
@@ -876,7 +880,7 @@ export const OrderDrawer = () => {
                       // The delivery log is operational detail. A customer can
                       // neither act on a bounce reason nor resend the mail, so
                       // they are shown the stages and their dates only.
-                      showNotifications={isAdmin}
+                      showNotifications={mayManageOrders}
                       onResend={handleResend}
                       resendingId={resendingEventId}
                     />
@@ -897,7 +901,7 @@ export const OrderDrawer = () => {
               <span className="font-bold text-slate-600">{stageLabel(selectedOrder.status)}</span>
             </span>
 
-            {isAdmin && !TERMINAL_STATUSES.includes(selectedOrder.status) && (() => {
+            {mayManageOrders && !TERMINAL_STATUSES.includes(selectedOrder.status) && (() => {
               const next = nextStageOf(selectedOrder.status);
               const current = normalizeStatus(selectedOrder.status);
               return (

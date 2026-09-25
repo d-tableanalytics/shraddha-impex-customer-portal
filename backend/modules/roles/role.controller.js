@@ -16,6 +16,7 @@ import {
   menuFor,
 } from '../../utils/roleResolver.js';
 import { hasPermission } from '../../middlewares/rbac.js';
+import { mergeServedPermissions, normaliseRoleSave, matrixRules } from '../../utils/portalGrants.js';
 
 /**
  * Role administration - requirement 3, and the screen behind requirements 1-4.
@@ -112,7 +113,9 @@ export const getRegistry = async (req, res, next) => {
        * config/portal.js imports PORTALS from the registry, so the registry
        * importing it back would be a cycle.
        */
-      data: { actions: ACTIONS, modules: registryForClient(currentPortal()) },
+      // `rules` names the cells this portal stores differently (narrowed) or
+      // does not let you change (derived), so the screen draws what is saved.
+      data: { actions: ACTIONS, modules: registryForClient(currentPortal()), rules: matrixRules() },
     });
   } catch (error) {
     next(error);
@@ -150,8 +153,9 @@ export const createRole = async (req, res, next) => {
       name: trimmed,
       slug: slugify(trimmed),
       description: description || '',
-      grants: clean,
-      permissions: [],
+      // Only this portal's cells, with widening cells narrowed — see
+      // normaliseRoleSave in utils/portalGrants.js.
+      ...normaliseRoleSave({ incomingGrants: clean }),
       isSuperAdmin: !!isSuperAdmin,
       isSystem: false,
       portalOnly: !!portalOnly,
@@ -237,7 +241,15 @@ export const updateRole = async (req, res, next) => {
     if (grants !== undefined) {
       const { grants: clean, error } = validateGrants(grants);
       if (error) return res.status(400).json({ success: false, message: error });
-      role.grants = clean;
+      // Merged, not replaced: this portal's cells from the request, every other
+      // portal's cells as stored. See utils/portalGrants.js.
+      const next = normaliseRoleSave({
+        storedGrants: (role.grants || []).map((g) => (g.toObject ? g.toObject() : g)),
+        storedPermissions: role.permissions || [],
+        incomingGrants: clean,
+      });
+      role.grants = next.grants;
+      role.permissions = next.permissions;
     }
 
     await role.save();
@@ -269,13 +281,15 @@ export const updateRolePermissions = async (req, res, next) => {
     // route to unrestricted access.
     const clean = permissions.filter((p) => typeof p === 'string' && p && p !== '*');
 
+    const existing = await Role.findById(req.params.id).select('permissions').lean();
+    if (!existing) return res.status(404).json({ success: false, message: 'Role not found' });
+
+    // Merged like grants: another portal's flat keys stay as stored.
     const role = await Role.findByIdAndUpdate(
       req.params.id,
-      { permissions: clean },
+      { permissions: mergeServedPermissions(existing.permissions, clean) },
       { new: true, runValidators: true },
     );
-
-    if (!role) return res.status(404).json({ success: false, message: 'Role not found' });
 
     await loadRoles();
     res.status(200).json({ success: true, data: present(role.toObject()) });

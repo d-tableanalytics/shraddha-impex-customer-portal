@@ -1,4 +1,4 @@
-import { PERMISSIONS, hasPermission, homePathFor } from "./permissions";
+import { PERMISSIONS, hasPermission, homePathFor, canManageRoles } from "./permissions";
 
 /**
  * Turns the user's access into the sidebar's groups.
@@ -138,6 +138,34 @@ const fallbackMenu = (user) =>
  * modules can both have a sub-module called "dashboard", and labels are not
  * identifiers.
  */
+/**
+ * Roles & Permissions, added on the client.
+ *
+ * The shared registry tags `administration.roles` as the Employee Portal's, so
+ * this server's menu never carries it — and retagging it is a shared-contract
+ * change. The screen and its API now exist here (scoped to this portal's
+ * modules), gated on `manage_roles`, so the entry is drawn from that same key.
+ */
+const ROLES_ITEM = {
+  id: "administration.roles",
+  key: "roles",
+  label: "Roles & Permissions",
+  path: "/admin/permissions",
+  icon: "Key",
+};
+
+const withRolesItem = (groups, user) => {
+  if (!canManageRoles(user)) return groups;
+  const at = groups.findIndex((g) => g.key === "administration");
+  if (at >= 0) {
+    if (groups[at].items.some((i) => i.path === ROLES_ITEM.path)) return groups;
+    const next = [...groups];
+    next[at] = { ...groups[at], items: [...groups[at].items, ROLES_ITEM] };
+    return next;
+  }
+  return [...groups, { key: "administration", label: "Administration", icon: "ShieldCheck", alwaysGrouped: false, items: [ROLES_ITEM] }];
+};
+
 export const buildNavigation = (user) => {
   const menu = Array.isArray(user?.menu) && user.menu.length ? user.menu : fallbackMenu(user);
 
@@ -152,7 +180,7 @@ export const buildNavigation = (user) => {
    */
   const homePath = homePathFor(user);
 
-  return menu
+  const groups = menu
     .map((mod) => ({
       key: mod.key,
       label: mod.label,
@@ -170,6 +198,8 @@ export const buildNavigation = (user) => {
         })),
     }))
     .filter((mod) => mod.items.length > 0);
+
+  return withRolesItem(groups, user);
 };
 
 export default buildNavigation;

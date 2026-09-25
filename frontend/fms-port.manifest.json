@@ -1,0 +1,163 @@
+{
+  "description": "Verbatim copies of the Employee Portal FMS (O2D) screens. Do not edit these here; see scripts/fms-port.mjs.",
+  "upstream": "Employee portal module/frontend",
+  "syncedAt": "2026-09-25T07:25:24.065Z",
+  "files": {
+    "src/fms/shared/constants/o2d.js": {
+      "from": "../backend/shared/constants/o2d.js",
+      "sha256": "7e385d7ec8fadd51fcfab939069acf7de4d4116739248ad92082c82a739a0179"
+    },
+    "src/fms/shared/constants/o2dStageFields.js": {
+      "from": "../backend/shared/constants/o2dStageFields.js",
+      "sha256": "09797c11fecdcb90bb973204a20376ddb9ddf24d6ae00d3f09af1f9b34716c38"
+    },
+    "src/fms/components/common/PageHeader.jsx": {
+      "from": "src/components/common/PageHeader.jsx",
+      "sha256": "c80239f6eef6733ed17a1957fdbc56d6b000e536920c2d8400e4008089a06e1f"
+    },
+    "src/fms/components/hrms/ErrorState.jsx": {
+      "from": "src/components/hrms/ErrorState.jsx",
+      "sha256": "0d4291c4eb4106616d60bf97e604e2e3719ce778ffc78d14e46856a7e2c821c3"
+    },
+    "src/fms/components/hrms/FilterBar.jsx": {
+      "from": "src/components/hrms/FilterBar.jsx",
+      "sha256": "4ca93f459d04f12ac0201407b73ce7b5bd4dfb22701d9f918b4b22e617cd5c4c"
+    },
+    "src/fms/components/hrms/HrmsDataTable.jsx": {
+      "from": "src/components/hrms/HrmsDataTable.jsx",
+      "sha256": "8b9bac6d2affc18b2350e88aa393d325a66cf150ff6c629341a6b88fd3253714"
+    },
+    "src/fms/components/hrms/SearchableSelect.jsx": {
+      "from": "src/components/hrms/SearchableSelect.jsx",
+      "sha256": "99f1f41db22d85c47166faa4f424e2ea03457aa5412bf205375828c72747e4ec"
+    },
+    "src/fms/components/o2d/O2dProtectedRoute.jsx": {
+      "from": "src/components/o2d/O2dProtectedRoute.jsx",
+      "sha256": "089c3c018fc57dff3a99ff1ebe45b0456726208a11223b394426acbf4cf23a9c"
+    },
+    "src/fms/components/ui/Badge.jsx": {
+      "from": "src/components/ui/Badge.jsx",
+      "sha256": "3267e2fe8b74e41ff6bc40fb0bc7db93c687b083283a07f89b44fe7773c3f097"
+    },
+    "src/fms/components/ui/Button.jsx": {
+      "from": "src/components/ui/Button.jsx",
+      "sha256": "b17dfa3e26b55c18936fdf515a13b6199c5ae18e9f393b6969188d8330cb0617"
+    },
+    "src/fms/components/ui/Drawer.jsx": {
+      "from": "src/components/ui/Drawer.jsx",
+      "sha256": "da794386a45dab703486b80e32dddcca1edbf11856999e3ecbd8cebfa9d2440a"
+    },
+    "src/fms/components/ui/EmptyState.jsx": {
+      "from": "src/components/ui/EmptyState.jsx",
+      "sha256": "926c9eb83cb7f6e55f5fe6c8a6d78321de8d930d1c960039267970606096143f"
+    },
+    "src/fms/components/ui/LoadingSpinner.jsx": {
+      "from": "src/components/ui/LoadingSpinner.jsx",
+      "sha256": "8a916da3417aaf384c88dd432538b37fee8d766564178e246f8ac0b4b6cfc2d8"
+    },
+    "src/fms/components/ui/Pagination.jsx": {
+      "from": "src/components/ui/Pagination.jsx",
+      "sha256": "74b51433dd06256b6082701c608f2552e5c491ee2af1b7fa25f00292db1c5adf"
+    },
+    "src/fms/components/ui/SkeletonLoader.jsx": {
+      "from": "src/components/ui/SkeletonLoader.jsx",
+      "sha256": "4be360cf30a14850028e3bbe89528321f971d3336f23130a00d704c3e0b029f6"
+    },
+    "src/fms/components/ui/TableSkeleton.jsx": {
+      "from": "src/components/ui/TableSkeleton.jsx",
+      "sha256": "c36b9b1d538fb896dbd469be36cf657395679db48410bd537a6e5454f8b04b4d"
+    },
+    "src/fms/pages/O2d/AnalyticsTab.jsx": {
+      "from": "src/pages/O2d/AnalyticsTab.jsx",
+      "sha256": "35314e2c759e4e06c7ae0eeab9f7815d1cb4b7674a44633ff70ae57c68851145"
+    },
+    "src/fms/pages/O2d/CompleteStageModal.jsx": {
+      "from": "src/pages/O2d/CompleteStageModal.jsx",
+      "sha256": "a4640fa4b452053917b23cc90ed53172e91563415641606dde0db6b7b5e9e174"
+    },
+    "src/fms/pages/O2d/NewOrderPage.jsx": {
+      "from": "src/pages/O2d/NewOrderPage.jsx",
+      "sha256": "7fbd8d14360c2ac1ab303955c2617f56ebcc0d24294d01b886d6ecb9839ef2f6"
+    },
+    "src/fms/pages/O2d/O2dBell.jsx": {
+      "from": "src/pages/O2d/O2dBell.jsx",
+      "sha256": "63dac01b4a3049cfacc2c534a28c7c2a7456c53e8592c92ff6eec319d033eb95"
+    },
+    "src/fms/pages/O2d/O2dPage.jsx": {
+      "from": "src/pages/O2d/O2dPage.jsx",
+      "sha256": "c054a3cc2d9613d2676c53dbb10df206d237c6e73f412e8705e86fc4cbfb2b29"
+    },
+    "src/fms/pages/O2d/OrderDrawer.jsx": {
+      "from": "src/pages/O2d/OrderDrawer.jsx",
+      "sha256": "c3656bcecf19a1ec430d3b18d9098c4f8920708313d371314c58648a71d05ab2"
+    },
+    "src/fms/pages/O2d/ReopenStageModal.jsx": {
+      "from": "src/pages/O2d/ReopenStageModal.jsx",
+      "sha256": "3f7eb8185703a8dcc176f10324865f654d9fe4d021020f1f5898e239ab0ae5f0"
+    },
+    "src/fms/pages/O2d/StageTaskModal.jsx": {
+      "from": "src/pages/O2d/StageTaskModal.jsx",
+      "sha256": "23805c0b1872396e5f973fb60475996066db603787887f2ae1a7b818bf10d64f"
+    },
+    "src/fms/pages/O2d/StagesTab.jsx": {
+      "from": "src/pages/O2d/StagesTab.jsx",
+      "sha256": "c237531500ddeb9451671fd1ddcef4754087e63346a7c71ef7788cf5b7a02cb3"
+    },
+    "src/fms/pages/O2d/o2dShared.jsx": {
+      "from": "src/pages/O2d/o2dShared.jsx",
+      "sha256": "e2510ca49be0147811e7ab895134988a02f8b33f6f5b96f04bcab1b67c8db7ce"
+    },
+    "src/fms/pages/O2d/o2d.test.jsx": {
+      "from": "src/pages/O2d/o2d.test.jsx",
+      "sha256": "e06ca62fc65cef98bcade3c35e3d4a2592b6baa3af3a232ab6ca5ec3131231fe"
+    },
+    "src/fms/pages/O2d/stages.test.jsx": {
+      "from": "src/pages/O2d/stages.test.jsx",
+      "sha256": "b24eccf80366fb93a19eb670815cfbfe7c2819ff2d689eb52ee0030471d6373e"
+    },
+    "src/fms/pages/O2d/completeStage.test.jsx": {
+      "from": "src/pages/O2d/completeStage.test.jsx",
+      "sha256": "a47bd223eaf8ead28db82956c19389862a89b6c8b1fc0f34548b115a6d921694"
+    },
+    "src/fms/pages/O2d/newOrder.test.jsx": {
+      "from": "src/pages/O2d/newOrder.test.jsx",
+      "sha256": "d4679215e6e35f3cc18f6f5f0b28cd2c4e16b11a86d1f9bad91d9094f2fb0330"
+    },
+    "src/fms/pages/O2d/stageChecklist.test.jsx": {
+      "from": "src/pages/O2d/stageChecklist.test.jsx",
+      "sha256": "c41b543aca944b7796bcb217f811cccfaa58b878fe1e2513ed57b1ecb9cc75f9"
+    },
+    "src/fms/pages/O2d/mirrorSurface.test.jsx": {
+      "from": "src/pages/O2d/mirrorSurface.test.jsx",
+      "sha256": "af7f4ba44babfb664d464df5cdec69067623aa1b4cb6e953dfbe6c672fb02800"
+    },
+    "src/fms/pages/O2d/reopenStage.test.jsx": {
+      "from": "src/pages/O2d/reopenStage.test.jsx",
+      "sha256": "33b5b62e7a2ac8f30c6381a81dd939361a132d9d7b2978059b4f8425f621d3c1"
+    },
+    "src/fms/pages/O2d/stageDetails.test.jsx": {
+      "from": "src/pages/O2d/stageDetails.test.jsx",
+      "sha256": "61d19778c54aa605e6388028f0ef9b987d8669cce3069f87e917d48d7e51dc91"
+    },
+    "src/fms/services/o2d/client.js": {
+      "from": "src/services/o2d/client.js",
+      "sha256": "cdb746a457a4d716fb1c0564f11e57d7609f7a391e9692919be8b7645693e97f"
+    },
+    "src/fms/services/o2d/orders.js": {
+      "from": "src/services/o2d/orders.js",
+      "sha256": "e35d3398c7fecd2d5ca0061e1a21e6543291427ce4e6f7a15240dc895d5232e2"
+    },
+    "src/fms/services/delegation.js": {
+      "from": "src/services/delegation.js",
+      "sha256": "49a701ad82bf18a043337acfad073d89c2349e46e8fb7fe975fba88a0c813293"
+    },
+    "src/fms/services/fileUrl.js": {
+      "from": "src/services/fileUrl.js",
+      "sha256": "7f756a39061f4ebcc9dd05aca7f95613d4af91986bb11bbd065cf5749579cc44"
+    },
+    "src/fms/utils/permissions.js": {
+      "from": "src/utils/permissions.js",
+      "sha256": "873790f2a7ae9d3e4a3c4c143373d107fcd29417e18ada988c9ad9acee7a7ca4"
+    }
+  }
+}

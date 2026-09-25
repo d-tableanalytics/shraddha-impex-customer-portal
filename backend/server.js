@@ -9,6 +9,7 @@ import { describePortal } from './config/portal.js';
 import { runReservationExpiryChecks } from './modules/reservations/reservationExpiryJob.js';
 import { runPoSettlement } from './modules/orders/poExpiryJob.js';
 import { seedDefaultRoles } from './config/seedRoles.js';
+import { loadRoles } from './utils/roleResolver.js';
 import { seedInventoryDefaults } from './config/seedInventory.js';
 import { seedAlertRules } from './config/seedAlertRules.js';
 import { subscribeAlerts } from './modules/inventory/alert.subscriber.js';
@@ -100,6 +101,19 @@ const startServer = async () => {
 
   // Seed the default RBAC roles if the collection is empty.
   await seedDefaultRoles();
+
+  /*
+   * Keep the role cache in step with writes made ELSEWHERE.
+   *
+   * The resolver answers from an in-memory copy of `roles`, refreshed at boot
+   * and after this process's own role saves. The Employee Portal writes the
+   * same collection from its own Roles & Permissions screen, and
+   * `npm run roles:baseline:apply` writes it directly — neither reached this
+   * process until a restart. A dozen small documents every minute is the cheap
+   * answer; loadRoles() never throws and keeps its last snapshot on failure.
+   */
+  const ROLE_REFRESH_MS = Number(process.env.ROLE_CACHE_REFRESH_MS) || 60_000;
+  setInterval(() => { loadRoles(); }, ROLE_REFRESH_MS).unref();
 
   // Seed the IMS master data (default stock location, global inventory
   // configuration). Idempotent — only fires when the collections are empty.

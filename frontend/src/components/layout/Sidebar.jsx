@@ -28,6 +28,9 @@ import {
   BarChart3,
   Circle,
   X,
+  ListChecks,
+  Truck,
+  Ban,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useUIStore } from "../../store/uiStore";
@@ -35,6 +38,8 @@ import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
 import { homePathFor } from "../../utils/permissions";
 import { buildNavigation } from "../../utils/navigation";
+import { useUserStore as useFmsUserStore } from "../../fms/store/userStore";
+import { fmsNavGroup, withFmsGroup } from "../../fms/navigation";
 
 /**
  * Icon names travel from the backend registry as strings; this is where they
@@ -50,6 +55,8 @@ const ICONS = {
   LayoutDashboard, PlusCircle, UploadCloud, History, PackageX, Boxes, Users,
   Settings, HelpCircle, FileCheck2, Warehouse, ScrollText, Activity,
   GaugeCircle, Upload, Images, Store, ShieldCheck, LayoutGrid, Key, BarChart3,
+  // FMS (src/fms/navigation.js).
+  ListChecks, Truck, Ban,
 };
 
 // The registry sends icons as NAMES, and this is where they become components.
@@ -115,6 +122,9 @@ export const Sidebar = () => {
   const cartItems = useCartStore((state) => state.items);
 
   const { user, logout } = useUserStore();
+  // The user as the Employee API resolves them — the only answer that can
+  // include FMS. Null until it loads, and for anyone FMS is not offered to.
+  const fmsUser = useFmsUserStore((s) => s.user);
   const location = useLocation();
   const isDesktop = useIsDesktop();
 
@@ -176,7 +186,7 @@ export const Sidebar = () => {
    * into groups. The presentation decisions that genuinely belong to the
    * sidebar - the cart badge, which group is open - stay here.
    */
-  const erpGroups = buildNavigation(user);
+  const erpGroups = withFmsGroup(buildNavigation(user), fmsNavGroup(fmsUser));
 
   /**
    * Administration sits at the BOTTOM of the rail, under everything it

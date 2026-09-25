@@ -383,8 +383,14 @@ export const canManageAllUsers = (user) => hasPermission(user, PERMISSIONS.MANAG
  * server is the authority - it re-checks every read and write - and this exists
  * so a salesperson is not shown an Edit button that will 403.
  */
-export const canManageAccount = (user, account) =>
-  canManageAllUsers(user) || (account?.role || "Customer") === "Customer";
+export const canManageAccount = (user, account, action = "edit") => {
+  const isCustomerAccount = (account?.role || "Customer") === "Customer";
+  // An older server sends no grants; keep the old rule rather than hide every button.
+  if (!Array.isArray(user?.grants)) return canManageAllUsers(user) || isCustomerAccount;
+  // The same cell the server checks (user.controller.js denyIfOutOfScope):
+  // customers.<action> for a Customer account, users.<action> for staff.
+  return canAction(user, "administration", isCustomerAccount ? "customers" : "users", action);
+};
 
 /**
  * Roles this actor may assign when creating an account.

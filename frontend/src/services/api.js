@@ -63,7 +63,9 @@ const clearSessionAndRedirect = () => {
   }
 };
 
-async function refreshAccessToken() {
+// Exported for the FMS transport (src/fms/services/api.js), which must share
+// this single flight rather than run a refresh of its own.
+export async function refreshAccessToken() {
   if (!refreshPromise) {
     refreshPromise = api
       .post('/auth/refresh', {}, { _skipAuthRefresh: true })
