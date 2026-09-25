@@ -21,6 +21,8 @@
     "verify:pricing": "node scripts/verify-pricing.js",
     "pricelist": "node scripts/import-pricelist.js",
     "pricelist:apply": "node scripts/import-pricelist.js --apply",
+    "roles:baseline": "node scripts/seed-role-baselines.js",
+    "roles:baseline:apply": "node scripts/seed-role-baselines.js --apply",
     "report:check": "node scripts/send-inventory-report.js --check",
     "report:dry-run": "node scripts/send-inventory-report.js --dry-run",
     "report:history": "node scripts/send-inventory-report.js --history",

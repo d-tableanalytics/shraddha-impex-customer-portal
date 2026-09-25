@@ -232,9 +232,13 @@ if (!sampleOrderId) {
       const sum = quote.lines.reduce((n, l) => n + (l.amounts[k] ?? 0), 0);
       return Math.abs(sum - quote.totals[k].amount) < 0.01;
     }));
+  // Compared against the rows read BEFORE quoting, not against "unpriced": the
+  // newest booking may well have been priced when its PO was raised.
+  const pricingOf = (docs) => JSON.stringify(docs
+    .map((r) => [String(r._id), r.priceType ?? null, r.unitPrice ?? null, r.pricedAt ?? null])
+    .sort());
   check('quoting stored nothing — the booking is untouched',
-    (await Order.findOne({ orderId: sampleOrderId }).lean()).priceType === undefined
-    || (await Order.findOne({ orderId: sampleOrderId }).lean()).priceType === null);
+    pricingOf(await Order.find({ orderId: sampleOrderId }).lean()) === pricingOf(rows));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
