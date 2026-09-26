@@ -160,10 +160,10 @@ export const ReserveUpcomingModal = ({ open, items, initialKey, userName, onClos
                 </datalist>
               </div>
               <Input
-                label="Indent Reference"
+                label="Reservation Ref"
                 value={indentNo}
                 onChange={(e) => setIndentNo(e.target.value)}
-                helperText="Generated automatically — edit if needed."
+                helperText="To reserve for an open indent, use the SKU details panel."
                 disabled={item.remaining === 0}
               />
               <div className="flex flex-col gap-2">

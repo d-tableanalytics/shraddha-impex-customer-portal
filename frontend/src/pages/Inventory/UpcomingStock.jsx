@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Search, X, RotateCcw, Upload, Download, BookmarkPlus, Warehouse, Ship, Lock, PackageCheck,
   CalendarClock, Info, Undo2,
@@ -12,12 +12,15 @@ import { Pagination } from '../../components/ui/Pagination';
 import { PageHeader } from '../../components/common/PageHeader';
 import { ImportUpcomingModal } from '../../components/inventory/ImportUpcomingModal';
 import { ReserveUpcomingModal } from '../../components/inventory/ReserveUpcomingModal';
+import { IndentReservationSection } from '../../components/inventory/IndentReservationSection';
+import { reservationsApi } from '../../services/reservations';
 import { useUpcomingStockStore } from '../../store/upcomingStockStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import { exportToExcel } from '../../utils/exportUtils';
 import {
   derive, STATUS, STATUS_ORDER, STATUS_HELP, formatDate, formatDateTime, relativeArrival, daysUntil,
+  fromLiveIndent, indentLinesFor, indentSummary, OPEN_INDENT_STATUSES,
 } from '../../utils/upcomingStockMock';
 
 /**
@@ -120,10 +123,11 @@ const SummaryCard = ({ icon: Icon, tone, label, value, hint }) => (
  * SKU detail drawer — the full breakdown: position, the arithmetic, every
  * inbound shipment and every reservation held against it.
  */
-const UpcomingPanel = ({ item, onClose, onReserve, onRelease }) => {
+const UpcomingPanel = ({ item, indentLines, live, userName, onClose, onReserve, onRelease }) => {
   const [confirming, setConfirming] = useState(null);
   const total = item.actual + item.upcoming;
   const pct = (v) => (total ? `${(v / total) * 100}%` : '0%');
+  const againstIndents = item.reservations.filter((r) => r.indentRef).length;
 
   return (
     <motion.aside
@@ -161,6 +165,8 @@ const UpcomingPanel = ({ item, onClose, onReserve, onRelease }) => {
           </div>
         </div>
 
+        <IndentReservationSection item={item} lines={indentLines} live={live} userName={userName} />
+
         {/* Actual vs upcoming, on one scale. */}
         <div>
           <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Actual vs upcoming</h4>
@@ -188,7 +194,9 @@ const UpcomingPanel = ({ item, onClose, onReserve, onRelease }) => {
             </div>
             <div>
               Reserved  = {item.reservations.map((r) => r.qty.toLocaleString()).join(' + ') || '0'} = {item.reserved.toLocaleString()}
-              <span className="text-slate-400"> ({item.reservations.length} indent{item.reservations.length === 1 ? '' : 's'})</span>
+              <span className="text-slate-400">
+                {' '}({item.reservations.length} reservation{item.reservations.length === 1 ? '' : 's'}, {againstIndents} against indents)
+              </span>
             </div>
             <div className="mt-2 pt-2 border-t border-slate-200">
               Remaining = {item.upcoming.toLocaleString()} − {item.reserved.toLocaleString()} = <strong>{item.remaining.toLocaleString()}</strong>
@@ -226,7 +234,7 @@ const UpcomingPanel = ({ item, onClose, onReserve, onRelease }) => {
 
         <div>
           <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-            Reservations (indent) · {item.reserved.toLocaleString()} {item.uom}
+            Reservations · {item.reserved.toLocaleString()} {item.uom}
           </h4>
           <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
             {item.reservations.length === 0 && (
@@ -237,8 +245,17 @@ const UpcomingPanel = ({ item, onClose, onReserve, onRelease }) => {
                 <div className="min-w-0">
                   <p className="text-sm font-bold text-slate-800 truncate">{r.customer}</p>
                   <p className="text-[11px] text-slate-500">
-                    <span className="font-mono">{r.indentNo}</span> · {formatDateTime(r.reservedAt)} · {r.by}
+                    {r.indentRef
+                      ? <>Indent <span className="font-mono font-semibold text-slate-700">{r.indentNo}</span></>
+                      : <span className="font-mono">{r.indentNo}</span>}
+                    {' '}· {formatDateTime(r.reservedAt)} · {r.by}
                   </p>
+                  {r.indentRef && (
+                    <p className="text-[11px] text-slate-400">
+                      {r.qty.toLocaleString()} of {r.indentRef.requiredQty.toLocaleString()} required
+                      {r.indentRef.source === 'live' && ' · live indent'}
+                    </p>
+                  )}
                   {r.note && <p className="text-[11px] text-slate-400 truncate">{r.note}</p>}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -347,7 +364,43 @@ export const UpcomingStock = () => {
     return [...byRef.values()].sort((a, b) => a.eta.localeCompare(b.eta));
   }, [items]);
 
+  /*
+   * Open indents from Indent History, READ-ONLY. The same endpoint and the same
+   * scoping Indent History uses (GET /reservations/pending): the desk roles see
+   * every customer's, a customer only their own. Nothing is written back — a
+   * reservation made against one of these is held in the demo store. If the
+   * read fails the panel falls back to the demo indents alone.
+   */
+  const [liveIndents, setLiveIndents] = useState([]);
+  const [live, setLive] = useState({ state: 'loading', count: 0 });
+  useEffect(() => {
+    let cancelled = false;
+    reservationsApi.getPending()
+      .then((rows) => {
+        if (cancelled) return;
+        const open = (Array.isArray(rows) ? rows : [])
+          .filter((r) => OPEN_INDENT_STATUSES.includes(r.status))
+          .map(fromLiveIndent);
+        setLiveIndents(open);
+        setLive({ state: 'ready', count: open.length });
+      })
+      .catch(() => { if (!cancelled) setLive({ state: 'error', count: 0 }); });
+    return () => { cancelled = true; };
+  }, []);
+
   const selected = selectedKey ? items.find((i) => i.key === selectedKey) : null;
+  const selectedIndents = useMemo(
+    () => (selected ? indentLinesFor(selected, liveIndents) : []),
+    [selected, liveIndents],
+  );
+  // Per-SKU indent coverage for the table: how many open indents are fully reserved.
+  const indentStats = useMemo(
+    () => new Map(items.map((i) => [i.key, indentSummary(indentLinesFor(i, liveIndents))])),
+    [items, liveIndents],
+  );
+  const liveForSelected = selected
+    ? { ...live, count: liveIndents.filter((l) => l.skuCode?.toLowerCase() === selected.skuCode.toLowerCase()).length }
+    : live;
 
   const withFilter = (setter) => (v) => { setter(v); setPage(1); };
   const resetFilters = () => { setSearch(''); setBrand(''); setStatus(''); setArrival(''); setSort('eta-asc'); setPage(1); };
@@ -579,7 +632,17 @@ export const UpcomingStock = () => {
                           : <span className="font-semibold text-slate-800">{i.actual.toLocaleString()}</span>}
                       </td>
                       <td className="px-5 py-4 text-right font-semibold text-slate-800 tabular-nums">{i.upcoming.toLocaleString()}</td>
-                      <td className="px-5 py-4 text-right font-semibold text-slate-500 tabular-nums">{i.reserved.toLocaleString()}</td>
+                      <td className="px-5 py-4 text-right tabular-nums">
+                        <span className="font-semibold text-slate-500">{i.reserved.toLocaleString()}</span>
+                        {indentStats.get(i.key)?.count > 0 && (
+                          <span
+                            className="block text-[11px] font-medium text-slate-400 whitespace-nowrap"
+                            title="Open indents for this SKU that are fully reserved from upcoming stock"
+                          >
+                            {indentStats.get(i.key).covered}/{indentStats.get(i.key).count} indent{indentStats.get(i.key).count === 1 ? '' : 's'} covered
+                          </span>
+                        )}
+                      </td>
                       <td className="px-5 py-4 text-right">
                         <span className="font-bold text-primary-700 tabular-nums">{i.remaining.toLocaleString()}</span>
                         <ReserveBar item={i} className="w-20 ml-auto mt-1.5" />
@@ -634,7 +697,8 @@ export const UpcomingStock = () => {
         <Info size={16} className="text-slate-500 shrink-0 mt-0.5" />
         <p className="text-xs text-slate-600 leading-relaxed flex-1 min-w-60">
           <strong>Demo data.</strong> Upcoming stock, reservations and imports on this screen are held in this browser
-          tab only. They do not change Inventory Master, Inventory Health or the stock ledger.
+          tab only. They do not change Inventory Master, Inventory Health or the stock ledger. Open indents from
+          Indent History are read so they can be reserved against, but the indents themselves are never changed.
           {lastImport && (
             <> Last import: <span className="font-semibold">{lastImport.fileName}</span> · {formatDateTime(lastImport.importedAt)}.</>
           )}
@@ -658,6 +722,9 @@ export const UpcomingStock = () => {
             <UpcomingPanel
               key={selected.key}
               item={selected}
+              indentLines={selectedIndents}
+              live={liveForSelected}
+              userName={user?.user || user?.name}
               onClose={() => setSelectedKey(null)}
               onReserve={(key) => setReserveFor(key)}
               onRelease={handleRelease(selected)}
