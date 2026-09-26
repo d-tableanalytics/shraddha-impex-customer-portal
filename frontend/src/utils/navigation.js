@@ -166,6 +166,30 @@ const withRolesItem = (groups, user) => {
   return [...groups, { key: "administration", label: "Administration", icon: "ShieldCheck", alwaysGrouped: false, items: [ROLES_ITEM] }];
 };
 
+/**
+ * Upcoming Stock, added on the client — DEMO screen on mock data.
+ *
+ * It has no registry entry (it has no API to guard), so the server's menu never
+ * carries it. It is placed directly after Inventory Health and only where Health
+ * is offered, which is also the cell its route checks.
+ */
+const UPCOMING_ITEM = {
+  id: "inventory.upcoming",
+  key: "upcoming",
+  label: "Upcoming Stock",
+  path: "/inventory/upcoming",
+  icon: "CalendarClock",
+};
+
+const withUpcomingItem = (groups) =>
+  groups.map((g) => {
+    const at = g.items.findIndex((i) => i.path === "/inventory/health");
+    if (at < 0 || g.items.some((i) => i.path === UPCOMING_ITEM.path)) return g;
+    const items = [...g.items];
+    items.splice(at + 1, 0, UPCOMING_ITEM);
+    return { ...g, items };
+  });
+
 export const buildNavigation = (user) => {
   const menu = Array.isArray(user?.menu) && user.menu.length ? user.menu : fallbackMenu(user);
 
@@ -199,7 +223,7 @@ export const buildNavigation = (user) => {
     }))
     .filter((mod) => mod.items.length > 0);
 
-  return withRolesItem(groups, user);
+  return withRolesItem(withUpcomingItem(groups), user);
 };
 
 export default buildNavigation;

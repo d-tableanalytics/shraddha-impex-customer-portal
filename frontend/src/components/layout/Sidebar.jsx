@@ -31,6 +31,7 @@ import {
   ListChecks,
   Truck,
   Ban,
+  CalendarClock,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useUIStore } from "../../store/uiStore";
@@ -57,6 +58,8 @@ const ICONS = {
   GaugeCircle, Upload, Images, Store, ShieldCheck, LayoutGrid, Key, BarChart3,
   // FMS (src/fms/navigation.js).
   ListChecks, Truck, Ban,
+  // Upcoming Stock demo (utils/navigation.js).
+  CalendarClock,
 };
 
 // The registry sends icons as NAMES, and this is where they become components.

@@ -26,6 +26,9 @@ const Inventory = lazy(() => import("../pages/Inventory/Inventory").then(m => ({
 const InventoryMaster = lazy(() => import("../pages/Inventory/InventoryMaster").then(m => ({ default: m.InventoryMaster })));
 const StockLedger = lazy(() => import("../pages/Inventory/StockLedger").then(m => ({ default: m.StockLedger })));
 const InventoryHealth = lazy(() => import("../pages/Inventory/InventoryHealth").then(m => ({ default: m.InventoryHealth })));
+// Upcoming Stock — DEMO screen on mock data (no API). Opens for anyone who
+// can open Inventory Health, the screen it sits beside in the menu.
+const UpcomingStock = lazy(() => import("../pages/Inventory/UpcomingStock").then(m => ({ default: m.UpcomingStock })));
 const InventoryDashboard = lazy(() => import("../pages/Inventory/InventoryDashboard").then(m => ({ default: m.InventoryDashboard })));
 const InventoryImport = lazy(() => import("../pages/Inventory/InventoryImport").then(m => ({ default: m.InventoryImport })));
 const Reports = lazy(() => import("../pages/Reports/Reports").then(m => ({ default: m.Reports })));
@@ -151,6 +154,12 @@ export const router = createBrowserRouter([
             // Stock health (M4). Classification projected from balances.
             path: "inventory/health",
             element: <ModuleRoute module="inventory" submodule="health"><InventoryHealth /></ModuleRoute>,
+          },
+          {
+            // Upcoming stock (demo). Mock data held in the browser; gated on
+            // the Health screen's cell because it has no registry entry.
+            path: "inventory/upcoming",
+            element: <ModuleRoute module="inventory" submodule="health"><UpcomingStock /></ModuleRoute>,
           },
           {
             // Inventory dashboard (M5). A read model over the projections.
