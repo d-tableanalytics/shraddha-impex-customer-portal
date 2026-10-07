@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BookmarkPlus, AlertCircle, ArrowRight } from 'lucide-react';
+import { BookmarkPlus, AlertCircle, ArrowRight, ClipboardList } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { Modal } from '../ui/Modal';
@@ -36,7 +36,7 @@ const Figure = ({ label, before, after, tone = 'text-slate-900' }) => (
   </div>
 );
 
-export const ReserveUpcomingModal = ({ open, items, initialKey, userName, onClose }) => {
+export const ReserveUpcomingModal = ({ open, items, initialKey, userName, indentStats, onUseIndents, onClose }) => {
   const reserve = useUpcomingStockStore((s) => s.reserve);
   const rawItems = useUpcomingStockStore((s) => s.items);
 
@@ -102,11 +102,12 @@ export const ReserveUpcomingModal = ({ open, items, initialKey, userName, onClos
     : [];
 
   return (
-    <Modal isOpen={open} onClose={onClose} title="Reserve Upcoming Stock" size="lg">
+    <Modal isOpen={open} onClose={onClose} title="Direct Reservation" size="lg">
       <div className="flex flex-col gap-5">
         <p className="text-xs text-slate-500 leading-relaxed">
-          Reserve quantity from stock that is on its way. The reservation is held as an indent against the
-          upcoming shipment and is released to the customer when the stock is received.
+          Reserve upcoming stock for a customer <strong>without an indent</strong> — for example a commitment made
+          by phone. It is held against the upcoming shipment under its own UR- reference. To cover an open
+          indent, reserve from the SKU&apos;s Indents tab instead.
         </p>
 
         <div className="flex flex-col gap-1.5">
@@ -120,6 +121,24 @@ export const ReserveUpcomingModal = ({ open, items, initialKey, userName, onClos
             ))}
           </select>
         </div>
+
+        {/* A SKU with open indents should usually be reserved against one of them. */}
+        {item && onUseIndents && (indentStats?.get(item.key)?.count || 0) > (indentStats?.get(item.key)?.covered || 0) && (
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-primary-50 border border-primary-100">
+            <ClipboardList size={16} className="text-primary-600 shrink-0" />
+            <p className="text-xs text-primary-900 flex-1">
+              {item.skuCode} has{' '}
+              <strong>
+                {indentStats.get(item.key).count - indentStats.get(item.key).covered} open indent
+                {indentStats.get(item.key).count - indentStats.get(item.key).covered === 1 ? '' : 's'}
+              </strong>{' '}
+              waiting for stock.
+            </p>
+            <Button size="xs" variant="outline" className="bg-white shrink-0" onClick={() => onUseIndents(item.key)}>
+              Reserve against an indent
+            </Button>
+          </div>
+        )}
 
         {item && (
           <>

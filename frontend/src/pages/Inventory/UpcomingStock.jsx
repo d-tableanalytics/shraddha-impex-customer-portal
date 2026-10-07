@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Search, X, RotateCcw, Upload, Download, BookmarkPlus, Warehouse, Ship, Lock, PackageCheck,
-  CalendarClock, Info, Undo2,
+  CalendarClock, Info, Undo2, ClipboardList, BarChart3, AlertTriangle, PauseCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -104,181 +104,335 @@ const ReserveBar = ({ item, className = 'w-20' }) => (
   </div>
 );
 
-const SummaryCard = ({ icon: Icon, tone, label, value, hint }) => (
+/**
+ * Summary tile, the Inventory Master pattern. `meter` (0–1) adds a thin bar for
+ * the two figures that are a SHARE of upcoming stock, so reserved vs remaining
+ * reads at a glance rather than by dividing two numbers.
+ */
+const SummaryCard = ({ icon: Icon, tone, label, value, hint, meter, meterTone }) => (
   <Card>
     <CardContent className="p-5 flex items-center gap-4">
       <div className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 ${tone}`}>
         <Icon size={22} />
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">{label}</p>
         <h3 className="text-2xl font-bold text-slate-900 tabular-nums">{value.toLocaleString()}</h3>
         {hint && <p className="text-[11px] text-slate-400 font-medium truncate">{hint}</p>}
+        {meter !== undefined && (
+          <div className="h-1 mt-2 rounded-full bg-slate-100 overflow-hidden" aria-hidden="true">
+            <div className={`h-full rounded-full ${meterTone}`} style={{ width: `${Math.min(100, Math.max(0, meter * 100))}%` }} />
+          </div>
+        )}
       </div>
     </CardContent>
   </Card>
 );
 
+/** Indent coverage filter options for the table. */
+const INDENT_FILTERS = [
+  { value: '', label: 'Any indent status' },
+  { value: 'open', label: 'Indents to reserve' },
+  { value: 'held', label: 'Indents kept pending' },
+  { value: 'covered', label: 'All indents covered' },
+  { value: 'none', label: 'No open indents' },
+];
+
+const matchesIndentFilter = (stats, key) => {
+  if (!key) return true;
+  const s = stats || { count: 0, covered: 0, held: 0 };
+  if (key === 'none') return s.count === 0;
+  if (key === 'covered') return s.count > 0 && s.covered === s.count;
+  if (key === 'held') return s.held > 0;
+  return s.count > s.covered; // 'open'
+};
+
+/** Arrival windows the shipments card groups by. */
+const ARRIVAL_BUCKETS = [
+  { key: 'overdue', label: 'Overdue', test: (d) => d < 0, tone: 'text-error-600' },
+  { key: 'week', label: 'Next 7 days', test: (d) => d >= 0 && d <= 7, tone: 'text-primary-600' },
+  { key: 'month', label: 'Next 30 days', test: (d) => d > 7 && d <= 30, tone: 'text-slate-500' },
+  { key: 'later', label: 'Later', test: (d) => d > 30, tone: 'text-slate-400' },
+];
+
+/** The Indents cell: how much of this SKU's indent demand is covered. */
+const IndentCoverage = ({ stats }) => {
+  if (!stats || stats.count === 0) return <span className="text-[11px] font-medium text-slate-300">No indents</span>;
+  const toReserve = stats.count - stats.covered;
+  return (
+    <span className="inline-flex flex-col items-start gap-0.5">
+      {toReserve === 0 ? (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-success-50 text-success-700 whitespace-nowrap">
+          <span aria-hidden="true">●</span>All covered
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-primary-50 text-primary-700 whitespace-nowrap">
+          <ClipboardList size={11} />{toReserve} to reserve
+        </span>
+      )}
+      <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">
+        {stats.covered}/{stats.count} covered
+        {stats.held > 0 && <span className="text-warning-700"> · {stats.held} on hold</span>}
+      </span>
+    </span>
+  );
+};
+
+const PANEL_TABS = [
+  { key: 'indents', label: 'Indents', icon: ClipboardList },
+  { key: 'overview', label: 'Overview', icon: BarChart3 },
+  { key: 'shipments', label: 'Shipments', icon: Ship },
+  { key: 'reservations', label: 'Reservations', icon: Lock },
+];
+
+/** Section heading used inside the panel's tabs. */
+const PanelHeading = ({ children }) => (
+  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">{children}</h4>
+);
+
 /**
- * SKU detail drawer — the full breakdown: position, the arithmetic, every
- * inbound shipment and every reservation held against it.
+ * SKU detail drawer — the full breakdown, in tabs so the one thing the desk is
+ * doing (usually reserving against an indent) is not buried under a scroll of
+ * everything else. The four position figures stay pinned above the tabs, so
+ * every tab is read against the same numbers.
  */
-const UpcomingPanel = ({ item, indentLines, live, userName, onClose, onReserve, onRelease }) => {
+const UpcomingPanel = ({ item, indentLines, live, userName, initialTab, onClose, onDirectReserve, onRelease }) => {
+  const [tab, setTab] = useState(initialTab || 'indents');
   const [confirming, setConfirming] = useState(null);
   const total = item.actual + item.upcoming;
   const pct = (v) => (total ? `${(v / total) * 100}%` : '0%');
   const againstIndents = item.reservations.filter((r) => r.indentRef).length;
+  const openIndents = indentLines.filter((l) => l.outstanding > 0).length;
+
+  // Escape closes the panel, as it does a modal.
+  useEffect(() => {
+    // Skipped while a modal is open over it — the Modal locks body scroll, which is the tell.
+    const onKey = (e) => { if (e.key === 'Escape' && document.body.style.overflow !== 'hidden') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const counts = {
+    indents: openIndents || null,
+    shipments: item.shipmentCount || null,
+    reservations: item.reservations.length || null,
+  };
 
   return (
     <motion.aside
       initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
       transition={{ type: 'spring', stiffness: 320, damping: 34 }}
+      role="dialog"
+      aria-label={`${item.skuCode} upcoming stock`}
       className="fixed right-0 top-0 h-full w-full max-w-xl bg-white border-l border-slate-200 shadow-enterprise-lg z-50 flex flex-col"
     >
-      <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{item.brand} · {item.category}</p>
-          <h3 className="text-lg font-black text-slate-900 truncate">{item.skuCode}</h3>
-          <p className="text-xs font-semibold text-slate-500 truncate">{item.product}</p>
-          <div className="mt-1.5"><StatusChip status={item.status} /></div>
+      <div className="px-6 pt-4 pb-0 border-b border-slate-100 bg-slate-50/50">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{item.brand} · {item.category}</p>
+            <h3 className="text-lg font-black text-slate-900 truncate">{item.skuCode}</h3>
+            <p className="text-xs font-semibold text-slate-500 truncate">{item.product}</p>
+          </div>
+          <div className="flex items-start gap-2 shrink-0">
+            <StatusChip status={item.status} />
+            <button onClick={onClose} aria-label="Close" className="p-1.5 -mt-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
+              <X size={18} />
+            </button>
+          </div>
         </div>
-        <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors shrink-0">
-          <X size={18} />
-        </button>
+
+        {/* Pinned position — the same four figures as the page's summary cards. */}
+        <div className="grid grid-cols-4 gap-2 mt-3">
+          {[
+            ['Actual', item.actual, 'text-slate-800'],
+            ['Upcoming', item.upcoming, 'text-slate-800'],
+            ['Reserved', item.reserved, 'text-warning-700'],
+            ['Remaining', item.remaining, 'text-primary-700'],
+          ].map(([l, v, tone]) => (
+            <div key={l} className="bg-white px-3 py-2 rounded-lg border border-slate-200">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{l}</span>
+              <span className={`block text-base font-black tabular-nums ${tone}`}>{v.toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+        <ReserveBar item={item} className="w-full mt-2" />
+
+        <div role="tablist" aria-label="SKU details" className="flex gap-1 mt-3 -mb-px overflow-x-auto">
+          {PANEL_TABS.map(({ key, label, icon: Icon }) => {
+            const active = tab === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(key)}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold border-b-2 whitespace-nowrap transition-colors ${
+                  active ? 'border-primary-600 text-primary-700' : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Icon size={14} />
+                {label}
+                {counts[key] && (
+                  <span className={`px-1.5 rounded-full text-[10px] tabular-nums ${active ? 'bg-primary-100 text-primary-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {counts[key]}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
-        <div>
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Position</h4>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              ['Actual', item.actual, 'text-slate-800'],
-              ['Upcoming', item.upcoming, 'text-slate-800'],
-              ['Reserved', item.reserved, 'text-warning-700'],
-              ['Remaining', item.remaining, 'text-primary-700'],
-            ].map(([l, v, tone]) => (
-              <div key={l} className="bg-slate-50/70 p-3 rounded-lg border border-slate-100">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">{l}</span>
-                <span className={`block text-base font-black tabular-nums ${tone}`}>{v.toLocaleString()}</span>
+      <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6" role="tabpanel">
+        {tab === 'indents' && (
+          <IndentReservationSection item={item} lines={indentLines} live={live} userName={userName} />
+        )}
+
+        {tab === 'overview' && (
+          <>
+            <div>
+              <PanelHeading>Actual vs upcoming</PanelHeading>
+              <div className="flex h-2.5 rounded-full overflow-hidden bg-slate-100">
+                <div className={SEGMENTS.actual.dot} style={{ width: pct(item.actual) }} title={`Actual: ${item.actual}`} />
+                <div className={SEGMENTS.reserved.dot} style={{ width: pct(item.reserved) }} title={`Reserved: ${item.reserved}`} />
+                <div className={SEGMENTS.remaining.dot} style={{ width: pct(item.remaining) }} title={`Remaining: ${item.remaining}`} />
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+                {[['actual', item.actual], ['reserved', item.reserved], ['remaining', item.remaining]].map(([k, v]) => (
+                  <span key={k} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+                    <span className={`w-2 h-2 rounded-full ${SEGMENTS[k].dot}`} />
+                    {SEGMENTS[k].label} <span className="text-slate-800 tabular-nums">{v.toLocaleString()}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
 
-        <IndentReservationSection item={item} lines={indentLines} live={live} userName={userName} />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-slate-50/70 p-3 rounded-lg border border-slate-100">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Available after arrival</span>
+                <span className="block text-xl font-black text-slate-900 tabular-nums">{item.projected.toLocaleString()}</span>
+                <span className="text-[11px] text-slate-400">actual + remaining upcoming</span>
+              </div>
+              <div className="bg-slate-50/70 p-3 rounded-lg border border-slate-100">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Next arrival</span>
+                <span className="block text-base font-black text-slate-900">{formatDate(item.nextEta)}</span>
+                <span className={`text-[11px] font-bold ${item.status === 'Delayed' ? 'text-error-600' : 'text-slate-400'}`}>
+                  {relativeArrival(item.nextEta)}
+                </span>
+              </div>
+            </div>
 
-        {/* Actual vs upcoming, on one scale. */}
-        <div>
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Actual vs upcoming</h4>
-          <div className="flex h-2.5 rounded-full overflow-hidden bg-slate-100">
-            <div className={SEGMENTS.actual.dot} style={{ width: pct(item.actual) }} title={`Actual: ${item.actual}`} />
-            <div className={SEGMENTS.reserved.dot} style={{ width: pct(item.reserved) }} title={`Reserved: ${item.reserved}`} />
-            <div className={SEGMENTS.remaining.dot} style={{ width: pct(item.remaining) }} title={`Remaining: ${item.remaining}`} />
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
-            {[['actual', item.actual], ['reserved', item.reserved], ['remaining', item.remaining]].map(([k, v]) => (
-              <span key={k} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
-                <span className={`w-2 h-2 rounded-full ${SEGMENTS[k].dot}`} />
-                {SEGMENTS[k].label} <span className="text-slate-800 tabular-nums">{v.toLocaleString()}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">How this was calculated</h4>
-          <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 font-mono text-[12px] leading-relaxed text-slate-700 overflow-x-auto">
             <div>
-              Upcoming  = {item.shipments.map((s) => s.qty.toLocaleString()).join(' + ') || '0'} = {item.upcoming.toLocaleString()}
-              <span className="text-slate-400"> ({item.shipmentCount} shipment{item.shipmentCount === 1 ? '' : 's'})</span>
+              <PanelHeading>How this was calculated</PanelHeading>
+              <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 font-mono text-[12px] leading-relaxed text-slate-700 overflow-x-auto">
+                <div>
+                  Upcoming  = {item.shipments.map((s) => s.qty.toLocaleString()).join(' + ') || '0'} = {item.upcoming.toLocaleString()}
+                  <span className="text-slate-400"> ({item.shipmentCount} shipment{item.shipmentCount === 1 ? '' : 's'})</span>
+                </div>
+                <div>
+                  Reserved  = {item.reservations.map((r) => r.qty.toLocaleString()).join(' + ') || '0'} = {item.reserved.toLocaleString()}
+                  <span className="text-slate-400">
+                    {' '}({item.reservations.length} reservation{item.reservations.length === 1 ? '' : 's'}, {againstIndents} against indents)
+                  </span>
+                </div>
+                <div className="mt-2 pt-2 border-t border-slate-200">
+                  Remaining = {item.upcoming.toLocaleString()} − {item.reserved.toLocaleString()} = <strong>{item.remaining.toLocaleString()}</strong>
+                </div>
+                <div>
+                  Available after arrival = {item.actual.toLocaleString()} actual + {item.remaining.toLocaleString()} remaining = <strong>{item.projected.toLocaleString()}</strong>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2">{STATUS_HELP[item.status]}</p>
             </div>
-            <div>
-              Reserved  = {item.reservations.map((r) => r.qty.toLocaleString()).join(' + ') || '0'} = {item.reserved.toLocaleString()}
-              <span className="text-slate-400">
-                {' '}({item.reservations.length} reservation{item.reservations.length === 1 ? '' : 's'}, {againstIndents} against indents)
-              </span>
-            </div>
-            <div className="mt-2 pt-2 border-t border-slate-200">
-              Remaining = {item.upcoming.toLocaleString()} − {item.reserved.toLocaleString()} = <strong>{item.remaining.toLocaleString()}</strong>
-            </div>
-            <div>
-              Available after arrival = {item.actual.toLocaleString()} actual + {item.remaining.toLocaleString()} remaining = <strong>{item.projected.toLocaleString()}</strong>
-            </div>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-2">{STATUS_HELP[item.status]}</p>
-        </div>
+          </>
+        )}
 
-        <div>
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Inbound shipments</h4>
-          <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
-            {item.shipments.length === 0 && <p className="px-4 py-3 text-xs text-slate-500">No shipment recorded.</p>}
-            {[...item.shipments].sort((a, b) => a.eta.localeCompare(b.eta)).map((s) => {
-              const overdue = daysUntil(s.eta) < 0;
-              return (
-                <div key={s.id} className="px-4 py-3 flex items-start justify-between gap-3">
+        {tab === 'shipments' && (
+          <div>
+            <PanelHeading>Inbound shipments · {item.upcoming.toLocaleString()} {item.uom}</PanelHeading>
+            {item.shipments.length === 0 && <p className="text-xs text-slate-500">No shipment recorded.</p>}
+            {/* A timeline: soonest first, overdue called out. */}
+            <ol className="relative ml-2 border-l-2 border-slate-100 flex flex-col gap-4">
+              {[...item.shipments].sort((a, b) => a.eta.localeCompare(b.eta)).map((s) => {
+                const d = daysUntil(s.eta);
+                const tone = d < 0 ? 'bg-error-500' : d <= 7 ? 'bg-primary-500' : 'bg-slate-300';
+                return (
+                  <li key={s.id} className="pl-5 relative">
+                    <span aria-hidden="true" className={`absolute -left-[7px] top-1.5 w-3 h-3 rounded-full ring-4 ring-white ${tone}`} />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-800 font-mono">{s.ref}</p>
+                        <p className="text-[11px] text-slate-500 truncate">{s.supplier}</p>
+                        <p className="text-[11px] text-slate-400 truncate">Source: {s.source}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-black text-slate-900 tabular-nums">{s.qty.toLocaleString()} {item.uom}</p>
+                        <p className="text-[11px] font-semibold text-slate-600">{formatDate(s.eta)}</p>
+                        <p className={`text-[11px] font-bold ${d < 0 ? 'text-error-600' : 'text-slate-400'}`}>{relativeArrival(s.eta)}</p>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        )}
+
+        {tab === 'reservations' && (
+          <div>
+            <PanelHeading>Reservations · {item.reserved.toLocaleString()} {item.uom}</PanelHeading>
+            <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
+              {item.reservations.length === 0 && (
+                <p className="px-4 py-3 text-xs text-slate-500">Nothing reserved yet — all upcoming stock is free.</p>
+              )}
+              {item.reservations.map((r) => (
+                <div key={r.id} className="px-4 py-3 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-800 font-mono">{s.ref}</p>
-                    <p className="text-[11px] text-slate-500 truncate">{s.supplier}</p>
-                    <p className="text-[11px] text-slate-400 truncate">Source: {s.source}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-black text-slate-900 tabular-nums">{s.qty.toLocaleString()} {item.uom}</p>
-                    <p className="text-[11px] font-semibold text-slate-600">{formatDate(s.eta)}</p>
-                    <p className={`text-[11px] font-bold ${overdue ? 'text-error-600' : 'text-slate-400'}`}>{relativeArrival(s.eta)}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div>
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-            Reservations · {item.reserved.toLocaleString()} {item.uom}
-          </h4>
-          <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
-            {item.reservations.length === 0 && (
-              <p className="px-4 py-3 text-xs text-slate-500">Nothing reserved yet — all upcoming stock is free.</p>
-            )}
-            {item.reservations.map((r) => (
-              <div key={r.id} className="px-4 py-3 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-bold text-slate-800 truncate">{r.customer}</p>
-                  <p className="text-[11px] text-slate-500">
-                    {r.indentRef
-                      ? <>Indent <span className="font-mono font-semibold text-slate-700">{r.indentNo}</span></>
-                      : <span className="font-mono">{r.indentNo}</span>}
-                    {' '}· {formatDateTime(r.reservedAt)} · {r.by}
-                  </p>
-                  {r.indentRef && (
-                    <p className="text-[11px] text-slate-400">
-                      {r.qty.toLocaleString()} of {r.indentRef.requiredQty.toLocaleString()} required
-                      {r.indentRef.source === 'live' && ' · live indent'}
+                    <p className="text-sm font-bold text-slate-800 truncate">{r.customer}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {r.indentRef ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 mr-1 rounded bg-primary-50 text-primary-700 font-bold">
+                          <ClipboardList size={10} />Indent <span className="font-mono">{r.indentNo}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-1.5 py-0.5 mr-1 rounded bg-slate-100 text-slate-600 font-bold">
+                          Direct · <span className="font-mono ml-1">{r.indentNo}</span>
+                        </span>
+                      )}
+                      {formatDateTime(r.reservedAt)} · {r.by}
                     </p>
-                  )}
-                  {r.note && <p className="text-[11px] text-slate-400 truncate">{r.note}</p>}
+                    {r.indentRef && (
+                      <p className="text-[11px] text-slate-400">
+                        {r.qty.toLocaleString()} of {r.indentRef.requiredQty.toLocaleString()} required
+                        {r.indentRef.source === 'live' && ' · live indent'}
+                      </p>
+                    )}
+                    {r.note && <p className="text-[11px] text-slate-400 truncate">{r.note}</p>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-sm font-black text-slate-900 tabular-nums">{r.qty.toLocaleString()}</span>
+                    {confirming === r.id ? (
+                      <>
+                        <Button size="xs" variant="danger" onClick={() => { onRelease(r); setConfirming(null); }}>Release</Button>
+                        <Button size="xs" variant="ghost" onClick={() => setConfirming(null)}>Keep</Button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => setConfirming(r.id)}
+                        className="p-1.5 rounded-lg text-slate-300 hover:text-error-600 hover:bg-error-50 transition-colors"
+                        title="Release this reservation"
+                        aria-label={`Release ${r.qty} reserved for ${r.customer}`}
+                      >
+                        <Undo2 size={15} />
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-sm font-black text-slate-900 tabular-nums">{r.qty.toLocaleString()}</span>
-                  {confirming === r.id ? (
-                    <>
-                      <Button size="xs" variant="danger" onClick={() => { onRelease(r); setConfirming(null); }}>Release</Button>
-                      <Button size="xs" variant="ghost" onClick={() => setConfirming(null)}>Keep</Button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => setConfirming(r.id)}
-                      className="p-1.5 rounded-lg text-slate-300 hover:text-error-600 hover:bg-error-50 transition-colors"
-                      title="Release this reservation"
-                    >
-                      <Undo2 size={15} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex items-center gap-2">
@@ -287,9 +441,19 @@ const UpcomingPanel = ({ item, indentLines, live, userName, onClose, onReserve, 
         </span>
         <div className="ml-auto flex gap-2">
           <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
-          <Button size="sm" onClick={() => onReserve(item.key)} disabled={item.remaining === 0}>
-            <BookmarkPlus size={15} className="mr-2" />Reserve Stock
-          </Button>
+          {tab !== 'indents' && openIndents > 0 ? (
+            <Button size="sm" onClick={() => setTab('indents')}>
+              <ClipboardList size={15} className="mr-2" />Reserve for an indent
+            </Button>
+          ) : (
+            <Button
+              size="sm" variant={openIndents > 0 ? 'outline' : 'primary'}
+              onClick={() => onDirectReserve(item.key)} disabled={item.remaining === 0}
+              title="Reserve for a customer without an indent"
+            >
+              <BookmarkPlus size={15} className="mr-2" />Direct reservation
+            </Button>
+          )}
         </div>
       </div>
     </motion.aside>
@@ -310,7 +474,12 @@ export const UpcomingStock = () => {
   const [sort, setSort] = useState('eta-asc');
   const [page, setPage] = useState(1);
 
+  const [indentFilter, setIndentFilter] = useState('');
+
+  // The open panel and the tab it opened on. A row click opens on Indents when
+  // the SKU has any, otherwise on Overview; the row's Reserve always opens Indents.
   const [selectedKey, setSelectedKey] = useState(null);
+  const [panelTab, setPanelTab] = useState('indents');
   const [importOpen, setImportOpen] = useState(false);
   const [reserveFor, setReserveFor] = useState(undefined); // undefined = closed, '' = no SKU pre-selected
 
@@ -328,41 +497,6 @@ export const UpcomingStock = () => {
     reserved: t.reserved + i.reserved,
     remaining: t.remaining + i.remaining,
   }), { actual: 0, upcoming: 0, reserved: 0, remaining: 0 }), [items]);
-
-  // Everything except the status filter, so the chips count what the other filters leave.
-  const preStatus = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return items.filter((i) => (!brand || i.brand === brand)
-      && inArrivalWindow(i, arrival)
-      && (!term || i.skuCode.toLowerCase().includes(term) || i.product.toLowerCase().includes(term)));
-  }, [items, search, brand, arrival]);
-
-  const statusCounts = useMemo(
-    () => preStatus.reduce((c, i) => ({ ...c, [i.status]: (c[i.status] || 0) + 1 }), {}),
-    [preStatus],
-  );
-
-  const filtered = useMemo(
-    () => preStatus.filter((i) => !status || i.status === status).sort(SORTERS[sort]),
-    [preStatus, status, sort],
-  );
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount);
-  const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-
-  // Upcoming shipments grouped by PO / container, soonest first.
-  const pipeline = useMemo(() => {
-    const byRef = new Map();
-    items.forEach((i) => i.shipments.forEach((s) => {
-      const g = byRef.get(s.ref) || { ref: s.ref, eta: s.eta, supplier: s.supplier, qty: 0, skus: 0 };
-      g.qty += s.qty;
-      g.skus += 1;
-      if (s.eta < g.eta) g.eta = s.eta;
-      byRef.set(s.ref, g);
-    }));
-    return [...byRef.values()].sort((a, b) => a.eta.localeCompare(b.eta));
-  }, [items]);
 
   /*
    * Open indents from Indent History, READ-ONLY. The same endpoint and the same
@@ -388,22 +522,95 @@ export const UpcomingStock = () => {
     return () => { cancelled = true; };
   }, []);
 
+  // Per-SKU indent coverage: how many open indents each SKU has, how many are covered.
+  const indentStats = useMemo(
+    () => new Map(items.map((i) => [i.key, indentSummary(indentLinesFor(i, liveIndents))])),
+    [items, liveIndents],
+  );
+
+  // Everything except the status filter, so the chips count what the other filters leave.
+  const preStatus = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return items.filter((i) => (!brand || i.brand === brand)
+      && inArrivalWindow(i, arrival)
+      && matchesIndentFilter(indentStats.get(i.key), indentFilter)
+      && (!term || i.skuCode.toLowerCase().includes(term) || i.product.toLowerCase().includes(term)));
+  }, [items, search, brand, arrival, indentFilter, indentStats]);
+
+  // What needs a decision today, across everything (not just the filtered view).
+  const attention = useMemo(() => {
+    let toReserve = 0;
+    let held = 0;
+    indentStats.forEach((s) => { toReserve += s.count - s.covered; held += s.held; });
+    return { delayed: items.filter((i) => i.status === 'Delayed').length, toReserve, held };
+  }, [items, indentStats]);
+
+  const statusCounts = useMemo(
+    () => preStatus.reduce((c, i) => ({ ...c, [i.status]: (c[i.status] || 0) + 1 }), {}),
+    [preStatus],
+  );
+
+  const filtered = useMemo(
+    () => preStatus.filter((i) => !status || i.status === status).sort(SORTERS[sort]),
+    [preStatus, status, sort],
+  );
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // Upcoming shipments grouped by PO / container, soonest first.
+  // Position per brand for the Actual vs Upcoming card, on one shared scale.
+  const byBrand = useMemo(() => {
+    const m = new Map();
+    items.forEach((i) => {
+      const b = m.get(i.brand) || { brand: i.brand, skus: 0, actual: 0, reserved: 0, remaining: 0 };
+      b.skus += 1; b.actual += i.actual; b.reserved += i.reserved; b.remaining += i.remaining;
+      m.set(i.brand, b);
+    });
+    return [...m.values()];
+  }, [items]);
+  const brandScale = Math.max(0, ...byBrand.map((b) => b.actual + b.reserved + b.remaining));
+
+  const pipeline = useMemo(() => {
+    const byRef = new Map();
+    items.forEach((i) => i.shipments.forEach((s) => {
+      const g = byRef.get(s.ref) || { ref: s.ref, eta: s.eta, supplier: s.supplier, qty: 0, skus: 0 };
+      g.qty += s.qty;
+      g.skus += 1;
+      if (s.eta < g.eta) g.eta = s.eta;
+      byRef.set(s.ref, g);
+    }));
+    return [...byRef.values()].sort((a, b) => a.eta.localeCompare(b.eta));
+  }, [items]);
+
   const selected = selectedKey ? items.find((i) => i.key === selectedKey) : null;
   const selectedIndents = useMemo(
     () => (selected ? indentLinesFor(selected, liveIndents) : []),
     [selected, liveIndents],
   );
-  // Per-SKU indent coverage for the table: how many open indents are fully reserved.
-  const indentStats = useMemo(
-    () => new Map(items.map((i) => [i.key, indentSummary(indentLinesFor(i, liveIndents))])),
-    [items, liveIndents],
-  );
   const liveForSelected = selected
     ? { ...live, count: liveIndents.filter((l) => l.skuCode?.toLowerCase() === selected.skuCode.toLowerCase()).length }
     : live;
 
+  const openPanel = (key, tab) => {
+    setPanelTab(tab || ((indentStats.get(key)?.count || 0) > 0 ? 'indents' : 'overview'));
+    setSelectedKey(key);
+  };
+
   const withFilter = (setter) => (v) => { setter(v); setPage(1); };
-  const resetFilters = () => { setSearch(''); setBrand(''); setStatus(''); setArrival(''); setSort('eta-asc'); setPage(1); };
+  const resetFilters = () => {
+    setSearch(''); setBrand(''); setStatus(''); setArrival(''); setIndentFilter(''); setSort('eta-asc'); setPage(1);
+  };
+
+  // The filters currently narrowing the table, each removable on its own.
+  const activeFilters = [
+    search.trim() && { key: 'search', label: `“${search.trim()}”`, clear: () => withFilter(setSearch)('') },
+    brand && { key: 'brand', label: brand, clear: () => withFilter(setBrand)('') },
+    status && { key: 'status', label: status, clear: () => withFilter(setStatus)('') },
+    arrival && { key: 'arrival', label: ARRIVAL_OPTIONS.find((o) => o.value === arrival)?.label, clear: () => withFilter(setArrival)('') },
+    indentFilter && { key: 'indents', label: INDENT_FILTERS.find((o) => o.value === indentFilter)?.label, clear: () => withFilter(setIndentFilter)('') },
+  ].filter(Boolean);
 
   const handleRelease = (item) => (r) => {
     release(item.key, r.id);
@@ -431,7 +638,7 @@ export const UpcomingStock = () => {
   const positionTotal = totals.actual + totals.upcoming;
   const seg = (v) => (positionTotal ? `${(v / positionTotal) * 100}%` : '0%');
   const lastImport = imports[0];
-  const colCount = 9;
+  const colCount = 10;
 
   return (
     <div className="flex flex-col gap-6">
@@ -456,14 +663,61 @@ export const UpcomingStock = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
         <SummaryCard icon={Warehouse} tone="bg-slate-100 text-slate-600" label="Actual Stock" value={totals.actual} hint={`On hand across ${items.length} SKUs`} />
         <SummaryCard icon={Ship} tone="bg-primary-50 text-primary-600" label="Upcoming Stock" value={totals.upcoming} hint={`${pipeline.length} inbound shipments`} />
-        <SummaryCard icon={Lock} tone="bg-warning-50 text-warning-600" label="Reserved Upcoming" value={totals.reserved} hint={`${reservedPct}% of upcoming is reserved`} />
-        <SummaryCard icon={PackageCheck} tone="bg-success-50 text-success-600" label="Remaining Upcoming" value={totals.remaining} hint="Free to reserve" />
+        <SummaryCard
+          icon={Lock} tone="bg-warning-50 text-warning-600" label="Reserved Upcoming" value={totals.reserved}
+          hint={`${reservedPct}% of upcoming is reserved`}
+          meter={totals.upcoming ? totals.reserved / totals.upcoming : 0} meterTone="bg-warning-500"
+        />
+        <SummaryCard
+          icon={PackageCheck} tone="bg-success-50 text-success-600" label="Remaining Upcoming" value={totals.remaining}
+          hint={`${100 - reservedPct}% free to reserve`}
+          meter={totals.upcoming ? totals.remaining / totals.upcoming : 0} meterTone="bg-primary-500"
+        />
       </div>
+
+      {/* What needs a decision — each one a shortcut to the filtered list. */}
+      {(attention.delayed > 0 || attention.toReserve > 0 || attention.held > 0) && (
+        <div className="flex flex-wrap items-center gap-2 -mt-2">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Needs attention</span>
+          {[
+            attention.delayed > 0 && {
+              key: 'delayed', icon: AlertTriangle, tone: 'text-error-700 border-error-200 bg-error-50 hover:bg-error-100',
+              text: `${attention.delayed} SKU${attention.delayed === 1 ? '' : 's'} with a delayed shipment`,
+              active: status === 'Delayed',
+              apply: () => { withFilter(setStatus)(status === 'Delayed' ? '' : 'Delayed'); },
+            },
+            attention.toReserve > 0 && {
+              key: 'reserve', icon: ClipboardList, tone: 'text-primary-700 border-primary-200 bg-primary-50 hover:bg-primary-100',
+              text: `${attention.toReserve} indent${attention.toReserve === 1 ? '' : 's'} waiting for a reservation`,
+              active: indentFilter === 'open',
+              apply: () => { withFilter(setIndentFilter)(indentFilter === 'open' ? '' : 'open'); },
+            },
+            attention.held > 0 && {
+              key: 'held', icon: PauseCircle, tone: 'text-warning-700 border-warning-200 bg-warning-50 hover:bg-warning-100',
+              text: `${attention.held} indent${attention.held === 1 ? '' : 's'} kept pending`,
+              active: indentFilter === 'held',
+              apply: () => { withFilter(setIndentFilter)(indentFilter === 'held' ? '' : 'held'); },
+            },
+          ].filter(Boolean).map(({ key, icon: Icon, tone, text, active, apply }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={apply}
+              aria-pressed={active}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-bold transition-colors ${tone} ${
+                active ? 'ring-2 ring-offset-1 ring-slate-400' : ''
+              }`}
+            >
+              <Icon size={13} />{text}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Actual vs upcoming on one bar, then the status chips that filter the list — the Health screen's pattern. */}
         <Card className="lg:col-span-2">
-          <CardContent className="p-5 flex flex-col gap-4">
+          <CardContent className="p-5 flex flex-col gap-4 h-full">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Actual vs Upcoming</p>
@@ -517,6 +771,43 @@ export const UpcomingStock = () => {
                 );
               })}
             </div>
+
+            {/* Per-brand split, pinned to the bottom so the card ends level with
+                the Inbound Shipments card beside it. One scale across brands,
+                so the bar lengths compare. Clicking a brand filters the table. */}
+            {byBrand.length > 0 && (
+              <div className="mt-auto pt-4 border-t border-slate-100">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">By brand</p>
+                <div className="flex flex-col gap-2.5">
+                  {byBrand.map((b) => {
+                    const w = (v) => `${brandScale ? (v / brandScale) * 100 : 0}%`;
+                    const active = brand === b.brand;
+                    return (
+                      <button
+                        key={b.brand}
+                        type="button"
+                        onClick={() => withFilter(setBrand)(active ? '' : b.brand)}
+                        aria-pressed={active}
+                        title={`Show only ${b.brand}`}
+                        className={`grid grid-cols-[4.5rem_1fr_auto] items-center gap-3 text-left rounded-md -mx-1.5 px-1.5 py-1 transition-colors ${
+                          active ? 'bg-slate-100' : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="text-xs font-bold text-slate-700 truncate">{b.brand}</span>
+                        <span className="flex h-2 rounded-full overflow-hidden bg-slate-100">
+                          <span className={SEGMENTS.actual.dot} style={{ width: w(b.actual) }} />
+                          <span className={SEGMENTS.reserved.dot} style={{ width: w(b.reserved) }} />
+                          <span className={SEGMENTS.remaining.dot} style={{ width: w(b.remaining) }} />
+                        </span>
+                        <span className="text-[11px] font-semibold text-slate-500 tabular-nums whitespace-nowrap text-right">
+                          {b.skus} SKU{b.skus === 1 ? '' : 's'} · <span className="text-primary-700 font-bold">{b.remaining.toLocaleString()}</span> free
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -525,21 +816,32 @@ export const UpcomingStock = () => {
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
               <CalendarClock size={14} />Inbound shipments
             </p>
-            <div className="flex flex-col divide-y divide-slate-100 -mx-1 max-h-56 overflow-y-auto">
+            <div className="flex flex-col gap-3 -mx-1 max-h-64 overflow-y-auto">
               {pipeline.length === 0 && <p className="text-xs text-slate-500 py-2 px-1">No shipments recorded.</p>}
-              {pipeline.map((g) => {
-                const d = daysUntil(g.eta);
+              {/* Grouped by arrival window, each with its unit total. */}
+              {ARRIVAL_BUCKETS.map((b) => {
+                const group = pipeline.filter((g) => b.test(daysUntil(g.eta)));
+                if (group.length === 0) return null;
+                const units = group.reduce((s, g) => s + g.qty, 0);
                 return (
-                  <div key={g.ref} className="flex items-center justify-between gap-3 py-2 px-1">
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-800 font-mono truncate">{g.ref}</p>
-                      <p className="text-[11px] text-slate-400 truncate">{g.skus} SKU{g.skus === 1 ? '' : 's'} · {g.qty.toLocaleString()} units</p>
+                  <div key={b.key}>
+                    <div className="flex items-center justify-between px-1 pb-1 border-b border-slate-100">
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${b.tone}`}>{b.label}</span>
+                      <span className="text-[10px] font-bold text-slate-400 tabular-nums">{units.toLocaleString()} units</span>
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-[11px] font-semibold text-slate-600">{formatDate(g.eta)}</p>
-                      <p className={`text-[11px] font-bold ${d < 0 ? 'text-error-600' : d <= 7 ? 'text-primary-600' : 'text-slate-400'}`}>
-                        {relativeArrival(g.eta)}
-                      </p>
+                    <div className="flex flex-col divide-y divide-slate-50">
+                      {group.map((g) => (
+                        <div key={g.ref} className="flex items-center justify-between gap-3 py-1.5 px-1">
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-slate-800 font-mono truncate">{g.ref}</p>
+                            <p className="text-[11px] text-slate-400 truncate">{g.skus} SKU{g.skus === 1 ? '' : 's'} · {g.qty.toLocaleString()} units</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-[11px] font-semibold text-slate-600">{formatDate(g.eta)}</p>
+                            <p className={`text-[11px] font-bold ${b.tone}`}>{relativeArrival(g.eta)}</p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
@@ -582,6 +884,14 @@ export const UpcomingStock = () => {
                 {ARRIVAL_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
               <select
+                value={indentFilter}
+                onChange={(e) => withFilter(setIndentFilter)(e.target.value)}
+                aria-label="Filter by indent coverage"
+                className="px-3 py-1.5 border border-slate-300 rounded-md text-sm font-medium text-slate-700 bg-white outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer"
+              >
+                {INDENT_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <select
                 value={sort}
                 onChange={(e) => withFilter(setSort)(e.target.value)}
                 className="px-3 py-1.5 border border-slate-300 rounded-md text-sm font-medium text-slate-700 bg-white outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer"
@@ -594,6 +904,31 @@ export const UpcomingStock = () => {
             </div>
           </div>
 
+          {/* What the table is showing, and what is narrowing it. */}
+          <div className="px-5 py-2.5 border-b border-slate-100 flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-semibold text-slate-500">
+              Showing <strong className="text-slate-800 tabular-nums">{filtered.length}</strong> of {items.length} SKUs
+            </span>
+            {activeFilters.map((f) => (
+              <span key={f.key} className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold">
+                {f.label}
+                <button
+                  type="button"
+                  onClick={f.clear}
+                  aria-label={`Remove filter ${f.label}`}
+                  className="p-0.5 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-200"
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            {activeFilters.length > 1 && (
+              <button type="button" onClick={resetFilters} className="font-bold text-primary-700 hover:underline">
+                Clear all
+              </button>
+            )}
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
@@ -604,6 +939,7 @@ export const UpcomingStock = () => {
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">Upcoming Stock</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">Reserved</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">Remaining</th>
+                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Indents</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Expected Arrival</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Stock Status</th>
                   <th className="px-5 py-4 w-px" aria-label="Actions" />
@@ -615,10 +951,11 @@ export const UpcomingStock = () => {
                   return (
                     <tr
                       key={i.key}
-                      onClick={() => setSelectedKey(i.key)}
+                      onClick={() => openPanel(i.key)}
                       className={`transition-colors cursor-pointer ${selectedKey === i.key ? 'bg-primary-50/60' : 'hover:bg-slate-50'}`}
                     >
-                      <td className="px-5 py-4">
+                      {/* A red edge on delayed rows, so they stand out in any sort order. */}
+                      <td className={`px-5 py-4 border-l-[3px] ${i.status === 'Delayed' ? 'border-error-500' : 'border-transparent'}`}>
                         <span className="font-bold text-slate-900 whitespace-nowrap">{i.skuCode}</span>
                         <span className="block text-[11px] text-slate-400 font-medium">{i.brand}</span>
                       </td>
@@ -632,21 +969,12 @@ export const UpcomingStock = () => {
                           : <span className="font-semibold text-slate-800">{i.actual.toLocaleString()}</span>}
                       </td>
                       <td className="px-5 py-4 text-right font-semibold text-slate-800 tabular-nums">{i.upcoming.toLocaleString()}</td>
-                      <td className="px-5 py-4 text-right tabular-nums">
-                        <span className="font-semibold text-slate-500">{i.reserved.toLocaleString()}</span>
-                        {indentStats.get(i.key)?.count > 0 && (
-                          <span
-                            className="block text-[11px] font-medium text-slate-400 whitespace-nowrap"
-                            title="Open indents for this SKU that are fully reserved from upcoming stock"
-                          >
-                            {indentStats.get(i.key).covered}/{indentStats.get(i.key).count} indent{indentStats.get(i.key).count === 1 ? '' : 's'} covered
-                          </span>
-                        )}
-                      </td>
+                      <td className="px-5 py-4 text-right font-semibold text-slate-500 tabular-nums">{i.reserved.toLocaleString()}</td>
                       <td className="px-5 py-4 text-right">
                         <span className="font-bold text-primary-700 tabular-nums">{i.remaining.toLocaleString()}</span>
                         <ReserveBar item={i} className="w-20 ml-auto mt-1.5" />
                       </td>
+                      <td className="px-5 py-4"><IndentCoverage stats={indentStats.get(i.key)} /></td>
                       <td className="px-5 py-4 whitespace-nowrap">
                         <span className="block font-semibold text-slate-700">{formatDate(i.nextEta)}</span>
                         <span className={`block text-[11px] font-bold ${overdue ? 'text-error-600' : 'text-slate-400'}`}>
@@ -656,10 +984,13 @@ export const UpcomingStock = () => {
                       </td>
                       <td className="px-5 py-4"><StatusChip status={i.status} /></td>
                       <td className="px-5 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        {/* Opens the SKU on its indents — reserving against an indent is the
+                            main path; a reservation with no indent is the panel's secondary action. */}
                         <button
                           type="button"
-                          disabled={i.remaining === 0}
-                          onClick={() => setReserveFor(i.key)}
+                          onClick={() => ((indentStats.get(i.key)?.count || 0) > 0 ? openPanel(i.key, 'indents') : setReserveFor(i.key))}
+                          disabled={i.remaining === 0 && !(indentStats.get(i.key)?.count > 0)}
+                          title={(indentStats.get(i.key)?.count || 0) > 0 ? 'Reserve against one of this SKU’s indents' : 'Reserve for a customer (no open indent)'}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold
                                      text-slate-600 border border-slate-200 bg-white hover:bg-primary-50
                                      hover:text-primary-700 hover:border-primary-300 transition-colors
@@ -725,8 +1056,9 @@ export const UpcomingStock = () => {
               indentLines={selectedIndents}
               live={liveForSelected}
               userName={user?.user || user?.name}
+              initialTab={panelTab}
               onClose={() => setSelectedKey(null)}
-              onReserve={(key) => setReserveFor(key)}
+              onDirectReserve={(key) => setReserveFor(key)}
               onRelease={handleRelease(selected)}
             />
           </>
@@ -740,6 +1072,8 @@ export const UpcomingStock = () => {
         items={items}
         initialKey={reserveFor || ''}
         userName={user?.user || user?.name}
+        indentStats={indentStats}
+        onUseIndents={(key) => { setReserveFor(undefined); openPanel(key, 'indents'); }}
         onClose={() => setReserveFor(undefined)}
       />
     </div>

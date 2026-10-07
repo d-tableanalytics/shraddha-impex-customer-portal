@@ -14,6 +14,87 @@ body {
 }
 
 /* ============================================================================
+   SCROLLBARS
+   One thin, rounded scrollbar for every scroll area, instead of the OS default
+   (which on Windows is a wide grey bar that clashes with the cards).
+
+   In @layer base ON PURPOSE: components that style their own scrollbar — the
+   navy sidebar's translucent thumb, the access modal's always-visible list,
+   the O2D stage strip that hides it — use utilities, and utilities outrank
+   base. Unlayered, these rules would override all of them.
+
+   No inset border on the thumb: components that narrow the bar themselves
+   (the sidebar sets 4px) would have it swallowed by the border and vanish.
+
+   Firefox gets the standard properties only, and ONLY Firefox: in Chromium
+   (121+) setting scrollbar-width/scrollbar-color switches the ::-webkit
+   styling off entirely, which would lose the rounded thumb and hover state.
+   ========================================================================== */
+@layer base {
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1; /* slate-300 */
+    border-radius: 9999px;
+    min-height: 32px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8; /* slate-400 */
+  }
+  *::-webkit-scrollbar-thumb:active {
+    background-color: #3b82f6; /* primary-500 — the bar being dragged */
+  }
+  *::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  html.dark *::-webkit-scrollbar-thumb {
+    background-color: #3a4a63;
+  }
+  html.dark *::-webkit-scrollbar-thumb:hover {
+    background-color: #52647f;
+  }
+  html.dark *::-webkit-scrollbar-thumb:active {
+    background-color: #3b82f6;
+  }
+
+  @supports (-moz-appearance: none) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #cbd5e1 transparent;
+    }
+    html.dark * {
+      scrollbar-color: #3a4a63 transparent;
+    }
+  }
+}
+
+/* Opt-in helpers. `custom-scrollbar` was already used by the Delegation
+   screens but never defined; it now gives an even slimmer bar for lists
+   inside cards and drawers. `scrollbar-none` hides the bar where the overflow
+   is signalled some other way (fades, arrows). */
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ============================================================================
    DARK MODE OVERRIDE LAYER
    The app was built with hardcoded light utilities (bg-white, text-slate-*,
    border-slate-*, …). Rather than add `dark:` variants to ~90 components, this
