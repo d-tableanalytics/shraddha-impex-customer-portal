@@ -5,6 +5,7 @@ import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
 import { Pagination } from "../ui/Pagination";
 import { TableSkeleton } from "../ui/TableSkeleton";
+import { TableSearchingRow } from "../ui/TableSearchingRow";
 import {
   CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
 } from "../../utils/historyExportColumns";
@@ -14,6 +15,7 @@ export const OrderHistoryTable = () => {
   const {
     orders,
     loading,
+    searching,
     sortBy,
     sortOrder,
     setSort,
@@ -178,6 +180,8 @@ export const OrderHistoryTable = () => {
           <tbody className="divide-y divide-slate-100 text-sm">
             {loading ? (
               <TableSkeleton rows={8} columns={isAdmin ? 8 : 6} cellClass="px-5 py-4" />
+            ) : searching ? (
+              <TableSearchingRow columns={isAdmin ? 8 : 6} label="Searching bookings..." />
             ) : currentOrders.length > 0 ? (
               currentOrders.map((order) => (
                 <tr
@@ -318,14 +322,17 @@ export const OrderHistoryTable = () => {
         </table>
       </div>
 
-      <div className="px-4 py-3 border border-slate-200 rounded-xl bg-white shadow-sm">
-        <Pagination
-          page={currentPage}
-          pageSize={limit}
-          totalItems={orders.length}
-          onPageChange={setPage}
-        />
-      </div>
+      {/* The counts would describe the previous query until the search lands. */}
+      {!searching && (
+        <div className="px-4 py-3 border border-slate-200 rounded-xl bg-white shadow-sm">
+          <Pagination
+            page={currentPage}
+            pageSize={limit}
+            totalItems={orders.length}
+            onPageChange={setPage}
+          />
+        </div>
+      )}
     </div>
   );
 };

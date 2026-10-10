@@ -3,6 +3,11 @@ import { ordersApi } from "../services/orders";
 import { reservationsApi } from "../services/reservations";
 import { groupMatches } from "../utils/historySearch";
 
+// How long the search box waits for typing to pause before filtering. Until
+// then the table shows a spinner, never the previous query's rows.
+const SEARCH_DEBOUNCE_MS = 300;
+let searchTimer = null;
+
 const computeMetrics = (orders) => {
   const now = new Date();
   const today = new Date(
@@ -31,6 +36,8 @@ export const useOrderHistoryStore = create((set, get) => ({
   orders: [],
   filters: { status: "all", customer: "all", dateOn: "", dateFrom: "", dateTo: "" },
   searchQuery: "",
+  // True from the first keystroke until the results for it are on screen.
+  searching: false,
   sortBy: "date",
   sortOrder: "desc",
   page: 1,
@@ -149,9 +156,17 @@ export const useOrderHistoryStore = create((set, get) => ({
     set({ orders: result, page: 1 });
   },
 
+  // The input updates immediately; the filter runs once typing pauses. Every
+  // booking is matched line by line, so filtering on each keystroke kept the
+  // last query's rows on screen while it caught up.
   setSearchQuery: (query) => {
-    set({ searchQuery: query });
-    get().applyFilters();
+    set({ searchQuery: query, searching: true });
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchTimer = null;
+      get().applyFilters();
+      set({ searching: false });
+    }, SEARCH_DEBOUNCE_MS);
   },
 
   setFilters: (newFilters) => {
@@ -240,6 +255,17 @@ export const useOrderHistoryStore = create((set, get) => ({
    * right for a "reset the view" button and wrong after an edit, where it would
    * silently throw away the admin's filters every time they saved a date.
    */
+  // One inward allocation's own stage, then the drawer re-reads the booking.
+  updateAllocationStatus: async (orderNumber, lineId, seq, status) => {
+    try {
+      await ordersApi.updateAllocationStatus(orderNumber, lineId, seq, status);
+      await get().refreshSelected(orderNumber);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.response?.data?.message || err.message };
+    }
+  },
+
   refreshSelected: async (orderNumber) => {
     await get().fetchOrders();
     const updated = get().allOrders.find((o) => o.orderNumber === orderNumber);
@@ -354,7 +380,11 @@ export const useOrderHistoryStore = create((set, get) => ({
   },
 
   refresh: async () => {
+    // A pending search would re-filter for the query being cleared here.
+    clearTimeout(searchTimer);
+    searchTimer = null;
     set({
+      searching: false,
       filters: { status: "all", customer: "all", dateOn: "", dateFrom: "", dateTo: "" },
       searchQuery: "",
       sortBy: "date",

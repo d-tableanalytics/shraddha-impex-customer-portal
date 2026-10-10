@@ -51,6 +51,25 @@ const poRaised = (booking) =>
   && asText(booking?.poNumber) !== null;
 
 /**
+ * A booking's own pick list covers what was confirmed AT BOOKING TIME.
+ *
+ * A line's confirmedQty includes its inward allocations, and each allocation
+ * has its own pick list (see allocationPicklistFrom* below), so the booking's
+ * document takes them back out — otherwise the warehouse would be told to pick
+ * the same units twice. A line that had nothing confirmed at booking time and
+ * exists only for its allocations is left off altogether.
+ *
+ * Returns each line with `quantity` (what to print) and `allocated`.
+ */
+const withoutAllocations = (lines) => lines
+  .map((l) => {
+    const allocated = (l.allocations || []).reduce((n, a) => n + (a.quantity || 0), 0);
+    const confirmed = l.confirmedQty ?? l.orderQuantity ?? l.quantity ?? 0;
+    return { ...l, allocated, quantity: confirmed - allocated };
+  })
+  .filter((l) => !(l.allocated > 0 && l.quantity <= 0));
+
+/**
  * Rows to a document. Shared tail of both adapters.
  *
  * ---------------------------------------------------------------------------
@@ -79,7 +98,7 @@ const poRaised = (booking) =>
 const assemble = ({
   audience, orderId, poNumber, poDate, date, status, customer,
   lines, priceTypeLabel, paymentTerm, promiseDate, showBoxNo, showMsilCode,
-  indentValue = null,
+  indentValue = null, allocationLabel = null,
 }) => {
   const totalQuantity = lines.reduce((n, l) => n + (l.quantity || 0), 0);
   const priced = lines.filter((l) => l.unitPrice !== null);
@@ -108,6 +127,8 @@ const assemble = ({
     priceTypeLabel: audience === "internal" ? priceTypeLabel : null,
     showBoxNo,
     showMsilCode,
+    // "Inward allocation 2" on an allocation's own pick list; null otherwise.
+    allocationLabel,
     lines: lines.map((l, i) => ({ ...l, sr: i + 1 })),
     totals: {
       quantity: totalQuantity,
@@ -150,8 +171,8 @@ export const picklistFromSalesBooking = (booking, { showBoxNo = false } = {}) =>
   if (!booking) return null;
   const profile = booking.customerProfile || {};
 
-  const lines = (booking.lines || []).map((l) => {
-    const quantity = l.confirmedQty ?? 0;
+  const lines = withoutAllocations(booking.lines || []).map((l) => {
+    const quantity = l.quantity;
     const unitPrice = asPrice(l.unitPrice);
     return {
       msilCode: asText(l.msilCode),
@@ -161,8 +182,9 @@ export const picklistFromSalesBooking = (booking, { showBoxNo = false } = {}) =>
       pendingQty: l.pendingQty || 0,
       unitPrice,
       // l.amount is what the server computed; recomputing from the rate keeps
-      // the document consistent if only one of the two was sent.
-      amount: l.amount ?? lineAmount(unitPrice, quantity),
+      // the document consistent if only one of the two was sent. A line with
+      // allocations is recomputed: the server's amount covers them too.
+      amount: (l.allocated ? null : l.amount) ?? lineAmount(unitPrice, quantity),
     };
   });
 
@@ -238,11 +260,13 @@ export const picklistFromSalesBooking = (booking, { showBoxNo = false } = {}) =>
 export const picklistFromCustomerOrder = (order) => {
   if (!order || !poRaised(order)) return null;
 
-  const source = (order.lineItems?.length ? order.lineItems : order.items || []).map((l) => {
+  const source = withoutAllocations(
+    order.lineItems?.length ? order.lineItems : order.items || [],
+  ).map((l) => {
     // lineItems and items are shaped differently; both appear here because
     // Booking History builds one and the drawer the other.
     const skuCode = l.skuCode || l.product?.code || null;
-    const quantity = l.confirmedQty ?? l.orderQuantity ?? l.quantity ?? 0;
+    const quantity = l.quantity;
     const unitPrice = asPrice(l.unitPrice ?? l.product?.unitPrice);
     return {
       msilCode: asText(l.msilCode || l.product?.msilCode),
@@ -251,7 +275,7 @@ export const picklistFromCustomerOrder = (order) => {
       quantity,
       pendingQty: l.pendingQty || 0,
       unitPrice,
-      amount: l.amount ?? lineAmount(unitPrice, quantity),
+      amount: (l.allocated ? null : l.amount) ?? lineAmount(unitPrice, quantity),
     };
   });
 
@@ -293,4 +317,42 @@ export const picklistFromCustomerOrder = (order) => {
   });
 };
 
-export default { picklistFromSalesBooking, picklistFromCustomerOrder };
+/**
+ * ONE INWARD ALLOCATION'S OWN PICK LIST.
+ *
+ * Stock that arrived later against a booking's indent is picked and dispatched
+ * on its own, so it gets its own document: the same paper as the booking's,
+ * built by the same adapter, holding just that allocation's quantity of that
+ * line, and labelled with it. The open-indent section is left off — it
+ * belongs to the booking's own document.
+ */
+const asAllocationLine = (line, allocation) => ({
+  ...line,
+  confirmedQty: allocation.quantity,
+  orderQuantity: allocation.quantity,
+  pendingQty: 0,
+  allocations: undefined,
+  amount: undefined,
+});
+
+export const allocationPicklistFromSalesBooking = (booking, line, allocation, opts) => {
+  const doc = picklistFromSalesBooking(
+    { ...booking, lines: [asAllocationLine(line, allocation)], value: null },
+    opts,
+  );
+  return doc && { ...doc, allocationLabel: `Inward allocation ${allocation.seq}` };
+};
+
+export const allocationPicklistFromCustomerOrder = (order, line, allocation) => {
+  const doc = picklistFromCustomerOrder({
+    ...order, lineItems: [asAllocationLine(line, allocation)], items: [], value: null,
+  });
+  return doc && { ...doc, allocationLabel: `Inward allocation ${allocation.seq}` };
+};
+
+export default {
+  picklistFromSalesBooking,
+  picklistFromCustomerOrder,
+  allocationPicklistFromSalesBooking,
+  allocationPicklistFromCustomerOrder,
+};

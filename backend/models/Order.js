@@ -173,6 +173,35 @@ const orderSchema = new mongoose.Schema({
   scheduledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   scheduledAt: { type: Date, default: null },
   scheduleNote: { type: String, default: null },
+
+  /**
+   * INWARD ALLOCATIONS: indent stock that arrived later and was allocated to
+   * this line (see allocateToBooking in indentAvailability.service.js).
+   *
+   * A line short of stock at booking time keeps its remainder on the booking's
+   * indent. Each later receipt that covers some of it is recorded here, with
+   * its own quantity, source indent and dispatch status, and gets its own pick
+   * list. `confirmedQty` INCLUDES these; what was confirmed at booking time is
+   * `confirmedQty - sum(allocations.quantity)`.
+   *
+   * Undefined on lines that never had one.
+   */
+  allocations: {
+    type: [{
+      _id: false,
+      seq: { type: Number, required: true },
+      quantity: { type: Number, required: true, min: 1 },
+      indentNumber: { type: String, default: null },
+      reservationId: { type: String, default: null },
+      at: { type: Date, required: true },
+      // Its own lifecycle, separate from the line's: an allocation is picked
+      // and dispatched on its own. Same stage keys as a booking.
+      status: { type: String, default: 'PO Received' },
+      statusAt: { type: Date, default: null },
+      statusBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    }],
+    default: undefined,
+  },
 }, { timestamps: true });
 
 // Compound indexes

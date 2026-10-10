@@ -4,6 +4,7 @@ import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
 import { Pagination } from "../ui/Pagination";
 import { TableSkeleton } from "../ui/TableSkeleton";
+import { TableSearchingRow } from "../ui/TableSearchingRow";
 import {
   CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
 } from "../../utils/historyExportColumns";
@@ -13,6 +14,7 @@ export const IndentHistoryTable = () => {
   const {
     indents,
     loading,
+    searching,
     sortBy,
     sortOrder,
     setSort,
@@ -138,6 +140,8 @@ export const IndentHistoryTable = () => {
           <tbody className="divide-y divide-slate-100 text-sm">
             {loading ? (
               <TableSkeleton rows={8} columns={colCount} cellClass="px-5 py-4" />
+            ) : searching ? (
+              <TableSearchingRow columns={colCount} label="Searching indents..." />
             ) : currentIndents.length > 0 ? (
               currentIndents.map((indent) => (
                 <tr
@@ -282,14 +286,17 @@ export const IndentHistoryTable = () => {
         </table>
       </div>
 
-      <div className="px-4 py-3 border border-slate-200 rounded-xl bg-white shadow-sm">
-        <Pagination
-          page={currentPage}
-          pageSize={limit}
-          totalItems={indents.length}
-          onPageChange={setPage}
-        />
-      </div>
+      {/* The counts would describe the previous query until the search lands. */}
+      {!searching && (
+        <div className="px-4 py-3 border border-slate-200 rounded-xl bg-white shadow-sm">
+          <Pagination
+            page={currentPage}
+            pageSize={limit}
+            totalItems={indents.length}
+            onPageChange={setPage}
+          />
+        </div>
+      )}
     </div>
   );
 };

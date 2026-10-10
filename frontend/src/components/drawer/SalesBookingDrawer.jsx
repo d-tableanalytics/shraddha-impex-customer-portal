@@ -18,7 +18,8 @@ import { canEditBooking, canRaisePo, canViewLineItemBoxNo, canViewPricing, hasPe
 import { PoConfirmModal } from "../modal/PoConfirmModal";
 import { PicklistPreview } from "../pricing/PicklistPreview";
 import { PriceTypeSelector } from "../pricing/PriceTypeSelector";
-import { picklistFromSalesBooking } from "../../utils/picklistDocument";
+import { picklistFromSalesBooking, allocationPicklistFromSalesBooking } from "../../utils/picklistDocument";
+import { AllocationsSection } from "./AllocationsSection";
 import { formatRupees, withGstParts, GST_LABEL } from "../../constants/pricing";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
@@ -60,6 +61,7 @@ const toDraft = (booking) =>
 export const SalesBookingDrawer = () => {
   const {
     selected, close, saveItems, raisePo, setPricing, reorderLines, saving, reloadSelected,
+    updateAllocationStatus,
   } = useSalesStore();
   const { user } = useUserStore();
 
@@ -68,6 +70,8 @@ export const SalesBookingDrawer = () => {
   const [showPoBox, setShowPoBox] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showPicklist, setShowPicklist] = useState(false);
+  // An inward allocation's own pick list, when one is open.
+  const [allocationDoc, setAllocationDoc] = useState(null);
   // Whether the tier picker is open. Closed by default on both sides of the PO:
   // before it, because the ordinary path is still to choose the rate in the PO
   // dialog and this is the desk checking what each tier totals; after it,
@@ -1156,6 +1160,22 @@ export const SalesBookingDrawer = () => {
               )}
             </div>
 
+            {/* Stock that arrived later against this booking's indent, each
+                receipt with its own status and pick list. */}
+            <AllocationsSection
+              lines={(selected.lines || []).map((l) => ({ ...l, lineId: l.id }))}
+              onStatusChange={hasPermission(user, PERMISSIONS.MANAGE_ORDERS)
+                ? async (lineId, seq, status) => {
+                  const res = await updateAllocationStatus(selected.orderId, lineId, seq, status);
+                  if (!res.success) toast.error(res.error);
+                  return res;
+                }
+                : undefined}
+              onViewPicklist={(line, a) => setAllocationDoc(
+                allocationPicklistFromSalesBooking(selected, line, a, { showBoxNo }),
+              )}
+            />
+
             {/*
               ── THE OPEN INDENT ───────────────────────────────────────────────
 
@@ -1362,6 +1382,14 @@ export const SalesBookingDrawer = () => {
             </div>
           </div>
         </motion.div>
+
+        {allocationDoc && (
+          <PicklistPreview
+            doc={allocationDoc}
+            onClose={() => setAllocationDoc(null)}
+            onDownload={handlePicklistPdf}
+          />
+        )}
 
         {showPicklist && (
           <PicklistPreview

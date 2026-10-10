@@ -113,6 +113,7 @@ export const downloadPicklistPdf = async (docModel) => {
 
     const right = [
       ["Booking No.", docModel.orderId || "—"],
+      ...(docModel.allocationLabel ? [["Allocation", docModel.allocationLabel]] : []),
       ["PO No.", docModel.poNumber || "Not raised"],
       ["PO Date", docModel.poDate ? fmtDate(docModel.poDate) : "—"],
       ["Payment Term", docModel.paymentTerm || "—"],

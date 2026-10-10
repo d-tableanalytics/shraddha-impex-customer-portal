@@ -257,6 +257,16 @@ export const shapeBooking = (
       status: r.status,
       scheduledDate: r.scheduledDate || null,
       scheduleNote: r.scheduleNote || null,
+      // Indent stock that arrived later, each with its own pick list and
+      // status. confirmedQty above includes them.
+      allocations: (r.allocations || []).map((a) => ({
+        seq: a.seq,
+        quantity: a.quantity,
+        indentNumber: a.indentNumber || null,
+        at: a.at,
+        status: a.status || 'PO Received',
+        statusAt: a.statusAt || null,
+      })),
       // The rate this customer was given for this line and what it comes to.
       // Present only when the viewer may see pricing; absent, not zeroed, so a
       // template cannot mistake "not allowed to know" for "free".

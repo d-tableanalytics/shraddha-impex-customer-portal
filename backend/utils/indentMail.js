@@ -462,7 +462,7 @@ export const sendMaterialInwardMails = async ({ customer, lines, reference }) =>
  * The customer's copy is sent by the auto-book service itself, which owns the
  * booking wording; this adds only the copy support was never getting.
  */
-export const sendAutoBookSupportMail = async ({ customer, orderNumber, lines, dueAt }) => {
+export const sendAutoBookSupportMail = async ({ customer, orderNumber, lines, dueAt, allocation = false }) => {
   const support = supportRecipients();
   if (!support) {
     console.warn('[Indent Auto-Book] no Support Team address is configured (set SUPPORT_TEAM_EMAILS).');
@@ -473,10 +473,13 @@ export const sendAutoBookSupportMail = async ({ customer, orderNumber, lines, du
   const total = lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
 
   const body = `
-    <p><strong>A booking has been raised automatically from an indent.</strong></p>
+    <p><strong>${allocation
+    ? 'Arriving stock has been allocated to an existing booking.'
+    : 'A booking has been raised automatically from an indent.'}</strong></p>
     <p>Stock was inwarded for ${lines.length} indented line(s) belonging to ${esc(name)},
-       so booking <strong>${esc(orderNumber)}</strong> was created and the stock reserved
-       against it.</p>
+       so ${allocation
+    ? `it was allocated to booking <strong>${esc(orderNumber)}</strong> (the booking the indent belongs to), as a new inward allocation with its own pick list`
+    : `booking <strong>${esc(orderNumber)}</strong> was created and the stock reserved against it`}.</p>
     ${customerBlock(customer, { audience: 'support' })}
     ${indentTable(lines.map((l) => ({
       skuCode: l.skuCode,
@@ -485,13 +488,16 @@ export const sendAutoBookSupportMail = async ({ customer, orderNumber, lines, du
       quantity: l.quantity,
       reference: l.indentNumber || l.reservationId,
     })), { audience: 'support' })}
-    <p>Total reserved: <strong>${total}</strong> unit(s). The customer has been asked to raise
-       their PO by <strong>${esc(dueAt)}</strong>; the booking is cancelled automatically if
-       none arrives.</p>`;
+    <p>Total ${allocation ? 'allocated' : 'reserved'}: <strong>${total}</strong> unit(s). ${dueAt
+    ? `The customer has been asked to raise their PO by <strong>${esc(dueAt)}</strong>; the
+       booking is cancelled automatically if none arrives.`
+    : 'The booking already has its PO.'}</p>`;
 
   const ok = await sendEmail(
     support.to,
-    `[Support] Booking ${orderNumber} auto-raised from ${name}'s indent — ${total} units`,
+    allocation
+      ? `[Support] ${total} units allocated to ${orderNumber} from ${name}'s indent`
+      : `[Support] Booking ${orderNumber} auto-raised from ${name}'s indent — ${total} units`,
     body,
     { cc: support.cc },
   ).catch((e) => {

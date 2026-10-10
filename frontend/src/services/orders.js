@@ -38,6 +38,9 @@ export const mapOrder = (order) => {
     bookedQty: order.bookedQty ?? order.requestedQty ?? 0,
     confirmedQty: order.confirmedQty ?? order.requestedQty ?? 0,
     pendingQty: order.pendingQty ?? 0,
+    // Inward allocations: indent stock that arrived later. orderQuantity
+    // includes them.
+    allocations: order.allocations || [],
   }];
 
   const totalQuantity = order.requestedQty || items.reduce((sum, item) => sum + (item.orderQuantity || item.quantity || 0), 0);
@@ -159,6 +162,9 @@ const groupIntoBookings = (rawOrders) => {
       scheduleNote: r.scheduleNote || null,
       unitPrice: asPrice(r.unitPrice),
       amount: lineAmount(r.unitPrice, r.confirmedQty ?? r.requestedQty ?? 0),
+      // Inward allocations: indent stock that arrived later, each with its own
+      // pick list and status. confirmedQty includes them.
+      allocations: r.allocations || [],
     }));
 
     /**
@@ -317,6 +323,15 @@ export const ordersApi = {
   // Returns the server's verdict: `changed` is false when the booking was
   // already at that status (no email), and `notified` reports whether the
   // customer's email actually went.
+  /** Move one inward allocation to another stage. Staff only. */
+  updateAllocationStatus: async (orderNumber, lineId, seq, status) => {
+    const response = await api.put(
+      `/orders/booking/${encodeURIComponent(orderNumber)}/allocations/${lineId}/${seq}/status`,
+      { status },
+    );
+    return response.data;
+  },
+
   updateStatus: async (orderNumber, status, remarks) => {
     const response = await api.put(`/orders/booking/${orderNumber}/status`, { status, remarks });
     return response.data;

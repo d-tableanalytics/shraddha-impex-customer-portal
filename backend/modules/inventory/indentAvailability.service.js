@@ -32,7 +32,10 @@ import StockBalance from '../../models/StockBalance.js';
 import Order from '../../models/Order.js';
 import AuditLog from '../../models/AuditLog.js';
 import { nextSequence } from '../../models/Counter.js';
-import { findProductBySku, reserveStock, releaseStock } from '../../utils/stockLedger.js';
+import {
+  findProductBySku, reserveStock, releaseStock, adjustConsumedQty,
+} from '../../utils/stockLedger.js';
+import { ratesForSkus } from '../sales/pricing.service.js';
 import { isPlaceholderPo, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
@@ -86,7 +89,7 @@ const logSystemEvent = async (action, remarks, meta = null) => {
   }
 };
 
-const bookingEmail = ({ customerName, orderNumber, lines, dueAt }) => {
+const bookingEmail = ({ customerName, orderNumber, lines, dueAt, allocation = false }) => {
   const cell = 'padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
   const head = 'padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; '
     + 'font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;';
@@ -103,7 +106,9 @@ const bookingEmail = ({ customerName, orderNumber, lines, dueAt }) => {
   return `
     <p>Hi ${esc(customerName)},</p>
     <p>Stock has arrived for ${lines.length === 1 ? 'an item you were' : 'items you were'}
-       waiting on, so we have <strong>created the booking for you</strong> and reserved the stock
+       waiting on, so we have ${allocation
+    ? '<strong>allocated it to your existing booking</strong>'
+    : '<strong>created the booking for you</strong>'} and reserved the stock
        against it. No action was needed from your side.</p>
 
     <div style="margin: 18px 0; padding: 14px 18px; background: #f0f6ff; border: 1px solid #cfe0f7; border-radius: 4px;">
@@ -129,6 +134,7 @@ const bookingEmail = ({ customerName, orderNumber, lines, dueAt }) => {
       </tfoot>
     </table>
 
+    ${dueAt ? `
     <p style="margin: 16px 0; padding: 12px 16px; background: #fff8e6; border-left: 4px solid #f0a500; font-size: 14px;">
       <strong>Please raise your PO by ${esc(dueAt)}.</strong> The stock stays reserved for
       ${PO_DEADLINE_DAYS} days. If no PO is raised by then the booking is cancelled automatically
@@ -137,6 +143,7 @@ const bookingEmail = ({ customerName, orderNumber, lines, dueAt }) => {
 
     <p>If you no longer need this, you can cancel the booking from
        <strong>Booking History</strong> in your portal and the stock will be released straight away.</p>
+    ` : ''}
 
     <p>Thank you for your business.</p>
   `;
@@ -294,6 +301,302 @@ const bookForCustomer = async (customer, indents) => {
   return { orderNumber, lines: taken };
 };
 
+/** The booking an indent was raised alongside: PI-2026-000009 -> BO-2026-000009. */
+export const parentBookingIdOf = (indent) => (
+  /^PI-/.test(indent?.indentNumber || '') ? indent.indentNumber.replace(/^PI-/, 'BO-') : null
+);
+
+/**
+ * Where arriving stock for an indent goes.
+ *
+ *   'allocate' — the booking the indent was raised with is live: the units are
+ *                allocated onto it, under its ID and its PO.
+ *   'create'   — that booking id was allocated but nothing on it was ever
+ *                confirmed, so it has no rows yet; they are created under it.
+ *   null       — no booking to go back to (none, or it was cancelled): a new
+ *                booking is raised for the full indent, as before.
+ *
+ * @param {object[]|undefined} parentRows  Every Order row of the booking.
+ */
+export const allocationModeFor = (indent, parentRows) => {
+  if (!parentBookingIdOf(indent)) return null;
+  if (!parentRows?.length) return 'create';
+  return parentRows.some((r) => r.status !== 'Cancelled') ? 'allocate' : null;
+};
+
+/**
+ * Take `take` units off an open indent, atomically.
+ *
+ * The indent's own quantity is the live remainder. Taking all of it closes the
+ * indent; taking part leaves it open for the rest. Guarded on the quantity read
+ * a moment ago, so two allocations racing for the same indent cannot both
+ * succeed - the loser matches nothing and moves on.
+ *
+ * @returns {Promise<Function|null>} a function that puts the indent back, or
+ *          null when it changed underneath us.
+ */
+const claimIndentQuantity = async (indent, take, orderId, now) => {
+  const guard = { _id: indent._id, status: { $in: OPEN_STATUSES }, quantity: indent.quantity };
+  const full = take >= indent.quantity;
+  const claimed = await Reservation.findOneAndUpdate(
+    guard,
+    full
+      ? {
+        $set: {
+          status: 'Confirmed',
+          confirmedAt: now,
+          autoBookedOrderId: orderId,
+          autoBookedAt: now,
+          availabilityNotifiedAt: now,
+        },
+      }
+      : { $inc: { quantity: -take }, $set: { status: 'Partially Confirmed' } },
+    { new: true },
+  );
+  if (!claimed) return null;
+
+  return () => Reservation.updateOne(
+    { _id: indent._id },
+    {
+      $set: {
+        status: indent.status,
+        quantity: indent.quantity,
+        confirmedAt: indent.confirmedAt ?? null,
+        autoBookedOrderId: indent.autoBookedOrderId ?? null,
+        autoBookedAt: indent.autoBookedAt ?? null,
+        availabilityNotifiedAt: indent.availabilityNotifiedAt ?? null,
+      },
+    },
+  ).catch((e) => console.error(`[Indent] could not reopen ${indent.reservationId}:`, e.message));
+};
+
+/**
+ * Allocate arriving stock to indents, ONTO THE BOOKING THEY BELONG TO.
+ *
+ * A booking that fell short keeps its remainder on its indent (BO-x -> PI-x).
+ * When stock arrives, as much as is available goes back onto BO-x as an
+ * "inward allocation" of the line it belongs to: same booking ID, same PO, no
+ * duplicate booking. Each allocation is a record on the line with its own
+ * quantity, date, source indent and dispatch status, so it can be picked and
+ * dispatched on its own with its own pick list.
+ *
+ * The line's confirmedQty includes its allocations (it is what the booking
+ * holds and what the PO charges for); `confirmedQty - sum(allocations)` is what
+ * was confirmed at booking time.
+ *
+ * Stock follows the line: reserved on a booking still awaiting its PO, issued
+ * outright on one whose PO has already consumed its stock (the settlement job
+ * only consumes rows that are still reserved).
+ *
+ * A SKU the booking never got a line for (nothing was in stock at booking time)
+ * gets a line here, with nothing initially confirmed and this allocation on it.
+ *
+ * @param {Array<{indent: object, take: number}>} items  What to allocate.
+ * @param {object} [options]
+ * @param {string}   [options.mode]   'allocate' (default) or 'create'.
+ * @param {Function} [options.claim]  (indent, take) Claims the units; returns a
+ *        restore function, or null to skip. Defaults to claimIndentQuantity.
+ * @param {Function} [options.take]   ({product, qty, consumed}) Takes the stock.
+ * @param {Function} [options.untake] Reverses `take` if the booking write fails.
+ * @returns {object|null} null when nothing could be allocated.
+ */
+export const allocateToBooking = async (customer, orderId, items, parentRows = [], options = {}) => {
+  const now = options.now || new Date();
+  const mode = options.mode || 'allocate';
+  const live = parentRows.filter((r) => r.status !== 'Cancelled');
+  const template = live[0] || null;
+  const lineBySku = new Map(live.map((r) => [r.skuCode, r]));
+  const seqs = parentRows.map((r) => r.lineSeq).filter(Number.isFinite);
+  let nextLineSeq = seqs.length ? Math.max(...seqs) + 1 : 0;
+
+  const ctx = { workflow: 'indent-allocation', referenceType: 'booking', referenceId: orderId };
+  const rollbackCtx = { ...ctx, workflow: 'indent-allocation-rollback', reasonCode: 'REVERSAL' };
+  const claim = options.claim || ((indent, take) => claimIndentQuantity(indent, take, orderId, now));
+
+  const bySku = new Map();
+  const allocated = [];
+  const undo = [];
+
+  for (const { indent, take } of items) {
+    if (!(take > 0)) continue;
+    const restore = await claim(indent, take);
+    if (!restore) continue;
+
+    const product = await findProductBySku(indent.skuCode);
+    if (!product) {
+      console.error(`[Indent] allocation to ${orderId} skipped ${indent.skuCode}: product not found.`);
+      await restore();
+      continue;
+    }
+
+    const row = lineBySku.get(product.skuCode) || null;
+    const consumed = (row || template)?.stockState === 'consumed';
+    const ok = options.take
+      ? await options.take({ product, qty: take, consumed, indent })
+      : consumed
+        ? (await adjustConsumedQty(product, 0, take, null, ctx)).ok
+        : await reserveStock(product, take, null, ctx);
+    if (!ok) {
+      // Stock went elsewhere between the shortlist and here.
+      await restore();
+      continue;
+    }
+    undo.push(async () => {
+      if (options.take) await options.untake?.({ product, qty: take, consumed, indent });
+      else if (consumed) await adjustConsumedQty(product, take, 0, null, rollbackCtx);
+      else await releaseStock(product, take, null, rollbackCtx);
+      await restore();
+    });
+
+    if (!bySku.has(product.skuCode)) {
+      bySku.set(product.skuCode, { row, product, consumed, qty: 0, booked: 0, allocations: [], indents: [] });
+    }
+    const entry = bySku.get(product.skuCode);
+    const seq = (row?.allocations?.length || 0) + entry.allocations.length + 1;
+    entry.qty += take;
+    entry.booked += indent.quantity;
+    entry.indents.push(indent);
+    entry.allocations.push({
+      seq,
+      quantity: take,
+      indentNumber: indent.indentNumber || null,
+      reservationId: indent.reservationId || null,
+      at: now,
+      status: 'PO Received',
+      statusAt: now,
+    });
+    allocated.push({
+      skuCode: product.skuCode,
+      msilCode: product.msilCode || null,
+      category: Array.isArray(product.category) ? product.category.join(', ') : (product.category || null),
+      quantity: take,
+      remaining: indent.quantity - take,
+      indentNumber: indent.indentNumber || null,
+      reservationId: indent.reservationId || null,
+      seq,
+    });
+  }
+
+  if (allocated.length === 0) return null;
+
+  // A new line on a priced booking is priced at the same tier, so the booking
+  // total and the PO keep adding up.
+  const newSkus = [...bySku.values()].filter((e) => !e.row).map((e) => e.product.skuCode);
+  const rates = template?.priceType && newSkus.length
+    ? await ratesForSkus({ rows: live, skus: newSkus })
+    : new Map();
+
+  const ops = [];
+  for (const { row, product, consumed, qty, booked, allocations, indents } of bySku.values()) {
+    if (row) {
+      ops.push({
+        updateOne: {
+          filter: { _id: row._id },
+          update: {
+            $inc: { requestedQty: qty, confirmedQty: qty },
+            // The remainder frozen at confirmation; these are the same units.
+            $set: { pendingQty: Math.max(0, (row.pendingQty || 0) - qty) },
+            $push: { allocations: { $each: allocations } },
+          },
+        },
+      });
+      continue;
+    }
+
+    const base = template
+      ? {
+        // Inherited from the booking, like a desk-added line: same customer,
+        // same address, same PO and price tier.
+        user: template.user,
+        orderTimestamp: template.orderTimestamp,
+        company: template.company,
+        role: template.role,
+        date: template.date,
+        poNumber: template.poNumber,
+        poGeneratedAt: template.poGeneratedAt ?? null,
+        poDate: template.poDate ?? null,
+        emailId: template.emailId ?? null,
+        phoneNumber: template.phoneNumber ?? null,
+        shippingAddress: template.shippingAddress ?? null,
+        billingAddress: template.billingAddress ?? null,
+        shopNumber: template.shopNumber ?? null,
+        gstCode: template.gstCode ?? null,
+        location: template.location ?? null,
+        priceType: template.priceType ?? null,
+        unitPrice: rates.get(product.skuCode) ?? null,
+      }
+      : {
+        // Nothing on this booking was ever confirmed: built as the booking
+        // would have been, under its original id.
+        user: customer._id,
+        orderTimestamp: now,
+        company: customer.company || 'Shraddha Impex',
+        role: customer.role || 'user',
+        date: now,
+        poNumber: isPlaceholderPo(indents[0].poNumber) ? '-' : indents[0].poNumber,
+        emailId: customer.email || null,
+        phoneNumber: customer.phone || null,
+        shippingAddress: customer.shippingAddress || null,
+        billingAddress: customer.billingAddress || null,
+        shopNumber: customer.shopNumber || null,
+        gstCode: customer.gstNumber || null,
+      };
+
+    ops.push({
+      insertOne: {
+        document: {
+          ...base,
+          status: 'PO Received',
+          lineSeq: nextLineSeq++,
+          orderId,
+          brand: brandFromModel(product),
+          skuCode: product.skuCode,
+          category: Array.isArray(product.category)
+            ? product.category.join(', ')
+            : (product.category || 'Unknown'),
+          // What the customer asked for on this line is what was on indent;
+          // none of it was confirmed at booking time.
+          requestedQty: qty,
+          bookedQty: booked,
+          confirmedQty: qty,
+          pendingQty: booked - qty,
+          msilCode: product.msilCode || null,
+          boxNo: product.boxNo || null,
+          vendorCode: product.vendorCode || null,
+          remarks: `Nothing was in stock at booking time; allocated from indent ${indents.map((i) => i.indentNumber || i.reservationId).join(', ')} as stock arrived.`,
+          stockState: consumed ? 'consumed' : 'reserved',
+          stockSettledAt: consumed ? now : null,
+          allocations,
+        },
+      },
+    });
+  }
+
+  try {
+    await Order.bulkWrite(ops, { ordered: true });
+  } catch (error) {
+    console.error(`[Indent] allocation to ${orderId} failed, rolling back:`, error.message);
+    for (const rollback of undo) await rollback();
+    throw error;
+  }
+
+  await logSystemEvent(
+    'Indent Allocated',
+    `${allocated.reduce((n, a) => n + a.quantity, 0)} unit(s) of arriving stock allocated to ${orderId} `
+    + `from its indent (${allocated.map((a) => `${a.skuCode} ${a.quantity}`).join(', ')}).`,
+    { orderId, allocations: allocated },
+  );
+
+  return {
+    orderNumber: orderId,
+    allocation: true,
+    lines: allocated,
+    indentIds: [...bySku.values()].flatMap((e) => e.indents.map((i) => i._id)),
+    poRaised: template ? !isPlaceholderPo(template.poNumber) || Boolean(template.poGeneratedAt) : false,
+    bookingDate: template?.date || now,
+  };
+};
+
 /**
  * MATERIAL INWARD against indents that are STILL OPEN after the auto-book pass.
  *
@@ -315,7 +618,7 @@ const bookForCustomer = async (customer, indents) => {
  *                                           import job). Replays of the same
  *                                           posting are silently skipped.
  */
-const notifyMaterialInward = async ({ skus, inwardBySku, reference }) => {
+const notifyMaterialInward = async ({ skus, inwardBySku, reference, exclude = [] }) => {
   const stats = { inwardLines: 0, inwardCustomers: 0, inwardEmailed: 0, inwardFailed: 0 };
 
   const received = skus.filter((s) => (inwardBySku?.get(s) ?? 0) > 0);
@@ -331,6 +634,9 @@ const notifyMaterialInward = async ({ skus, inwardBySku, reference }) => {
   const open = await Reservation.find({
     skuCode: { $in: received },
     status: { $in: OPEN_STATUSES },
+    // A part-allocated indent is still open, but its customer has just been
+    // told about this receipt by the allocation mail.
+    ...(exclude.length ? { _id: { $nin: exclude } } : {}),
     ...notAlreadyTold,
   }).populate(
     'customerId',
@@ -435,9 +741,10 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
     // auto-booker has taken what it can, so it always runs last — including on
     // the paths that book nothing at all, which is the common case for a part
     // delivery and exactly where the customer was previously told nothing.
+    const allocatedIds = [];
     const inwardNotice = async () => (
       event === 'material-inward'
-        ? notifyMaterialInward({ skus, inwardBySku: inwardBySku ?? new Map(), reference })
+        ? notifyMaterialInward({ skus, inwardBySku: inwardBySku ?? new Map(), reference, exclude: allocatedIds })
         : {}
     );
 
@@ -458,16 +765,41 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
       (a, b) => new Date(a.reservationDate) - new Date(b.reservationDate),
     );
 
+    // The booking each indent was raised with, read once for the batch.
+    const parentIds = [...new Set(byOldest.map(parentBookingIdOf).filter(Boolean))];
+    const rowsByParent = new Map();
+    if (parentIds.length) {
+      for (const row of await Order.find({ orderId: { $in: parentIds } }).lean()) {
+        if (!rowsByParent.has(row.orderId)) rowsByParent.set(row.orderId, []);
+        rowsByParent.get(row.orderId).push(row);
+      }
+    }
+    const modeOf = (r) => allocationModeFor(r, rowsByParent.get(parentBookingIdOf(r)));
+
+    // An indent with a booking to go back to takes WHATEVER is available, oldest
+    // first: 10 arriving against an indent of 20 allocates 10 and leaves 10.
+    // One without (its booking was cancelled) still needs its whole quantity,
+    // because it becomes a booking of its own.
     const eligible = [];
     for (const r of byOldest) {
       const left = remaining.get(r.skuCode) ?? 0;
-      if (left < r.quantity) continue;
-      if (!isPlaceholderPo(r.poNumber)) continue;
+      if (left <= 0) continue;
       if (scheduledForLater(r.scheduledDate)) continue;
       if (!r.customerId?._id) continue;
+      const mode = modeOf(r);
+      let take;
+      if (mode) {
+        take = Math.min(left, r.quantity);
+      } else {
+        if (left < r.quantity) continue;
+        // A PO on the indent means a booking for it exists; never raise an
+        // unrelated one.
+        if (!isPlaceholderPo(r.poNumber)) continue;
+        take = r.quantity;
+      }
 
-      remaining.set(r.skuCode, left - r.quantity);
-      eligible.push(r);
+      remaining.set(r.skuCode, left - take);
+      eligible.push({ indent: r, take, mode });
     }
 
     if (eligible.length === 0) {
@@ -475,10 +807,10 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
     }
 
     const byCustomer = new Map();
-    for (const r of eligible) {
-      const key = String(r.customerId._id);
-      if (!byCustomer.has(key)) byCustomer.set(key, { customer: r.customerId, lines: [] });
-      byCustomer.get(key).lines.push(r);
+    for (const e of eligible) {
+      const key = String(e.indent.customerId._id);
+      if (!byCustomer.has(key)) byCustomer.set(key, { customer: e.indent.customerId, lines: [] });
+      byCustomer.get(key).lines.push(e);
     }
 
     let bookings = 0;
@@ -488,24 +820,48 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
     let emailSkipped = 0;
 
     for (const { customer, lines } of byCustomer.values()) {
+      // One allocation per booking the indents belong to; whatever has no
+      // booking to go back to is raised as one new booking, as before.
+      const byBooking = new Map();
+      const fresh = [];
+      for (const e of lines) {
+        if (!e.mode) { fresh.push(e.indent); continue; }
+        const orderId = parentBookingIdOf(e.indent);
+        if (!byBooking.has(orderId)) byBooking.set(orderId, []);
+        byBooking.get(orderId).push(e);
+      }
+      const jobs = [
+        ...[...byBooking].map(([orderId, group]) => () => allocateToBooking(
+          customer, orderId, group, rowsByParent.get(orderId), { mode: group[0].mode },
+        )),
+        ...(fresh.length ? [() => bookForCustomer(customer, fresh)] : []),
+      ];
+
+      for (const job of jobs) {
       let made;
       try {
-        made = await bookForCustomer(customer, lines);
+        made = await job();
       } catch (error) {
         // One customer's booking failing must not stop the rest.
         console.error(`[Indent] auto-book failed for ${customer.email || customer._id}:`, error.message);
         continue;
       }
       if (!made) continue;
+      if (made.allocation) allocatedIds.push(...made.indentIds);
 
       bookings += 1;
       booked += made.lines.length;
 
-      const dueAt = new Date(Date.now() + PO_DEADLINE_DAYS * 24 * 60 * 60 * 1000)
-        .toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      // No deadline once the booking's PO is raised; a booking still waiting
+      // for one keeps the deadline it already had.
+      const dueAt = made.poRaised
+        ? null
+        : new Date(new Date(made.bookingDate || Date.now()).getTime() + PO_DEADLINE_DAYS * 24 * 60 * 60 * 1000)
+          .toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
       const customerName = customer.user || customer.name || customer.company || 'Customer';
 
-      await logSystemEvent(
+      // An allocation logged its own audit entry; this one is for new bookings.
+      if (!made.allocation) await logSystemEvent(
         'Indent Auto-Booked',
         `Booking ${made.orderNumber} raised automatically for ${customerName} — `
         + `${made.lines.length} indent line(s) became available.`,
@@ -518,9 +874,11 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
       );
 
       notifyUser(customer._id, {
-        title: 'Booking created from your indent',
-        message: `${made.lines.length} indented item${made.lines.length === 1 ? '' : 's'} came back in stock. `
-          + `Booking ${made.orderNumber} has been raised and the stock reserved for you.`,
+        title: made.allocation ? 'Indented stock allocated to your booking' : 'Booking created from your indent',
+        message: made.allocation
+          ? `${made.lines.reduce((n, l) => n + l.quantity, 0)} unit(s) of your indent came in and were allocated to booking ${made.orderNumber}.`
+          : `${made.lines.length} indented item${made.lines.length === 1 ? '' : 's'} came back in stock. `
+            + `Booking ${made.orderNumber} has been raised and the stock reserved for you.`,
         type: 'order',
       });
 
@@ -537,8 +895,12 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
         // buys an answer to "was the customer actually told".
         const delivered = await sendEmail(
           customer.email,
-          `Booking ${made.orderNumber} created — your indented stock is available`,
-          bookingEmail({ customerName, orderNumber: made.orderNumber, lines: made.lines, dueAt }),
+          made.allocation
+            ? `Booking ${made.orderNumber} — indented stock allocated`
+            : `Booking ${made.orderNumber} created — your indented stock is available`,
+          bookingEmail({
+            customerName, orderNumber: made.orderNumber, lines: made.lines, dueAt, allocation: made.allocation,
+          }),
           { cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC] },
         );
         if (delivered) {
@@ -571,7 +933,9 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
         orderNumber: made.orderNumber,
         lines: made.lines,
         dueAt,
+        allocation: made.allocation,
       });
+      }
     }
 
     // `emailed` counts messages the SMTP server accepted, not attempts.

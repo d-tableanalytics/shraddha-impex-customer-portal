@@ -492,6 +492,22 @@ const runUpdateItems = async (req, session) => {
     }
   }
 
+  // A line's inward allocations are stock that arrived against its indent, each
+  // with its own pick list and status. An edit may not take a line below what
+  // they hold, change its SKU or drop it — that would leave allocations
+  // describing units the line no longer has.
+  for (const row of existing) {
+    const held = (row.allocations || []).reduce((n, a) => n + (a.quantity || 0), 0);
+    if (!held) continue;
+    const line = incoming.find((l) => l.id && String(l.id) === String(row._id));
+    if (!line || String(line.skuCode).trim() !== row.skuCode || Number(line.quantity) < held) {
+      throw Object.assign(
+        new Error(`${row.skuCode} has ${held} unit(s) in inward allocations; it cannot be removed, re-coded or set below ${held}.`),
+        { status: 400 },
+      );
+    }
+  }
+
   // A line whose PO was raised has already left inventory ('consumed'); one
   // still awaiting a PO is merely held ('reserved'). The two need different
   // ledger operations, so dispatch on the row's state rather than assuming.

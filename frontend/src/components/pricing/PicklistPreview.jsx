@@ -182,6 +182,7 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
                 {doc.poNumber
                   ? `PO ${doc.poNumber}`
                   : `Booking ${doc.orderId} — no purchase order raised yet`}
+                {doc.allocationLabel && ` · ${doc.allocationLabel}`}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -256,6 +257,7 @@ export const PicklistPreview = ({ doc, onClose, onDownload }) => {
                   Order
                 </p>
                 <Field label="Booking No." value={doc.orderId} />
+                {doc.allocationLabel && <Field label="Allocation" value={doc.allocationLabel} />}
                 <Field label="PO No." value={doc.poNumber || "Not raised"} />
                 <Field label="PO Date" value={doc.poDate ? fmtDate(doc.poDate) : "—"} />
                 <Field label="Payment Term" value={doc.paymentTerm} />

@@ -11,6 +11,7 @@ import {
   cancelBooking,
   getBookingQuantityHistory,
   scheduleBooking,
+  updateAllocationStatus,
 } from './order.controller.js';
 import { updateBookingItems } from '../sales/sales.controller.js';
 import { protect } from '../../middlewares/auth.js';
@@ -34,6 +35,16 @@ router.put(
   authorize('manage_orders'),
   auditLogger('Update Booking Status'),
   updateBookingStatus,
+);
+
+// One inward allocation's own lifecycle — picked and dispatched separately
+// from the rest of its line. Same permission as the booking's status.
+router.put(
+  '/booking/:orderId/allocations/:lineId/:seq/status',
+  protect,
+  authorize('manage_orders'),
+  auditLogger('Update Allocation Status'),
+  updateAllocationStatus,
 );
 
 // The customer's own lifecycle timeline. Not behind manage_orders — the

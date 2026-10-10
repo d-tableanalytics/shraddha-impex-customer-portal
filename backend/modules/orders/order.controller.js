@@ -26,7 +26,7 @@ import {
   getBookingTimeline,
   resendStatusMail,
 } from './bookingStatus.service.js';
-import { bookingStatusOf, stageLabel } from '../../utils/bookingLifecycle.js';
+import { bookingStatusOf, stageLabel, stageIndex } from '../../utils/bookingLifecycle.js';
 import User from '../../models/User.js';
 import { QTY_EDIT_ACTIONS } from '../sales/sales.controller.js';
 
@@ -775,6 +775,59 @@ export const cancelBooking = async (req, res, next) => {
  * inbound delivery sets several dates in one sitting, and that is ONE decision
  * and therefore one email.
  */
+/**
+ * PUT /api/v1/orders/booking/:orderId/allocations/:lineId/:seq/status
+ * Body: { status }
+ *
+ * Move one INWARD ALLOCATION through its own stages (PO Received → Ready for
+ * Dispatch → Dispatched → Delivered). An allocation is stock that arrived
+ * after the booking and is picked and dispatched on its own, so it does not
+ * follow the line's status, and the line's status does not follow it.
+ *
+ * Staff only, behind the same permission as the booking's own status.
+ */
+export const updateAllocationStatus = async (req, res, next) => {
+  try {
+    const { orderId, lineId } = req.params;
+    const seq = Number(req.params.seq);
+    const { status } = req.body || {};
+    if (stageIndex(status) < 0) {
+      return res.status(400).json({ success: false, message: `Unknown status: ${status}` });
+    }
+    if (!mongoose.isValidObjectId(lineId) || !Number.isInteger(seq)) {
+      return res.status(404).json({ success: false, message: 'Allocation not found.' });
+    }
+
+    const now = new Date();
+    const updated = await Order.findOneAndUpdate(
+      { _id: lineId, orderId, status: { $ne: 'Cancelled' }, 'allocations.seq': seq },
+      {
+        $set: {
+          'allocations.$.status': status,
+          'allocations.$.statusAt': now,
+          'allocations.$.statusBy': req.user._id,
+        },
+      },
+      { new: true },
+    );
+    if (!updated) {
+      return res.status(404).json({ success: false, message: 'Allocation not found.' });
+    }
+
+    const allocation = updated.allocations.find((a) => a.seq === seq);
+    await recordAudit(
+      req.user,
+      'Allocation Status Updated',
+      `${orderId} ${updated.skuCode} inward allocation ${seq} (${allocation.quantity}) → ${status}.`,
+      req,
+      { meta: { orderId, lineId, seq, status } },
+    );
+    res.status(200).json({ success: true, data: allocation });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const scheduleBooking = async (req, res, next) => {
   try {
     const orderId = req.params.orderId;

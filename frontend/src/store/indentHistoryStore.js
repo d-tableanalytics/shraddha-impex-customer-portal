@@ -2,6 +2,11 @@ import { create } from "zustand";
 import { reservationsApi } from "../services/reservations";
 import { groupMatches } from "../utils/historySearch";
 
+// How long the search box waits for typing to pause before filtering. Until
+// then the table shows a spinner, never the previous query's rows.
+const SEARCH_DEBOUNCE_MS = 300;
+let searchTimer = null;
+
 // Indent statuses come from the Reservation lifecycle, not the Order lifecycle:
 // 'Pending'            → nothing could be fulfilled, the whole line is awaiting stock
 // 'Partially Confirmed'→ part of the line shipped, the remainder is awaiting stock
@@ -117,6 +122,8 @@ export const useIndentHistoryStore = create((set, get) => ({
   indents: [],
   filters: { status: "all", customer: "all", dateOn: "", dateFrom: "", dateTo: "" },
   searchQuery: "",
+  // True from the first keystroke until the results for it are on screen.
+  searching: false,
   sortBy: "date",
   sortOrder: "desc",
   page: 1,
@@ -256,9 +263,17 @@ export const useIndentHistoryStore = create((set, get) => ({
     set({ indents: result, page: 1 });
   },
 
+  // The input updates immediately; the filter runs once typing pauses. Every
+  // indent is matched line by line, so filtering on each keystroke kept the
+  // last query's rows on screen while it caught up.
   setSearchQuery: (query) => {
-    set({ searchQuery: query });
-    get().applyFilters();
+    set({ searchQuery: query, searching: true });
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchTimer = null;
+      get().applyFilters();
+      set({ searching: false });
+    }, SEARCH_DEBOUNCE_MS);
   },
   setFilters: (newFilters) => {
     set((state) => ({ filters: { ...state.filters, ...newFilters } }));
@@ -308,7 +323,11 @@ export const useIndentHistoryStore = create((set, get) => ({
   // trigger by hand.
 
   refresh: async () => {
+    // A pending search would re-filter for the query being cleared here.
+    clearTimeout(searchTimer);
+    searchTimer = null;
     set({
+      searching: false,
       filters: { status: "all", customer: "all", dateOn: "", dateFrom: "", dateTo: "" },
       searchQuery: "",
       sortBy: "date",

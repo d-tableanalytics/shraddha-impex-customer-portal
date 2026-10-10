@@ -36,7 +36,8 @@ import { Pagination } from "../ui/Pagination";
 import { PackageX, Receipt } from "lucide-react";
 import toast from "react-hot-toast";
 import { PicklistPreview } from "../pricing/PicklistPreview";
-import { picklistFromCustomerOrder } from "../../utils/picklistDocument";
+import { picklistFromCustomerOrder, allocationPicklistFromCustomerOrder } from "../../utils/picklistDocument";
+import { AllocationsSection } from "./AllocationsSection";
 import {
   BOOKING_LIFECYCLE,
   TERMINAL_STATUSES,
@@ -64,6 +65,7 @@ export const OrderDrawer = () => {
     quantityHistoryLoading,
     fetchQuantityHistory,
     refreshSelected,
+    updateAllocationStatus,
   } = useOrderHistoryStore();
   const { user } = useUserStore();
   const { pendingItems, fetchPendingReservations } = useCartStore();
@@ -88,6 +90,8 @@ export const OrderDrawer = () => {
   const [draftQty, setDraftQty] = useState({});
   const [showQtyHistory, setShowQtyHistory] = useState(false);
   const [showPicklist, setShowPicklist] = useState(false);
+  // An inward allocation's own pick list, when one is open.
+  const [allocationDoc, setAllocationDoc] = useState(null);
 
   // Close the confirmation when the drawer switches booking, so a prompt opened
   // against one booking cannot be confirmed against another.
@@ -781,6 +785,22 @@ export const OrderDrawer = () => {
                   )}
                 </div>
 
+                {/* Stock that arrived later against this booking's indent, each
+                    receipt with its own status and pick list. */}
+                <AllocationsSection
+                  lines={(selectedOrder.lineItems || []).map((l) => ({ ...l, lineId: l.id }))}
+                  onStatusChange={hasPermission(user, PERMISSIONS.MANAGE_ORDERS)
+                    ? async (lineId, seq, status) => {
+                      const res = await updateAllocationStatus(selectedOrder.orderNumber, lineId, seq, status);
+                      if (!res.success) toast.error(res.error);
+                      return res;
+                    }
+                    : undefined}
+                  onViewPicklist={picklistFromCustomerOrder(selectedOrder)
+                    ? (line, a) => setAllocationDoc(allocationPicklistFromCustomerOrder(selectedOrder, line, a))
+                    : undefined}
+                />
+
                 {/* Delivery schedule — sits under the lines because it is about
                     those lines, matching where Indent History puts its twin.
 
@@ -1104,6 +1124,17 @@ export const OrderDrawer = () => {
             unpriced PO — or one this reader is not entitled to see the rate on
             — renders the same paper with no money columns rather than a broken
             one. */}
+        {allocationDoc && (
+          <PicklistPreview
+            doc={allocationDoc}
+            onClose={() => setAllocationDoc(null)}
+            onDownload={async (docModel) => {
+              const { downloadPicklistPdf } = await import("../../utils/picklistPdf");
+              return downloadPicklistPdf(docModel);
+            }}
+          />
+        )}
+
         {showPicklist && (
           <PicklistPreview
             doc={picklistFromCustomerOrder(selectedOrder)}

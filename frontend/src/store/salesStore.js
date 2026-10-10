@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { salesApi } from "../services/sales";
+import { ordersApi } from "../services/orders";
 
 export const useSalesStore = create((set, get) => ({
   bookings: [],
@@ -47,6 +48,17 @@ export const useSalesStore = create((set, get) => ({
       set({ selected: await salesApi.getBooking(open.orderId) });
     } catch {
       // Non-blocking: keep showing what we have.
+    }
+  },
+
+  // One inward allocation's own stage, then the drawer re-reads the booking.
+  updateAllocationStatus: async (orderId, lineId, seq, status) => {
+    try {
+      await ordersApi.updateAllocationStatus(orderId, lineId, seq, status);
+      await get().reloadSelected();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.response?.data?.message || err.message };
     }
   },
 
