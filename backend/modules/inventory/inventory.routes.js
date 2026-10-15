@@ -7,6 +7,7 @@ import { postAdjustment, getAdjustmentPreview, getReasonCodes } from './adjustme
 import { recalculate as recalculateConsumption } from './consumption.controller.js';
 import { listLocations, createLocation, updateLocation, setDefaultLocation } from './location.controller.js';
 import { getConfig, getConfigHistory, updateConfig } from './config.controller.js';
+import { getQueue, postAuto, postAssign, postReassign } from './indentAssignment.controller.js';
 import {
   searchLedger, searchLedgerGrouped, getSkuMovements, getMovement, getBatch, listMovementTypes,
 } from './ledger.controller.js';
@@ -310,6 +311,15 @@ router.post(
   authorize(PERMISSIONS.CONFIGURE_INVENTORY),
   setDefaultLocation,
 );
+
+// ── Indent stock assignment ───────────────────────────────────────────────
+// Which customer indent arriving stock goes to: the FIFO auto-assign on demand,
+// a chosen indent, or moving an allocation between indents. Admin, Sales and
+// the Import Team. See indentAssignment.service.js.
+router.get('/indent-assignment', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), getQueue);
+router.post('/indent-assignment/auto', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postAuto);
+router.post('/indent-assignment/assign', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postAssign);
+router.post('/indent-assignment/reassign', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postReassign);
 
 // ── Configuration ─────────────────────────────────────────────────────────
 router.get('/config/history', authorize(PERMISSIONS.CONFIGURE_INVENTORY), getConfigHistory);

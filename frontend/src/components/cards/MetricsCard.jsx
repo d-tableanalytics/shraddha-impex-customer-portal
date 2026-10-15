@@ -1,6 +1,7 @@
 import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { stageLabel } from "../../constants/bookingLifecycle";
 import { Card, CardContent } from "../ui/Card";
+import { SkeletonLoader } from "../ui/SkeletonLoader";
 import {
   FileText,
   Inbox,
@@ -11,7 +12,8 @@ import {
 } from "lucide-react";
 
 export const MetricsCard = () => {
-  const { metrics } = useOrderHistoryStore();
+  const { metrics, loading, allOrders } = useOrderHistoryStore();
+  const firstLoad = loading && allOrders.length === 0;
 
   const items = [
     {
@@ -67,9 +69,15 @@ export const MetricsCard = () => {
               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">
                 {item.label}
               </p>
-              <h3 className="text-xl font-bold text-slate-800">
-                {item.value.toLocaleString()}
-              </h3>
+              {/* A placeholder until the first load lands — a 0 here would
+                  read as "you have none", which is a different fact. */}
+              {firstLoad ? (
+                <SkeletonLoader variant="text" className="w-10 h-6 mt-0.5" />
+              ) : (
+                <h3 className="text-xl font-bold text-slate-800">
+                  {item.value.toLocaleString()}
+                </h3>
+              )}
             </div>
           </CardContent>
         </Card>

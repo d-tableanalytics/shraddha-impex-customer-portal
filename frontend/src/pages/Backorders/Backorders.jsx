@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { PackageX, Download } from "lucide-react";
+import { PackageX, Download, Loader2 } from "lucide-react";
+import { useBusyAction } from "../../hooks/useBusyAction";
 import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
 import { PageHeader } from "../../components/common/PageHeader";
@@ -12,6 +13,7 @@ import { isSuperAdmin } from "../../utils/permissions";
 const PAGE_SIZE = 10;
 
 export const Backorders = () => {
+  const { run: runExport, isBusy: isExporting } = useBusyAction();
   const { pendingItems, pendingLoading, fetchPendingReservations } = useCartStore();
   const { user } = useUserStore();
   const isAdmin = isSuperAdmin(user);
@@ -46,8 +48,10 @@ export const Backorders = () => {
     }
   };
 
-  const exportToExcel = (groupsToExport) => {
-    import("../../utils/exportUtils").then(({ exportToExcel }) => {
+  // Busy until the library has loaded and the sheet is built — see useBusyAction.
+  const exportToExcel = (groupsToExport, key = "bulk") => runExport(key, async () => {
+    const { exportToExcel } = await import("../../utils/exportUtils");
+    {
       const cols = [
         { key: "indentNo", label: "Indent No" },
         { key: "date", label: "Date" },
@@ -73,9 +77,9 @@ export const Backorders = () => {
         });
       });
 
-      exportToExcel(rows, cols, "Pending_Indents");
-    });
-  };
+      return exportToExcel(rows, cols, "Pending_Indents");
+    }
+  }, { error: "Excel export failed" });
 
   const handleBulkExport = () => {
     if (allGroups.length === 0) {
@@ -90,7 +94,7 @@ export const Backorders = () => {
   };
 
   const handleExportRow = (group) => {
-    exportToExcel([group]);
+    exportToExcel([group], `row:${group.indentNumber || group.primary?._id}`);
   };
 
   useEffect(() => {
@@ -116,10 +120,11 @@ export const Backorders = () => {
           <div className="flex gap-2">
             <button
               onClick={handleBulkExport}
-              className="inline-flex items-center gap-2 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-700 border border-primary-600 rounded-lg px-3 py-1.5 transition-all"
+              disabled={isExporting("bulk")}
+              className="inline-flex items-center gap-2 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-700 border border-primary-600 rounded-lg px-3 py-1.5 transition-all disabled:opacity-60 disabled:cursor-wait"
             >
-              <Download size={14} />
-              Export{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+              {isExporting("bulk") ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+              {isExporting("bulk") ? "Exporting…" : `Export${selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}`}
             </button>
           </div>
         }

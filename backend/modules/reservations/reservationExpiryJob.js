@@ -146,35 +146,40 @@ export const runReservationExpiryChecks = async () => {
       const timeDiff = now.getTime() - reservation.reservationDate.getTime();
       const daysElapsed = timeDiff / (24 * 60 * 60 * 1000);
 
+      // Each step is CLAIMED with a write conditional on the state it moves
+      // from, and only the run whose write lands notifies. Two runs at once (a
+      // second server on the same database) used to both read the old state
+      // and both send the same reminder.
+      const claim = async (from, set) => (await Reservation.updateOne(
+        { _id: reservation._id, status: 'Reserved', ...from },
+        { $set: set },
+      )).modifiedCount === 1;
+
       // 1. Auto-cancel after 7 days (now >= expiryDate).
       // Note: stock is NOT deducted when an item is added to the selection list
       // (only at confirmation), so there is nothing to release here — we simply
       // drop the un-confirmed item from the list and notify the customer.
       if (now >= reservation.expiryDate) {
-        reservation.status = 'Expired';
-        reservation.expiredAt = now;
-        await reservation.save();
-
-        bucketFor(customer).expired.push(reservation);
+        if (await claim({}, { status: 'Expired', expiredAt: now })) {
+          bucketFor(customer).expired.push(reservation);
+        }
         continue;
       }
 
       // 2. Final reminder — fires the day before the 7-day auto-cancel so it always
       //    lands before the item is dropped (daily cron + 7-day expiry window).
       if (daysElapsed >= 6 && reservation.lastReminderSent !== 'day7') {
-        reservation.lastReminderSent = 'day7';
-        await reservation.save();
-
-        bucketFor(customer).finalReminder.push(reservation);
+        if (await claim({ lastReminderSent: { $ne: 'day7' } }, { lastReminderSent: 'day7' })) {
+          bucketFor(customer).finalReminder.push(reservation);
+        }
         continue;
       }
 
       // 3. Day 5 reminder — first nudge, ~2 days before auto-cancel.
       if (daysElapsed >= 5 && reservation.lastReminderSent !== 'day5' && reservation.lastReminderSent !== 'day7') {
-        reservation.lastReminderSent = 'day5';
-        await reservation.save();
-
-        bucketFor(customer).firstReminder.push(reservation);
+        if (await claim({ lastReminderSent: { $nin: ['day5', 'day7'] } }, { lastReminderSent: 'day5' })) {
+          bucketFor(customer).firstReminder.push(reservation);
+        }
       }
     }
 

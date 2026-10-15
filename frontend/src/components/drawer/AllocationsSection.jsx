@@ -64,7 +64,7 @@ export const AllocationsSection = ({ lines, onStatusChange, onViewPicklist }) =>
               {/* Scrolls sideways rather than wrapping: the drawer is narrow,
                   and five columns squeezed into it broke every label in two. */}
               <div className="overflow-x-auto -mx-5 px-5">
-              <table className="w-full min-w-[640px] text-sm whitespace-nowrap">
+              <table className="w-full min-w-160 text-sm whitespace-nowrap">
                 <thead className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
                   <tr className="border-b border-slate-100">
                     <th className="py-2 pr-4 text-left">Allocation</th>
@@ -92,7 +92,17 @@ export const AllocationsSection = ({ lines, onStatusChange, onViewPicklist }) =>
                           {new Date(a.at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
                         </td>
                         <td className="py-2.5 px-4">
-                          {onStatusChange ? (
+                          {/* Released with its booking (cancelled, or no PO in
+                              7 days): the units went back to stock, so there is
+                              no stage left to move it to. */}
+                          {a.status === "Cancelled" ? (
+                            <span
+                              className="text-xs font-semibold text-red-600"
+                              title={a.statusAt ? `Released ${new Date(a.statusAt).toLocaleString()}` : undefined}
+                            >
+                              Cancelled — stock released
+                            </span>
+                          ) : onStatusChange ? (
                             <span className="inline-flex items-center gap-1.5">
                               <select
                                 value={a.status || "PO Received"}

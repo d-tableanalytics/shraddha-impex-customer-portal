@@ -19,6 +19,8 @@ import { attachCustomerDetails } from '../../utils/customerContact.js';
 import { findProductBySku, consumeStock, releaseStock } from '../../utils/stockLedger.js';
 import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
+import { runInTransaction } from '../../utils/transaction.js';
+import { settleBooking, releasedAllocations, indentsReleased } from '../../utils/stockSettlement.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
 import {
   applyBookingStatus,
@@ -554,30 +556,32 @@ export const updateOrderPO = async (req, res, next) => {
       });
     }
 
-    const now = new Date();
-    await Order.updateMany(
-      { orderId: orderNumber },
-      { $set: { poNumber, poGeneratedAt: now, poGeneratedBy: req.user._id } },
-    );
+    if (rows.every((r) => r.status === 'Cancelled')) {
+      return res.status(409).json({ success: false, message: 'This booking has been cancelled, so a PO can no longer be raised against it.' });
+    }
 
-    // Same as the sales-desk route: raising the PO commits the goods, so the
-    // reserved units leave inventory permanently. stockState makes it idempotent.
-    for (const row of rows) {
-      if ((row.stockState ?? 'reserved') !== 'reserved') continue;
-      const product = await findProductBySku(row.skuCode);
-      if (product) {
-        await consumeStock(product, row.confirmedQty || 0, null, {
-          workflow: 'po-raise',
-          referenceType: 'booking',
-          referenceId: orderNumber,
-          actor: req.user,
-          req,
-        });
-      }
-      await Order.updateOne(
-        { _id: row._id },
-        { $set: { stockState: 'consumed', stockSettledAt: now } },
+    // Same as the sales-desk route: stamp the PO and consume the reserved units
+    // in one transaction that re-reads the booking, so a 7-day expiry or a
+    // cancellation in the same moment cannot also act on it.
+    const now = new Date();
+    const stamped = await runInTransaction(async (session) => {
+      const opts = session ? { session } : {};
+      const fresh = await Order.find({ orderId: orderNumber }, null, opts).lean();
+      if (fresh.every((r) => r.status === 'Cancelled')) return { blocked: 'cancelled' };
+      await Order.updateMany(
+        { orderId: orderNumber },
+        { $set: { poNumber, poGeneratedAt: now, poGeneratedBy: req.user._id } },
+        opts,
       );
+      return settleBooking({
+        orderId: orderNumber,
+        action: 'consume',
+        session,
+        ctx: { workflow: 'po-raise', referenceType: 'booking', referenceId: orderNumber, actor: req.user, req },
+      });
+    }, { label: 'updateOrderPO' });
+    if (stamped.blocked) {
+      return res.status(409).json({ success: false, message: 'This booking has been cancelled, so a PO can no longer be raised against it.' });
     }
 
     const indentNumber = orderNumber.replace(/^SO-|^BO-/, 'PI-');
@@ -652,44 +656,65 @@ export const cancelBooking = async (req, res, next) => {
       });
     }
 
-    const releasable = rows.filter((r) => (r.stockState ?? 'reserved') === 'reserved');
-    if (releasable.length === 0) {
-      return res.status(409).json({
-        success: false,
-        message: 'This booking holds no reserved stock, so there is nothing to cancel.',
-      });
-    }
-
     const now = new Date();
     const reason = String(req.body?.reason || '').trim().slice(0, 300);
     const byName = isOwner ? 'the customer' : `${req.user.name || req.user.email || 'staff'}`;
-    // Captured before the rows are rewritten below — afterwards every line reads
-    // 'Cancelled' and the stage it was cancelled FROM is unrecoverable.
-    const statusBeforeCancel = bookingStatusOf(rows);
 
-    const released = [];
-    const releasedSkus = new Set();
-
-    for (const row of releasable) {
-      const product = await findProductBySku(row.skuCode);
-      if (product) {
-        await releaseStock(product, row.confirmedQty || 0, null, {
+    // Release and cancel in one transaction that re-reads the booking: a second
+    // cancel, the 7-day job or a PO raised in the same moment cannot also act
+    // on these lines. See utils/stockSettlement.js.
+    const { rows: current, settled, blocked, indentsClosed } = await runInTransaction(
+      (session) => settleBooking({
+        orderId: orderNumber,
+        action: 'release',
+        session,
+        precheck: (fresh) => (isBookingLocked(fresh) ? 'locked' : null),
+        // Its open indent goes with it: a cancelled booking's remainder must not
+        // be booked later for a customer who no longer wants it.
+        closeIndent: `Booking ${orderNumber} cancelled by ${byName}${reason ? ` — ${reason}` : ''}`,
+        set: (row) => ({
+          status: 'Cancelled',
+          cancelledAt: now,
+          cancellationReason: reason || null,
+          remarks: `Cancelled by ${byName}${reason ? ` — ${reason}` : ''}. ${row.remarks || ''}`.trim(),
+          ...releasedAllocations(row, now),
+        }),
+        ctx: {
           workflow: 'booking-cancel',
           referenceType: 'booking',
           referenceId: orderNumber,
           reasonCode: 'REVERSAL',
           actor: req.user,
           req,
-        });
-        releasedSkus.add(row.skuCode);
-      }
-      row.stockState = 'released';
-      row.stockSettledAt = now;
-      row.status = 'Cancelled';
-      row.remarks = `Cancelled by ${byName}${reason ? ` — ${reason}` : ''}. ${row.remarks || ''}`.trim();
-      await row.save();
-      released.push({ skuCode: row.skuCode, quantity: row.confirmedQty || 0, msilCode: row.msilCode });
+        },
+      }),
+      { label: 'cancelBooking' },
+    );
+
+    if (blocked === 'locked') {
+      return res.status(423).json({
+        success: false,
+        message: 'This booking cannot be cancelled because its PO has already been raised. '
+          + 'Please contact us to arrange a return or amendment.',
+      });
     }
+    if (settled.length === 0) {
+      // Already cancelled, expired or settled — by this request's twin, the
+      // 7-day job, or earlier. Nothing was released, so nothing is reported.
+      return res.status(409).json({
+        success: false,
+        message: current.every((r) => r.status === 'Cancelled')
+          ? `Booking ${orderNumber} is already cancelled.`
+          : 'This booking holds no reserved stock, so there is nothing to cancel.',
+      });
+    }
+
+    // Read from the lines as they were before this cancellation wrote them.
+    const statusBeforeCancel = bookingStatusOf(current);
+    const released = settled.map((row) => ({
+      skuCode: row.skuCode, quantity: row.confirmedQty || 0, msilCode: row.msilCode,
+    }));
+    const releasedSkus = new Set(settled.map((row) => row.skuCode));
 
     const units = released.reduce((n, l) => n + l.quantity, 0);
 
@@ -699,7 +724,20 @@ export const cancelBooking = async (req, res, next) => {
       `Booking ${orderNumber} cancelled by ${byName}. ${units} unit(s) released back to stock.`
         + (reason ? ` Reason: ${reason}` : ''),
       req,
-      { meta: { orderId: orderNumber, units, lines: released } },
+      {
+        meta: {
+          orderId: orderNumber,
+          units,
+          lines: released,
+          // The stock-release record: why, when, and which indents the released
+          // units had been allocated from (inward allocations on these lines).
+          reason: reason || `Cancelled by ${byName}`,
+          releasedAt: now,
+          indents: indentsReleased(settled),
+          // The booking's open indent, closed with it (no stock to release).
+          indentsClosed: indentsClosed.map((i) => ({ skuCode: i.skuCode, indentNumber: i.indentNumber, quantity: i.quantity })),
+        },
+      },
     );
 
     // Put the cancellation on the lifecycle timeline. No status email goes with
@@ -719,7 +757,8 @@ export const cancelBooking = async (req, res, next) => {
 
     notifyUser(rows[0].user, {
       title: 'Booking cancelled',
-      message: `Booking ${orderNumber} has been cancelled and ${units} unit(s) returned to stock.`,
+      message: `Booking ${orderNumber} has been cancelled and ${units} unit(s) returned to stock.`
+        + (indentsClosed.length ? ` Its indent (${indentsClosed.reduce((n, i) => n + i.quantity, 0)} unit(s) still awaited) has been closed too.` : ''),
       type: 'order',
     });
     notifyAdmins({

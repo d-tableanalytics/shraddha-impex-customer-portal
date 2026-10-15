@@ -1,4 +1,5 @@
-import { Search, Filter, Download, X, Users } from "lucide-react";
+import { Search, Filter, Download, X, Users, Loader2 } from "lucide-react";
+import { useBusyAction } from "../../hooks/useBusyAction";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { ERPButton } from "../ui/ERPButton";
@@ -67,15 +68,24 @@ export const IndentToolbar = () => {
     { key: "available", label: "Available Quantity" },
   ];
 
+  // Busy until the library has loaded and the file is built, so the button
+  // says so and a second click cannot start a second export.
+  const { run, anyBusy: exporting } = useBusyAction();
+  const FAILED = {
+    exportToExcel: "Excel export failed",
+    exportToPDF: "PDF export failed",
+    printData: "Unable to open print window (check pop-up blocker).",
+  };
   const runExport = (fn, ...args) => {
     const rows = exportData();
     if (rows.length === 0) {
       toast.error("No indents to export");
       return;
     }
-    import("../../utils/exportUtils").then((mod) => {
-      if (!mod[fn](rows, exportCols, ...args)) toast.error(`${fn} failed`);
-    });
+    run(fn, async () => {
+      const mod = await import("../../utils/exportUtils");
+      return mod[fn](rows, exportCols, ...args);
+    }, { error: FAILED[fn] });
   };
 
   return (
@@ -132,37 +142,31 @@ export const IndentToolbar = () => {
             <Filter size={16} className="mr-2" /> Filters
           </ERPButton>
           <div className="relative group">
-            <ERPButton variant="primary" size="sm">
-              <Download size={16} className="mr-2" />
-              Export{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+            <ERPButton variant="primary" size="sm" disabled={exporting}>
+              {exporting ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Download size={16} className="mr-2" />}
+              {exporting ? "Exporting…" : `Export${selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}`}
             </ERPButton>
             <div className="absolute right-0 mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 overflow-hidden">
               <button
+                disabled={exporting}
                 onClick={() => runExport("exportToExcel", "Indent_History")}
-                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors"
+                className="disabled:opacity-50 disabled:cursor-wait w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors"
               >
                 {selectedIds.length > 0
                   ? `Export ${selectedIds.length} selected to Excel`
                   : "Export to Excel"}
               </button>
               <button
+                disabled={exporting}
                 onClick={() => runExport("exportToPDF", "Indent History Report", "Indent_History")}
-                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
+                className="disabled:opacity-50 disabled:cursor-wait w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
               >
                 Export to PDF
               </button>
               <button
-                onClick={() => {
-                  const rows = exportData();
-                  if (rows.length === 0) {
-                    toast.error("No indents to export");
-                    return;
-                  }
-                  import("../../utils/exportUtils").then(({ printData }) => {
-                    printData(rows, exportCols, "Indent History Report");
-                  });
-                }}
-                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
+                disabled={exporting}
+                onClick={() => runExport("printData", "Indent History Report")}
+                className="disabled:opacity-50 disabled:cursor-wait w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
               >
                 Print Report
               </button>

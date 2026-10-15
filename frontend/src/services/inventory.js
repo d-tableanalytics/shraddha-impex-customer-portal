@@ -34,6 +34,26 @@ const filenameFrom = (response) => {
 
 export const inventoryApi = {
   // ── Master ──────────────────────────────────────────────────────────────
+  // ── Indent Stock Assignment ───────────────────────────────────────────
+  /** SKUs with waiting indents: free stock, the indents, movable allocations, and the mode. */
+  indentAssignmentQueue: async (skuCodes = []) => {
+    const res = await api.get("/inventory/indent-assignment", {
+      params: skuCodes.length ? { sku: skuCodes.join(",") } : {},
+    });
+    return res.data.data;
+  },
+  /** Run the FIFO auto-assign now for these SKUs. */
+  autoAssignIndents: async (skuCodes) => (await api.post("/inventory/indent-assignment/auto", { skuCodes })).data.data,
+  /** Put `quantity` units on one indent. */
+  assignToIndent: async (indentId, quantity) =>
+    (await api.post("/inventory/indent-assignment/assign", { indentId, quantity })).data.data,
+  /** Move (part of) an allocation to another indent. */
+  reassignAllocation: async ({ orderId, lineId, seq, toIndentId, quantity }) =>
+    (await api.post("/inventory/indent-assignment/reassign", { orderId, lineId, seq, toIndentId, quantity })).data.data,
+  /** Switch arrivals between automatic FIFO and holding for assignment (global setting). */
+  setIndentAssignmentMode: async (mode) =>
+    (await api.put("/inventory/config", { scope: "global", indentAssignmentMode: mode })).data,
+
   listItems: async ({
     search = "",
     brand = "",

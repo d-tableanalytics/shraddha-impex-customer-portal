@@ -140,7 +140,9 @@ export const UpdateStockModal = ({ open, skuCode, brand, onClose, onDone }) => {
   };
 
   return (
-    <Modal isOpen={open} onClose={onClose} title={`Update Stock — ${skuCode ?? ''}`} size="md">
+    // Not closable while the stock write is in flight: closing would leave the
+    // user unsure whether it landed.
+    <Modal isOpen={open} onClose={saving ? () => {} : onClose} title={`Update Stock — ${skuCode ?? ''}`} size="md">
       {loading ? (
         <div className="flex items-center justify-center py-12 text-slate-500">
           <Loader2 size={18} className="animate-spin mr-2" /> Reading current position…
@@ -238,7 +240,7 @@ export const UpdateStockModal = ({ open, skuCode, brand, onClose, onDone }) => {
           </p>
 
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
             <Button onClick={submit} disabled={!ready}>
               {saving ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Save size={15} className="mr-2" />}
               Post adjustment

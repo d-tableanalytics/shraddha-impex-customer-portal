@@ -3,6 +3,7 @@ import { postBatch } from '../modules/inventory/ledger.service.js';
 import { applyMovements } from '../modules/inventory/balance.service.js';
 import { recomputeHealthForSkus } from '../modules/inventory/health.service.js';
 import StockMovement from '../models/StockMovement.js';
+import { activeLedgerQueue } from './ledgerDeferral.js';
 
 /**
  * Dual-write adapter (IMS Module M3).
@@ -154,6 +155,15 @@ export const recordStockMovement = async (input) => {
 
   const lines = (input.movements || []).filter((m) => m && m.quantity !== 0);
   if (lines.length === 0) return { ok: false, skipped: true };
+
+  // Inside a transaction: queue it, to be posted only if the transaction
+  // commits. See utils/ledgerDeferral.js. The product's fields are copied now,
+  // because the caller's document object keeps changing.
+  const queue = activeLedgerQueue();
+  if (queue) {
+    queue.push({ ...input, product: { skuCode: input.product.skuCode, brand: input.product.brand } });
+    return { ok: true, deferred: true };
+  }
 
   // Breaker open — skip immediately rather than paying the timeout again.
   if (breakerIsOpen()) return { ok: false, skipped: true, breakerOpen: true };

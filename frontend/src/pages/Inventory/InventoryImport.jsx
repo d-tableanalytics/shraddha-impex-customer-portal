@@ -10,6 +10,9 @@ import { Card, CardContent } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
+import { ProgressBar } from '../../components/ui/ProgressBar';
+import { StageProgress } from '../../components/ui/StageProgress';
+import { useBusyAction } from '../../hooks/useBusyAction';
 import { PageHeader } from '../../components/common/PageHeader';
 import { useImportStore } from '../../store/importStore';
 import { useUserStore } from '../../store/userStore';
@@ -51,6 +54,15 @@ const CATEGORY_LABEL = {
 };
 
 const STEPS = ['Choose', 'Upload', 'Preview', 'Process', 'Summary'];
+
+// Where a file is, while it is being worked on. Upload has real progress; the
+// row check is one server request; the import itself reports rows done.
+const IMPORT_STAGES = [
+  { key: 'upload', label: 'Upload' },
+  { key: 'check', label: 'Check rows' },
+  { key: 'review', label: 'Review' },
+  { key: 'import', label: 'Import' },
+];
 
 const nf = (n) => (n === null || n === undefined ? '—' : Number(n).toLocaleString());
 const fmtDate = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
@@ -108,6 +120,9 @@ export const InventoryImport = () => {
     history, historyTotal, historyPages, historyLoading, historyFilters,
     setHistoryFilters, fetchHistory,
   } = useImportStore();
+  // Busy state for the wizard's own buttons — preview paging, template,
+  // resume, cancel — so none can be fired twice. See useBusyAction.
+  const { run, isBusy } = useBusyAction();
 
   /**
    * SKUs this import CREATED that still need an MOQ.
@@ -263,7 +278,8 @@ export const InventoryImport = () => {
                       <span className="text-xs text-slate-600 flex-1">
                         Start from the template — its header row is the one the importer expects.
                       </span>
-                      <Button size="xs" variant="secondary" onClick={() => downloadTemplate(selected.importType)}>
+                      <Button size="xs" variant="secondary" loading={isBusy('template')}
+                        onClick={() => run('template', () => downloadTemplate(selected.importType))}>
                         <Download size={13} className="mr-1.5" />Template
                       </Button>
                     </div>
@@ -349,14 +365,16 @@ export const InventoryImport = () => {
       {step === 2 && (
         <Card>
           <CardContent className="p-8 flex flex-col items-center gap-4">
-            <Loader2 size={26} className="animate-spin text-primary-600" />
-            <p className="text-sm font-semibold text-slate-700">
-              {uploadPercent < 100 ? 'Uploading…' : 'Reading and checking every row…'}
-            </p>
-            <div className="w-full max-w-md h-2 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full bg-primary-600 transition-all" style={{ width: `${uploadPercent}%` }} />
-            </div>
-            <p className="text-[11px] text-slate-400">Nothing is written to inventory yet.</p>
+            <StageProgress stages={IMPORT_STAGES} current={uploadPercent < 100 ? 'upload' : 'check'} />
+            {/* Real progress while the file uploads; once it is on the server
+                the check is one request, so the bar sweeps instead of
+                pretending to know how far it has got. */}
+            <ProgressBar
+              className="max-w-md"
+              value={uploadPercent < 100 ? uploadPercent : undefined}
+              label={uploadPercent < 100 ? 'Uploading file…' : 'Reading and checking every row…'}
+              detail="Nothing is written to inventory yet."
+            />
           </CardContent>
         </Card>
       )}
@@ -476,7 +494,7 @@ export const InventoryImport = () => {
           <Card>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+                <table className={`w-full text-xs transition-opacity ${isBusy('preview') ? 'opacity-50' : ''}`} aria-busy={isBusy('preview')}>
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50/60">
                       <th className="text-left px-3 py-2 font-bold text-slate-500 uppercase text-[10px]">Row</th>
@@ -517,13 +535,13 @@ export const InventoryImport = () => {
 
               {preview.pagination && preview.pagination.pages > 1 && (
                 <div className="flex items-center justify-center gap-3 py-3 border-t border-slate-100">
-                  <Button size="xs" variant="secondary" disabled={preview.pagination.page <= 1}
-                    onClick={() => loadPreview(preview.pagination.page - 1)}>Previous</Button>
+                  <Button size="xs" variant="secondary" disabled={preview.pagination.page <= 1 || isBusy('preview')}
+                    onClick={() => run('preview', () => loadPreview(preview.pagination.page - 1))}>Previous</Button>
                   <span className="text-[11px] font-semibold text-slate-500">
                     Page {preview.pagination.page} of {preview.pagination.pages}
                   </span>
-                  <Button size="xs" variant="secondary" disabled={preview.pagination.page >= preview.pagination.pages}
-                    onClick={() => loadPreview(preview.pagination.page + 1)}>Next</Button>
+                  <Button size="xs" variant="secondary" disabled={preview.pagination.page >= preview.pagination.pages || isBusy('preview')}
+                    onClick={() => run('preview', () => loadPreview(preview.pagination.page + 1))}>Next</Button>
                 </div>
               )}
             </CardContent>
@@ -535,16 +553,13 @@ export const InventoryImport = () => {
       {step === 4 && job && (
         <Card>
           <CardContent className="p-8 flex flex-col items-center gap-4">
-            <Loader2 size={26} className="animate-spin text-primary-600" />
-            <p className="text-sm font-semibold text-slate-700">
-              Importing {nf(job.processedRows)} of {nf(job.validRows)} row(s)…
-            </p>
-            <div className="w-full max-w-md h-2 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary-600 transition-all"
-                style={{ width: `${job.validRows ? Math.round((job.processedRows / job.validRows) * 100) : 0}%` }}
-              />
-            </div>
+            <StageProgress stages={IMPORT_STAGES} current="import" />
+            <ProgressBar
+              className="max-w-md"
+              tone="success"
+              value={job.validRows ? (job.processedRows / job.validRows) * 100 : 0}
+              label={`Importing ${nf(job.processedRows)} of ${nf(job.validRows)} row(s)…`}
+            />
             <p className="text-[11px] text-slate-400">
               Batch {nf(job.chunksDone)} of {nf(job.chunksTotal)}. You can leave this page — the import keeps running.
             </p>
@@ -708,7 +723,8 @@ export const InventoryImport = () => {
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         {j.status === 'Processing' && (
-                          <Button size="xs" variant="ghost" onClick={() => resume(j.jobId)}>Resume</Button>
+                          <Button size="xs" variant="ghost" loading={isBusy(`resume:${j.jobId}`)}
+                            onClick={() => run(`resume:${j.jobId}`, () => resume(j.jobId))}>Resume</Button>
                         )}
                       </td>
                     </tr>
@@ -758,8 +774,8 @@ export const InventoryImport = () => {
             <input className={inputCls} value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} />
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setCancelOpen(false)}>Keep it</Button>
-            <Button onClick={handleCancel}>Cancel import</Button>
+            <Button variant="secondary" onClick={() => setCancelOpen(false)} disabled={isBusy('cancel')}>Keep it</Button>
+            <Button onClick={() => run('cancel', handleCancel)} loading={isBusy('cancel')}>Cancel import</Button>
           </div>
         </div>
       </Modal>

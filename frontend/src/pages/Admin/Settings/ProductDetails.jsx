@@ -16,6 +16,7 @@ import { productDetailsApi } from '../../../services/productDetails';
 import { useUserStore } from '../../../store/userStore';
 import { allowedBrands } from '../../../utils/brandAccess';
 import { hasPermission, PERMISSIONS } from '../../../utils/permissions';
+import { ProgressBar } from '../../../components/ui/ProgressBar';
 
 /**
  * Admin → Product Details.
@@ -188,10 +189,14 @@ const ImageManager = ({ skuCode, detail, limits, onChanged }) => {
         <input ref={replaceInput} type="file" accept="image/*" hidden onChange={handleReplace} />
       </div>
 
-      {busy && progress > 0 && (
-        <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-          <div className="h-full bg-primary-600 transition-all" style={{ width: `${progress}%` }} />
-        </div>
+      {/* Real % while bytes are going up; after that the server is still
+          storing and resizing, which is not "done" — and a removal has no
+          upload at all. */}
+      {busy && (
+        <ProgressBar
+          value={progress > 0 && progress < 100 ? progress : undefined}
+          label={progress > 0 && progress < 100 ? 'Uploading…' : progress >= 100 ? 'Processing on the server…' : 'Working…'}
+        />
       )}
 
       {images.length === 0 ? (
@@ -559,9 +564,11 @@ const BulkImageModal = ({ limits, onClose, onDone }) => {
         )}
 
         {busy && (
-          <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-            <div className="h-full bg-primary-600 transition-all" style={{ width: `${progress}%` }} />
-          </div>
+          <ProgressBar
+            value={progress < 100 ? progress : undefined}
+            label={progress < 100 ? 'Uploading images…' : 'Matching images to SKUs and saving…'}
+            detail="Please keep this page open until the results appear."
+          />
         )}
 
         {results && (

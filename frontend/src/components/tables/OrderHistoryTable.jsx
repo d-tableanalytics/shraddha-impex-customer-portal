@@ -1,4 +1,5 @@
-import { ChevronUp, ChevronDown, Eye, FileDown, PackageX, FileSpreadsheet, MapPin, Phone } from "lucide-react";
+import { ChevronUp, ChevronDown, Eye, FileDown, PackageX, FileSpreadsheet, MapPin, Phone, Loader2 } from "lucide-react";
+import { useBusyAction } from "../../hooks/useBusyAction";
 import toast from "react-hot-toast";
 import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { useCartStore } from "../../store/cartStore";
@@ -27,6 +28,7 @@ export const OrderHistoryTable = () => {
     toggleSelectId,
     toggleSelectAll,
   } = useOrderHistoryStore();
+  const { run: runRow, isBusy: isRowBusy } = useBusyAction();
 
   /* Bookings with unfulfilled indents against them — the "Indent" badge.
      Matched on the BOOKING ID the server reports for each indent, with the PO
@@ -88,8 +90,11 @@ export const OrderHistoryTable = () => {
     { key: "poNumber", label: "PO Number", format: poNumberValue },
   ];
 
+  // One busy key per booking and format, so a row's icon spins while its file
+  // is built and a second click is ignored — see useBusyAction.
   const handleRowPDF = (order) => {
-    import("../../utils/exportUtils").then(({ exportToPDF }) => {
+    runRow(`pdf:${order.orderNumber}`, async () => {
+      const { exportToPDF } = await import("../../utils/exportUtils");
       const cols = [
         ...ROW_EXPORT_COLS,
         { key: "sku", label: "SKU Code" },
@@ -106,12 +111,13 @@ export const OrderHistoryTable = () => {
         `Booking ${order.orderNumber} — ${order.customer || ""}`,
         `Booking_${order.orderNumber}`,
       );
-      if (!ok) toast.error("PDF download failed");
-    });
+      return ok;
+    }, { error: "PDF download failed" });
   };
 
   const handleRowExcel = (order) => {
-    import("../../utils/exportUtils").then(({ exportToExcel }) => {
+    runRow(`excel:${order.orderNumber}`, async () => {
+      const { exportToExcel } = await import("../../utils/exportUtils");
       const cols = [
         ...ROW_EXPORT_COLS,
         { key: "sku", label: "SKU Code" },
@@ -129,8 +135,8 @@ export const OrderHistoryTable = () => {
         cols,
         `Booking_${order.orderNumber}`,
       );
-      if (!ok) toast.error("Excel download failed");
-    });
+      return ok;
+    }, { error: "Excel download failed" });
   };
 
   const renderSortIcon = (field) => {
@@ -290,20 +296,26 @@ export const OrderHistoryTable = () => {
                         e.stopPropagation();
                         handleRowPDF(order);
                       }}
+                      disabled={isRowBusy(`pdf:${order.orderNumber}`)}
                       className="p-1.5 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors focus:outline-none"
                       title="Download PDF"
                     >
-                      <FileDown size={18} />
+                      {isRowBusy(`pdf:${order.orderNumber}`)
+                        ? <Loader2 size={18} className="animate-spin" />
+                        : <FileDown size={18} />}
                     </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleRowExcel(order);
                       }}
+                      disabled={isRowBusy(`excel:${order.orderNumber}`)}
                       className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors focus:outline-none"
                       title="Download Excel"
                     >
-                      <FileSpreadsheet size={18} />
+                      {isRowBusy(`excel:${order.orderNumber}`)
+                        ? <Loader2 size={18} className="animate-spin" />
+                        : <FileSpreadsheet size={18} />}
                     </button>
                   </td>
                 </tr>

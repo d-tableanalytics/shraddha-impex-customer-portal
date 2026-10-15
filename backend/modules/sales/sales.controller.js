@@ -1,4 +1,3 @@
-import mongoose from 'mongoose';
 import Order, { LINE_ORDER } from '../../models/Order.js';
 import User from '../../models/User.js';
 import Reservation from '../../models/Reservation.js';
@@ -24,7 +23,8 @@ import {
   QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
   openIndentBySku, openIndentsByOrder, openIndentLinesFor,
 } from '../../utils/bookingJourney.js';
-import { isTransactionUnsupported } from '../../utils/mongoSession.js';
+import { runInTransaction } from '../../utils/transaction.js';
+import { settleBooking } from '../../utils/stockSettlement.js';
 import {
   buildScheduleMailParts, OPEN_BOOKING_STATUSES as SCHEDULABLE_STATUSES,
 } from '../../utils/deliverySchedule.js';
@@ -385,7 +385,12 @@ const setIndentShortfall = async (row, product, indentQty, session, req) => {
   if (existing) return existing;
 
   const year = new Date().getFullYear();
-  const seq = await nextSequence(`reservation-${year}`, session);
+  // Drawn OUTSIDE the transaction (no session). Every booking increments the
+  // same counter document, so inside a transaction any two bookings at the same
+  // moment — whatever they were for — conflicted on it, and a burst of them
+  // retried until one gave up. A booking that rolls back now leaves a gap in
+  // the numbering; numbers only ever needed to be unique.
+  const seq = await nextSequence(`reservation-${year}`);
   const now = new Date();
   const [created] = await Reservation.create([{
     reservationId: `RES-${year}-${String(seq).padStart(6, '0')}`,
@@ -712,26 +717,14 @@ const runUpdateItems = async (req, session) => {
 };
 
 export const updateBookingItems = async (req, res, next) => {
-  const session = await mongoose.startSession();
-  let result;
   try {
-    try {
-      session.startTransaction();
-      result = await runUpdateItems(req, session);
-      await session.commitTransaction();
-    } catch (txErr) {
-      await session.abortTransaction();
-      // Standalone MongoDB has no transactions; nothing was committed, so a
-      // re-run without a session is safe. Mirrors confirmBooking's fallback.
-      if (isTransactionUnsupported(txErr)) {
-        console.warn('[updateBookingItems] Transactions unsupported — running without one.');
-        result = await runUpdateItems(req, null);
-      } else {
-        throw txErr;
-      }
-    } finally {
-      session.endSession();
-    }
+    // Stock and lines in one transaction; a write conflict with a booking of
+    // the same SKU is retried, ledger postings wait for the commit. See
+    // utils/transaction.js.
+    const result = await runInTransaction(
+      (session) => runUpdateItems(req, session),
+      { label: 'updateBookingItems' },
+    );
 
     const { updated, changes } = result;
 
@@ -830,6 +823,9 @@ export const raisePo = async (req, res, next) => {
     // Re-uses the edit guard: an already-raised PO cannot be overwritten by a
     // second raise unless the caller can override the lock.
     assertBookingEditable(rows, req.user);
+    if (rows.every((r) => r.status === 'Cancelled')) {
+      return res.status(409).json({ success: false, message: 'This booking has been cancelled, so a PO can no longer be raised against it.' });
+    }
 
     let poNumber = String(req.body?.poNumber || '').trim();
     if (isPlaceholderPo(poNumber)) {
@@ -947,10 +943,31 @@ export const raisePo = async (req, res, next) => {
       setFields.supplyByDate = new Date(promiseDate);
     }
 
-    await Order.updateMany(
-      { orderId },
-      { $set: setFields },
-    );
+    /*
+     * Stamp the PO and consume the stock in ONE transaction that re-reads the
+     * booking. The 7-day job may be cancelling this very booking: whichever
+     * commits first wins, and the other, on its retry, sees the result — a PO
+     * on a booking the job then leaves alone, or a cancelled booking this
+     * request then refuses. See utils/stockSettlement.js.
+     *
+     * Raising the PO commits the goods: the reserved units leave inventory for
+     * good (total and booked both drop), here rather than at the nightly job.
+     */
+    const stamped = await runInTransaction(async (session) => {
+      const opts = session ? { session } : {};
+      const fresh = await Order.find({ orderId }, null, opts).lean();
+      if (fresh.every((r) => r.status === 'Cancelled')) return { blocked: 'cancelled' };
+      await Order.updateMany({ orderId }, { $set: setFields }, opts);
+      return settleBooking({
+        orderId,
+        action: 'consume',
+        session,
+        ctx: { workflow: 'po-raise', referenceType: 'booking', referenceId: orderId, actor: req.user, req },
+      });
+    }, { label: 'raisePo' });
+    if (stamped.blocked) {
+      return res.status(409).json({ success: false, message: 'This booking has been cancelled, so a PO can no longer be raised against it.' });
+    }
 
     /*
      * A SEPARATE WRITE, SCOPED BY STATUS, rather than another key in setFields.
@@ -990,27 +1007,7 @@ export const raisePo = async (req, res, next) => {
       });
     }
 
-    // Raising the PO commits the goods: the reserved units leave inventory for
-    // good (total and booked both drop). Done here so stock is correct the
-    // instant the PO exists, rather than waiting for the nightly job.
-    // stockState guards against double-deducting on a retry.
-    for (const row of rows) {
-      if ((row.stockState ?? 'reserved') !== 'reserved') continue;
-      const product = await findProductBySku(row.skuCode);
-      if (product) {
-        await consumeStock(product, row.confirmedQty || 0, null, {
-          workflow: 'po-raise',
-          referenceType: 'booking',
-          referenceId: orderId,
-          actor: req.user,
-          req,
-        });
-      }
-      await Order.updateOne(
-        { _id: row._id },
-        { $set: { stockState: 'consumed', stockSettledAt: now } },
-      );
-    }
+    // The stock was consumed with the PO stamp above.
 
     const updated = await loadBooking(orderId);
 

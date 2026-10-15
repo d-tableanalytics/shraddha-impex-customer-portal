@@ -150,6 +150,20 @@ const PORTAL_ADDITIONS = new Set([
  *   customer, so Sales sees the price schedule; no other non-wildcard role
  *   holds it, which the pricing suite asserts directly.
  */
+// What a task-doer holds — see WORK_QUEUE_DOER in config/permissions.js.
+// MANAGE_WORK_QUEUE_TRASH is not in it: the Trash Bin shows every deleted task
+// in the company, so a role gains it by a tick in the matrix rather than by
+// holding the Work Queue at all. Kept in step with the Employee Portal's copy
+// of this script.
+const WORK_QUEUE_DOER = [
+  PERMISSIONS.VIEW_WORK_QUEUE,
+  PERMISSIONS.CREATE_WORK_QUEUE_TASK,
+  PERMISSIONS.ASSIGN_WORK_QUEUE_TASK,
+  PERMISSIONS.EDIT_WORK_QUEUE_TASK,
+  PERMISSIONS.COMPLETE_WORK_QUEUE_TASK,
+  PERMISSIONS.MANAGE_WORK_QUEUE,
+];
+
 const DELIBERATE_ADDITIONS = {
   Sales: new Set([
     PERMISSIONS.VIEW_PRICING,
@@ -157,19 +171,24 @@ const DELIBERATE_ADDITIONS = {
     PERMISSIONS.VIEW_O2D,
     PERMISSIONS.CREATE_O2D_ORDER,
     PERMISSIONS.WORK_O2D_STAGE,
+    // Indent Stock Assignment: which customer's indent arriving stock goes to.
+    PERMISSIONS.ASSIGN_INDENT_STOCK,
+    ...WORK_QUEUE_DOER,
   ]),
   // O2D stage 7's acknowledgement and stage 9's dispatch.
-  'Warehouse User': new Set([PERMISSIONS.VIEW_O2D, PERMISSIONS.WORK_O2D_STAGE]),
+  'Warehouse User': new Set([PERMISSIONS.VIEW_O2D, PERMISSIONS.WORK_O2D_STAGE, ...WORK_QUEUE_DOER]),
   // Oversight and approval; owns no stage.
   Management: new Set([
     PERMISSIONS.VIEW_O2D,
     PERMISSIONS.VIEW_O2D_ANALYTICS,
     PERMISSIONS.HOLD_O2D,
     PERMISSIONS.OVERRIDE_O2D,
+    ...WORK_QUEUE_DOER,
     PERMISSIONS.EXIT_O2D,
   ]),
   // §20: read-only visibility from stage 6.
-  'Import Team': new Set([PERMISSIONS.VIEW_O2D]),
+  // ...and Indent Stock Assignment: they receive the stock.
+  'Import Team': new Set([PERMISSIONS.VIEW_O2D, PERMISSIONS.ASSIGN_INDENT_STOCK]),
 };
 
 for (const [role, before] of Object.entries(BEFORE)) {

@@ -76,6 +76,16 @@ const inventoryConfigSchema = new mongoose.Schema(
     // A SKU with no issue movement for this long counts as dead stock (M6).
     deadStockDays: { type: Number, default: 180 },
 
+    /**
+     * What happens to stock that arrives while customer indents are waiting.
+     *   'auto'   — assigned to indents straight away, oldest first (FIFO).
+     *   'manual' — held: the SKU waits on the Indent Stock Assignment screen
+     *              until someone runs the FIFO auto-assign or assigns it to
+     *              specific indents.
+     * Read from the GLOBAL row.
+     */
+    indentAssignmentMode: { type: String, enum: ['auto', 'manual'], default: 'auto' },
+
     reasonCodes: { type: [reasonCodeSchema], default: [] },
 
     // ── Versioning ──────────────────────────────────────────────────────────

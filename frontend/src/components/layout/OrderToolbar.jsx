@@ -11,12 +11,17 @@ import {
   CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
 } from "../../utils/historyExportColumns";
 import toast from "react-hot-toast";
+import { Loader2 } from "lucide-react";
+import { useBusyAction } from "../../hooks/useBusyAction";
 
 import { isSuperAdmin } from "../../utils/permissions";
 export const OrderToolbar = () => {
   const { searchQuery, setSearchQuery, filters, setFilters, selectedIds } =
     useOrderHistoryStore();
   const [showFilters, setShowFilters] = useState(false);
+  // An export of the whole history builds its file in the browser after
+  // loading a large library; busy until it is done — see useBusyAction.
+  const { run: runExport, anyBusy: exporting } = useBusyAction();
   const [companies, setCompanies] = useState([]);
   const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
 
@@ -151,42 +156,38 @@ export const OrderToolbar = () => {
             <Filter size={16} className="mr-2" /> Filters
           </ERPButton>
           <div className="relative group">
-            <ERPButton variant="primary" size="sm">
-              <Download size={16} className="mr-2" />
-              Export{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+            <ERPButton variant="primary" size="sm" disabled={exporting}>
+              {exporting ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Download size={16} className="mr-2" />}
+              {exporting ? "Exporting…" : `Export${selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}`}
             </ERPButton>
             <div className="absolute right-0 mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 overflow-hidden">
               <button
-                onClick={() => {
-                  import('../../utils/exportUtils').then(({ exportToExcel }) => {
-                    if (!exportToExcel(exportData(), exportCols, 'Booking_History')) {
-                      toast.error('Excel export failed');
-                    }
-                  });
-                }}
-                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors"
+                disabled={exporting}
+                onClick={() => runExport('excel', async () => {
+                  const { exportToExcel } = await import('../../utils/exportUtils');
+                  return exportToExcel(exportData(), exportCols, 'Booking_History');
+                }, { error: 'Excel export failed' })}
+                className="disabled:opacity-50 disabled:cursor-wait w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors"
               >
                 {selectedIds.length > 0 ? `Export ${selectedIds.length} selected to Excel` : "Export to Excel"}
               </button>
               <button
-                onClick={() => {
-                  import('../../utils/exportUtils').then(({ exportToPDF }) => {
-                    if (!exportToPDF(exportData(), exportCols, 'Booking History Report', 'Booking_History')) {
-                      toast.error('PDF export failed');
-                    }
-                  });
-                }}
-                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
+                disabled={exporting}
+                onClick={() => runExport('pdf', async () => {
+                  const { exportToPDF } = await import('../../utils/exportUtils');
+                  return exportToPDF(exportData(), exportCols, 'Booking History Report', 'Booking_History');
+                }, { error: 'PDF export failed' })}
+                className="disabled:opacity-50 disabled:cursor-wait w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
               >
                 Export to PDF
               </button>
               <button
-                onClick={() => {
-                  import('../../utils/exportUtils').then(({ printData }) => {
-                    printData(exportData(), exportCols, 'Booking History Report');
-                  });
-                }}
-                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
+                disabled={exporting}
+                onClick={() => runExport('print', async () => {
+                  const { printData } = await import('../../utils/exportUtils');
+                  return printData(exportData(), exportCols, 'Booking History Report');
+                }, { error: 'Unable to open print window (check pop-up blocker).' })}
+                className="disabled:opacity-50 disabled:cursor-wait w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
               >
                 Print Report
               </button>

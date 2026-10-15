@@ -1,6 +1,6 @@
 {
-  "config/moduleRegistry.js": "cf6c6b6a9a6ccb4fe054c1a1c39738c647ffe67fcad6cd72f57a5350daac231f",
-  "config/permissions.js": "d045a10911ba0665b492b31e5fddf749594cb882dc423123f678a5db532e40bb",
+  "config/moduleRegistry.js": "b34daa7f02045fe8a30210250ddab3c1d166aef6ecc4fb2e9b4dce21d6a4cfd1",
+  "config/permissions.js": "0d6f869b7a74a29513796fd24d6e208034513b2bc567f93d043e9b47c23217e8",
   "middlewares/auth.js": "6703eadb56c0de1550e7ee3039a13c619d3a031951e514652ae8e8f82c806c28",
   "middlewares/portalGuard.js": "bfbb22d974441a2cec30512530ace7c72949154df43ed264e869bdf9f9091211",
   "middlewares/rbac.js": "06cec9bbbf87049c01f23a7c2fb6a40c59617e1e5469c508bdec47553d6042a2",
@@ -10,7 +10,7 @@
   "shared/permissions/constants.js": "87042f3efb0417bd81ddd98536050b26cd002f221db28bd0c2f56434e397a4c4",
   "shared/permissions/has-permission.js": "e4349bb78832e10478a433a72b6ea78acd87d0c37420095bbb1ec1650b405a1d",
   "shared/permissions/index.js": "0c4963342acc238a5ffad29e03a2c21598fc13d75a9d7013254c1f9cbdf21d13",
-  "shared/permissions/legacy.js": "42819d2b6829e06934e44d4e8eea95428990066371e26b179a447fcacb7ac6ad",
+  "shared/permissions/legacy.js": "72736cecca1c0a94d649e76ec3ab26e343572c0f76e63996f71ccc4b78d5058a",
   "shared/permissions/matrix.js": "543c536073493a7cb6be72fa770ce95fc1a345d1da0937e0bce91b449d5a2060",
   "utils/hrmsRoleGuard.js": "fd597f1ab51273f86d0da4b0ee457b51f9d713548223693a4410225315dabb9b",
   "utils/roleResolver.js": "d6eef7a8e58512d3c490485ab7c3e18dda880ca9aa61baff7af7847ab256fb74",

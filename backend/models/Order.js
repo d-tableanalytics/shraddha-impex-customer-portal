@@ -50,6 +50,10 @@ const orderSchema = new mongoose.Schema({
   },
   stockSettledAt: { type: Date, default: null },
   autoCancelledAt: { type: Date, default: null },
+  // When and why the line was cancelled — by the customer, by staff, or by the
+  // 7-day job (which also sets autoCancelledAt). Null on lines never cancelled.
+  cancelledAt: { type: Date, default: null },
+  cancellationReason: { type: String, default: null },
   remarks: { type: String, default: null }, // Maps to 'Remarks'
   expiryNotified: { type: Boolean, default: false }, // Maps to 'Expiry Notified'
   uniqueId: { type: String, default: null }, // Maps to 'Unique ID'

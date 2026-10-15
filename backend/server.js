@@ -140,10 +140,16 @@ const startServer = async () => {
   await runPoSettlement();
 
   // Daily cron scheduler (runs at 00:00 every day)
+  // The 7-day PO deadline is measured in elapsed hours, so it is checked every
+  // hour: a booking made at 10:00 expires within the hour after its deadline,
+  // not at the next midnight. Safe to repeat — see runPoSettlement.
+  cron.schedule('0 * * * *', () => {
+    runPoSettlement();
+  });
+
   cron.schedule('0 0 * * *', () => {
     console.log('[Cron] Running daily reservation expiry checks...');
     runReservationExpiryChecks();
-    runPoSettlement();
     sweepUploads();
     /*
      * THE HRMS RETENTION SWEEP IS NO LONGER RUN HERE.

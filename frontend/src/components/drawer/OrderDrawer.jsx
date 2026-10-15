@@ -22,6 +22,7 @@ const PAGE_SIZE = 10;
 import { motion, AnimatePresence } from "framer-motion";
 import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { useUserStore } from "../../store/userStore";
+import { useBusyAction } from "../../hooks/useBusyAction";
 import { useCartStore } from "../../store/cartStore";
 import { StatusBadge } from "../ui/StatusBadge";
 import { CodeValue } from "../ui/CodeValue";
@@ -89,6 +90,7 @@ export const OrderDrawer = () => {
   // brings new server values cannot be silently clobbered by a stale draft.
   const [draftQty, setDraftQty] = useState({});
   const [showQtyHistory, setShowQtyHistory] = useState(false);
+  const { run: runExport, isBusy: isExporting } = useBusyAction();
   const [showPicklist, setShowPicklist] = useState(false);
   // An inward allocation's own pick list, when one is open.
   const [allocationDoc, setAllocationDoc] = useState(null);
@@ -327,21 +329,18 @@ export const OrderDrawer = () => {
     return { rows, columns, title, meta };
   };
 
-  const handlePrint = () => {
+  // Busy while the bundle loads and the document is built — see useBusyAction.
+  const handlePrint = () => runExport("print", async () => {
     const { rows, columns, title, meta } = buildExport();
-    import("../../utils/exportUtils").then(({ printData }) => {
-      const ok = printData(rows, columns, title, meta);
-      if (!ok) toast.error("Unable to open print window (check pop-up blocker).");
-    });
-  };
+    const { printData } = await import("../../utils/exportUtils");
+    return printData(rows, columns, title, meta);
+  }, { error: "Unable to open print window (check pop-up blocker)." });
 
-  const handlePDF = () => {
+  const handlePDF = () => runExport("pdf", async () => {
     const { rows, columns, title, meta } = buildExport();
-    import("../../utils/exportUtils").then(({ exportToPDF }) => {
-      const ok = exportToPDF(rows, columns, title, selectedOrder.orderNumber || "Booking", meta);
-      if (!ok) toast.error("PDF download failed");
-    });
-  };
+    const { exportToPDF } = await import("../../utils/exportUtils");
+    return exportToPDF(rows, columns, title, selectedOrder.orderNumber || "Booking", meta);
+  }, { error: "PDF download failed" });
 
   return (
     <AnimatePresence>
@@ -396,11 +395,11 @@ export const OrderDrawer = () => {
                     <Receipt size={16} className="mr-2" /> PO Preview
                   </ERPButton>
                 )}
-                <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePrint}>
-                  <Printer size={16} className="mr-2" /> Print
+                <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePrint} loading={isExporting("print")}>
+                  {!isExporting("print") && <Printer size={16} className="mr-2" />} Print
                 </ERPButton>
-                <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePDF}>
-                  <Download size={16} className="mr-2" /> PDF
+                <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePDF} loading={isExporting("pdf")}>
+                  {!isExporting("pdf") && <Download size={16} className="mr-2" />} PDF
                 </ERPButton>
                 <button
                   onClick={() => setSelectedOrder(null)}
@@ -792,7 +791,8 @@ export const OrderDrawer = () => {
                   onStatusChange={hasPermission(user, PERMISSIONS.MANAGE_ORDERS)
                     ? async (lineId, seq, status) => {
                       const res = await updateAllocationStatus(selectedOrder.orderNumber, lineId, seq, status);
-                      if (!res.success) toast.error(res.error);
+                      if (res.success) toast.success(`Inward allocation ${seq} moved to ${stageLabel(status)}.`);
+                      else toast.error(res.error);
                       return res;
                     }
                     : undefined}

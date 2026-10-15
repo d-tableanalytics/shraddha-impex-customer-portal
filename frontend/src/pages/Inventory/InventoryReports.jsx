@@ -11,6 +11,7 @@ import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
+import { ProgressBar } from '../../components/ui/ProgressBar';
 import { PageHeader } from '../../components/common/PageHeader';
 import { useReportStore } from '../../store/reportStore';
 import { useUserStore } from '../../store/userStore';
@@ -236,13 +237,22 @@ export const InventoryReports = () => {
           )}
 
           <Card>
-            <CardContent className="p-0">
+            <CardContent className="p-0 relative">
+              {/* A refetch over figures already on screen — a filter or page
+                  change: say the numbers are about to change rather than leave
+                  the old ones looking current. */}
+              {loading && data && (
+                <div className="absolute inset-x-0 top-0 z-10" aria-live="polite">
+                  <ProgressBar className="[&>div]:rounded-none" />
+                  <span className="sr-only">Updating report…</span>
+                </div>
+              )}
               {loading && !data ? (
                 <table className="w-full text-sm"><tbody><TableSkeleton rows={8} columns={6} cellClass="px-4 py-3" /></tbody></table>
               ) : !data ? (
                 <Empty>Choose a report to run.</Empty>
               ) : (
-                <>
+                <div className={loading ? "opacity-60 pointer-events-none transition-opacity" : "transition-opacity"} aria-busy={loading}>
                   {/* ── Inventory Summary ────────────────────────────── */}
                   {reportKey === 'inventory-summary' && (
                     <div className="p-5 flex flex-col gap-5">
@@ -425,7 +435,7 @@ export const InventoryReports = () => {
                       )}
                     </>
                   )}
-                </>
+                </div>
               )}
             </CardContent>
           </Card>

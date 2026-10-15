@@ -1,10 +1,9 @@
-import mongoose from 'mongoose';
 import Reservation from '../../models/Reservation.js';
 import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
 import Order from '../../models/Order.js';
 import AuditLog from '../../models/AuditLog.js';
 import MsilCode from '../../models/MsilCode.js';
-import { nextSequence } from '../../models/Counter.js';
+import { nextSequence, nextSequenceBlock } from '../../models/Counter.js';
 import { io } from '../../server.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
@@ -12,7 +11,7 @@ import { allowedBrandModels, canAccessBrand } from '../../utils/brandAccess.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { sendDeliverySchedule } from '../../utils/deliverySchedule.js';
 import { recordAudit } from '../../utils/auditLog.js';
-import { isTransactionUnsupported } from '../../utils/mongoSession.js';
+import { runInTransaction } from '../../utils/transaction.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
 import { hasPermission, PERMISSIONS, isSuperAdmin} from '../../middlewares/rbac.js';
@@ -796,6 +795,13 @@ const reserveDirectBookingLines = async (req, session, items) => {
   const reservationDate = new Date();
   const expiryDate = new Date(reservationDate.getTime() + 7 * 24 * 60 * 60 * 1000);
   const docs = [];
+  // One counter round trip for the whole sheet rather than one per line.
+  // Drawn OUTSIDE the transaction (no session). Every booking increments the
+  // same counter document, so inside a transaction any two bookings at the same
+  // moment — whatever they were for — conflicted on it, and a burst of them
+  // retried until one gave up. A booking that rolls back now leaves a gap in
+  // the numbering; numbers only ever needed to be unique.
+  const seqs = await nextSequenceBlock(`reservation-${year}`, byProduct.size);
 
   for (const [productId, quantity] of byProduct) {
     // Brand-scoped, exactly as the single-line path is: a SKU in a brand this
@@ -819,7 +825,7 @@ const reserveDirectBookingLines = async (req, session, items) => {
       }
     }
 
-    const seq = await nextSequence(`reservation-${year}`, session);
+    const seq = seqs[docs.length];
     docs.push({
       reservationId: `RES-${year}-${String(seq).padStart(6, '0')}`,
       customerId: req.user._id,
@@ -866,7 +872,12 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
   }
 
   const year = new Date().getFullYear();
-  const orderSeq = await nextSequence(`order-${year}`, session);
+  // Drawn OUTSIDE the transaction (no session). Every booking increments the
+  // same counter document, so inside a transaction any two bookings at the same
+  // moment — whatever they were for — conflicted on it, and a burst of them
+  // retried until one gave up. A booking that rolls back now leaves a gap in
+  // the numbering; numbers only ever needed to be unique.
+  const orderSeq = await nextSequence(`order-${year}`);
   const seqStr = String(orderSeq).padStart(6, '0');
   // One confirmation produces THREE identifiers:
   //   Booking ID       BO-2026-001312   (the booking)
@@ -882,6 +893,7 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
   const poNumber = req.body.poNumber || "-";
   const ordersToCreate = [];
   const summary = [];
+  const audits = [];
   const dateNow = new Date();
 
   // `entries()` rather than a bare for..of so each line keeps the position it
@@ -965,13 +977,15 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
     }
     await resItem.save({ session });
 
-    await recordAudit(
-      req.user,
-      'Reservation Confirmed',
-      `Reservation ${resItem.reservationId}: confirmed ${confirmedQty}, pending ${pendingQty} (requested ${requestedQty})`,
-      req,
-      { session },
-    );
+    audits.push({
+      user: req.user?._id || null,
+      action: 'Reservation Confirmed',
+      method: req.method || 'SYSTEM',
+      endpoint: req.originalUrl || 'N/A',
+      ipAddress: req.ip || '127.0.0.1',
+      userAgent: req.headers?.['user-agent'] || 'ERP SYSTEM',
+      remarks: `Reservation ${resItem.reservationId}: confirmed ${confirmedQty}, pending ${pendingQty} (requested ${requestedQty})`,
+    });
 
     summary.push({
       reservationId: resItem.reservationId,
@@ -990,6 +1004,12 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
   const createdOrders = ordersToCreate.length
     ? await Order.insertMany(ordersToCreate, session ? { session } : {})
     : [];
+
+  // One write for every line's audit entry, inside the transaction, so the
+  // trail and the booking commit or roll back together. These were written one
+  // at a time, each swallowing its own failure — and a swallowed failure
+  // inside a transaction leaves it aborted for whatever runs next.
+  if (audits.length) await AuditLog.insertMany(audits, session ? { session } : {});
 
   const totalConfirmed = summary.reduce((sum, s) => sum + s.confirmedQty, 0);
   const totalPending = summary.reduce((sum, s) => sum + s.pendingQty, 0);
@@ -1022,28 +1042,16 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
  *                                   customer's Selection List.
  */
 const runConfirmationRequest = async (req, res, next, { items = null } = {}) => {
-  const session = await mongoose.startSession();
   const tag = items ? 'createDirectBooking' : 'confirmBooking';
-  let result;
   try {
-    try {
-      // Preferred path: run everything inside a single ACID transaction.
-      session.startTransaction();
-      result = await runConfirmBooking(req, session, { items });
-      await session.commitTransaction();
-    } catch (txErr) {
-      await session.abortTransaction();
-      if (isTransactionUnsupported(txErr)) {
-        // Standalone MongoDB (no replica set) — transactions unavailable.
-        // Nothing was committed, so it's safe to re-run without a session.
-        console.warn(`[${tag}] Transactions unsupported — running without a transaction.`);
-        result = await runConfirmBooking(req, null, { items });
-      } else {
-        throw txErr;
-      }
-    } finally {
-      session.endSession();
-    }
+    // One ACID transaction for the whole confirmation — every line, its stock
+    // and its booking row, or none of them. A write conflict with another
+    // booking of the same SKU is retried; ledger postings wait for the commit.
+    // See utils/transaction.js.
+    const result = await runInTransaction(
+      (session) => runConfirmBooking(req, session, { items }),
+      { label: tag },
+    );
 
     const {
       orderNumber, poNumber, indentId, createdOrders, summary,

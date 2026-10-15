@@ -14,6 +14,7 @@ import toast from "react-hot-toast";
 import { reservationsApi } from "../../services/reservations";
 import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
+import { useBusyAction } from "../../hooks/useBusyAction";
 import { ERPButton } from "../ui/ERPButton";
 import { IndentStatusBadge } from "../ui/IndentStatusBadge";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
@@ -30,6 +31,7 @@ export const IndentDrawer = () => {
   const showMsilCode = useShowMsilCode();
   const isAdmin = isSuperAdmin(user);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const { run: runExport, isBusy: isExporting } = useBusyAction();
   const [busy, setBusy] = useState(false);
 
   // Derived before the early return so the paging hook always runs.
@@ -87,23 +89,18 @@ export const IndentDrawer = () => {
     return { rows, columns, title };
   };
 
-  const handlePrint = () => {
+  // Busy while the bundle loads and the document is built — see useBusyAction.
+  const handlePrint = () => runExport("print", async () => {
     const { rows, columns, title } = buildExport();
-    import("../../utils/exportUtils").then(({ printData }) => {
-      if (!printData(rows, columns, title)) {
-        toast.error("Unable to open print window (check pop-up blocker).");
-      }
-    });
-  };
+    const { printData } = await import("../../utils/exportUtils");
+    return printData(rows, columns, title);
+  }, { error: "Unable to open print window (check pop-up blocker)." });
 
-  const handlePDF = () => {
+  const handlePDF = () => runExport("pdf", async () => {
     const { rows, columns, title } = buildExport();
-    import("../../utils/exportUtils").then(({ exportToPDF }) => {
-      if (!exportToPDF(rows, columns, title, selectedIndent.indentNumber || "Indent")) {
-        toast.error("PDF download failed");
-      }
-    });
-  };
+    const { exportToPDF } = await import("../../utils/exportUtils");
+    return exportToPDF(rows, columns, title, selectedIndent.indentNumber || "Indent");
+  }, { error: "PDF download failed" });
 
   const readyCount = selectedIndent.readyLines;
 
@@ -145,11 +142,11 @@ export const IndentDrawer = () => {
                   <PackageX size={16} className="mr-2" /> Cancel Indent
                 </ERPButton>
               )}
-              <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePrint}>
-                <Printer size={16} className="mr-2" /> Print
+              <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePrint} loading={isExporting("print")}>
+                {!isExporting("print") && <Printer size={16} className="mr-2" />} Print
               </ERPButton>
-              <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePDF}>
-                <Download size={16} className="mr-2" /> PDF
+              <ERPButton variant="outline" size="sm" className="hidden sm:flex" onClick={handlePDF} loading={isExporting("pdf")}>
+                {!isExporting("pdf") && <Download size={16} className="mr-2" />} PDF
               </ERPButton>
               <button
                 onClick={() => setSelectedIndent(null)}

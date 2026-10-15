@@ -8,6 +8,7 @@ import {
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
 import { useUserStore } from "../../store/userStore";
+import { useBusyAction } from "../../hooks/useBusyAction";
 import { ERPButton } from "../ui/ERPButton";
 import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { PoCountdown } from "../ui/PoCountdown";
@@ -20,6 +21,7 @@ import { PicklistPreview } from "../pricing/PicklistPreview";
 import { PriceTypeSelector } from "../pricing/PriceTypeSelector";
 import { picklistFromSalesBooking, allocationPicklistFromSalesBooking } from "../../utils/picklistDocument";
 import { AllocationsSection } from "./AllocationsSection";
+import { stageLabel } from "../../constants/bookingLifecycle";
 import { formatRupees, withGstParts, GST_LABEL } from "../../constants/pricing";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
@@ -69,6 +71,7 @@ export const SalesBookingDrawer = () => {
   const [poInput, setPoInput] = useState("");
   const [showPoBox, setShowPoBox] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const { run: runExport, isBusy: isExporting } = useBusyAction();
   const [showPicklist, setShowPicklist] = useState(false);
   // An inward allocation's own pick list, when one is open.
   const [allocationDoc, setAllocationDoc] = useState(null);
@@ -336,17 +339,20 @@ export const SalesBookingDrawer = () => {
 
   // Loaded on demand: the xlsx/jspdf bundles are large and most visits to this
   // drawer never download anything.
+  // Busy while the bundle loads and the file is built, so the button shows it
+  // and a second click cannot produce a second file. See useBusyAction.
   const handleDownload = () => {
     if (draft.length === 0) return toast.error("Nothing to download — this booking has no lines.");
-    const { rows, columns, meta } = buildExport();
-    import("../../utils/exportUtils").then(({ exportToExcel }) => {
+    return runExport("excel", async () => {
+      const { rows, columns, meta } = buildExport();
+      const { exportToExcel } = await import("../../utils/exportUtils");
       const ok = exportToExcel(rows, columns, `Booking_${selected.orderId}`, meta);
       if (ok) toast.success(`Downloaded ${rows.length} line(s).`);
-      else toast.error("Download failed.");
-    });
+      return ok;
+    }, { error: "Download failed." });
   };
 
-  const handleDownloadPdf = async () => {
+  const handleDownloadPdf = () => {
     if ((selected.lines || []).length === 0) {
       return toast.error("Nothing to download — this booking has no lines.");
     }
@@ -355,12 +361,14 @@ export const SalesBookingDrawer = () => {
     if (dirty) {
       toast("Unsaved edits are not in the PDF — save them first to include them.", { icon: "ℹ️" });
     }
-    const { downloadBookingPdf } = await import("../../utils/bookingPdf");
-    const ok = await downloadBookingPdf(selected, {
-      generatedBy: user?.user || user?.name || user?.email || "Sales Desk",
-    });
-    if (ok) toast.success(`Booking ${selected.orderId} downloaded as PDF.`);
-    else toast.error("PDF download failed.");
+    return runExport("pdf", async () => {
+      const { downloadBookingPdf } = await import("../../utils/bookingPdf");
+      const ok = await downloadBookingPdf(selected, {
+        generatedBy: user?.user || user?.name || user?.email || "Sales Desk",
+      });
+      if (ok) toast.success(`Booking ${selected.orderId} downloaded as PDF.`);
+      return ok;
+    }, { error: "PDF download failed." });
   };
 
   const handleOpenModal = () => {
@@ -846,7 +854,7 @@ export const SalesBookingDrawer = () => {
                       booking is exactly the one the warehouse picks against. */}
                   <button
                     onClick={handleDownload}
-                    disabled={draft.length === 0}
+                    disabled={draft.length === 0 || isExporting("excel")}
                     title={
                       dirty
                         ? "Downloads the lines as shown, including your unsaved edits"
@@ -854,11 +862,11 @@ export const SalesBookingDrawer = () => {
                     }
                     className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:text-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    <Download size={14} /> Excel
+                    {isExporting("excel") ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Excel
                   </button>
                   <button
                     onClick={handleDownloadPdf}
-                    disabled={draft.length === 0}
+                    disabled={draft.length === 0 || isExporting("pdf")}
                     title={
                       dirty
                         ? "Downloads the lines as shown, including your unsaved edits"
@@ -866,7 +874,7 @@ export const SalesBookingDrawer = () => {
                     }
                     className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:text-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    <FileText size={14} /> PDF
+                    {isExporting("pdf") ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} PDF
                   </button>
                   {/* The document the customer will see, on the desk's screen
                       first. The desk's copy names the price schedule and shows
@@ -1167,7 +1175,8 @@ export const SalesBookingDrawer = () => {
               onStatusChange={hasPermission(user, PERMISSIONS.MANAGE_ORDERS)
                 ? async (lineId, seq, status) => {
                   const res = await updateAllocationStatus(selected.orderId, lineId, seq, status);
-                  if (!res.success) toast.error(res.error);
+                  if (res.success) toast.success(`Inward allocation ${seq} moved to ${stageLabel(status)}.`);
+                  else toast.error(res.error);
                   return res;
                 }
                 : undefined}

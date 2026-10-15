@@ -48,6 +48,8 @@ export const PERMISSIONS = {
   EXPORT_INVENTORY: "export_inventory",
   VIEW_STOCK_LEDGER: "view_stock_ledger",
   POST_STOCK_IN: "post_stock_in",
+  // Indent Stock Assignment: which customer indent arriving stock goes to.
+  ASSIGN_INDENT_STOCK: "assign_indent_stock",
   POST_STOCK_OUT: "post_stock_out",
   ADJUST_STOCK: "adjust_stock",
   APPROVE_ADJUSTMENT: "approve_adjustment",

@@ -14,7 +14,7 @@ import { ProductSearchDropdown } from "../../components/ui";
 import { CodeValue } from "../../components/ui/CodeValue";
 import { Modal } from "../../components/ui/Modal";
 import { Button } from "../../components/ui/Button";
-import { Package, Hash, Tag, MessageSquare, Receipt, ArrowRight, AlertTriangle, Clock, PackageCheck } from "lucide-react";
+import { Package, Hash, Tag, MessageSquare, Receipt, ArrowRight, AlertTriangle, Clock, PackageCheck , Loader2 } from "lucide-react";
 
 const ValidityNotice = () => (
   <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
@@ -28,6 +28,10 @@ const ValidityNotice = () => (
 export const CustomerOrders = () => {
   const navigate = useNavigate();
   const [selectedProduct, setSelectedProduct] = useState(null);
+  // The Confirm button's own step (re-reading live stock before the review),
+  // kept apart from the cart's shared `loading`, which every list fetch and add
+  // also sets — the button used to read "CONFIRMING…" during those.
+  const [checkingStock, setCheckingStock] = useState(false);
   const [productSearchVal, setProductSearchVal] = useState("");
   const [showIndentConfirm, setShowIndentConfirm] = useState(false);
   const [showBookingConfirm, setShowBookingConfirm] = useState(false);
@@ -192,7 +196,12 @@ export const CustomerOrders = () => {
 
     // Refresh reservations so the shortfall check runs on current stock, then
     // show the Review Indent popup before finalising the booking.
-    await fetchReservations();
+    setCheckingStock(true);
+    try {
+      await fetchReservations();
+    } finally {
+      setCheckingStock(false);
+    }
     const freshReview = computeReview(useCartStore.getState().items);
     if (freshReview.pending.length > 0) {
       setShowIndentConfirm(true);
@@ -417,14 +426,19 @@ export const CustomerOrders = () => {
                 
                 <button
                   onClick={handleOrderSubmission}
-                  disabled={loading || cartItems.length === 0}
+                  disabled={loading || checkingStock || cartItems.length === 0}
+                  aria-busy={checkingStock}
                   className="w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black rounded-xl flex items-center justify-center gap-3 transition-all shadow-[0_4px_14px_0_rgba(16,185,129,0.39)] hover:shadow-[0_6px_20px_rgba(16,185,129,0.23)] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:hover:shadow-none disabled:cursor-not-allowed mb-4"
                 >
                   <div className="flex flex-col text-left">
-                    <span className="tracking-widest text-sm mb-0.5">{loading ? "CONFIRMING..." : "CONFIRM BOOKING"}</span>
-                    <span className="text-[10px] text-green-100 font-medium tracking-wide uppercase opacity-90">{loading ? "Please wait" : "Submit Booking to ERP"}</span>
+                    <span className="tracking-widest text-sm mb-0.5">{checkingStock ? "CHECKING STOCK…" : "CONFIRM BOOKING"}</span>
+                    <span className="text-[10px] text-green-100 font-medium tracking-wide uppercase opacity-90">
+                      {checkingStock ? "Reading live availability" : loading ? "Updating your list…" : "Submit Booking to ERP"}
+                    </span>
                   </div>
-                  <ArrowRight size={24} className="ml-2 opacity-80" />
+                  {checkingStock || loading
+                    ? <Loader2 size={22} className="ml-2 animate-spin opacity-80" />
+                    : <ArrowRight size={24} className="ml-2 opacity-80" />}
                 </button>
 
                 <ValidityNotice />

@@ -31,6 +31,7 @@ const InventoryHealth = lazy(() => import("../pages/Inventory/InventoryHealth").
 const UpcomingStock = lazy(() => import("../pages/Inventory/UpcomingStock").then(m => ({ default: m.UpcomingStock })));
 const InventoryDashboard = lazy(() => import("../pages/Inventory/InventoryDashboard").then(m => ({ default: m.InventoryDashboard })));
 const InventoryImport = lazy(() => import("../pages/Inventory/InventoryImport").then(m => ({ default: m.InventoryImport })));
+const IndentAssignment = lazy(() => import("../pages/Inventory/IndentAssignment").then(m => ({ default: m.IndentAssignment })));
 const Reports = lazy(() => import("../pages/Reports/Reports").then(m => ({ default: m.Reports })));
 const Settings = lazy(() => import("../pages/Settings/Settings").then(m => ({ default: m.Settings })));
 const Help = lazy(() => import("../pages/Help/Help").then(m => ({ default: m.Help })));
@@ -165,6 +166,12 @@ export const router = createBrowserRouter([
             // Inventory dashboard (M5). A read model over the projections.
             path: "inventory/dashboard",
             element: <ModuleRoute module="inventory" submodule="dashboard"><InventoryDashboard /></ModuleRoute>,
+          },
+          {
+            // Indent Stock Assignment: which customer indent arriving stock
+            // goes to (auto FIFO, manual, reassign).
+            path: "inventory/indent-assignment",
+            element: <ModuleRoute module="inventory" submodule="indent_assignment"><IndentAssignment /></ModuleRoute>,
           },
           {
             // Import (M9). Files flow through the approved services; nothing

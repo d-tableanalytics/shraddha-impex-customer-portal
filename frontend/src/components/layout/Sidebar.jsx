@@ -32,6 +32,7 @@ import {
   Truck,
   Ban,
   CalendarClock,
+  Shuffle,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useUIStore } from "../../store/uiStore";
@@ -56,6 +57,8 @@ const ICONS = {
   LayoutDashboard, PlusCircle, UploadCloud, History, PackageX, Boxes, Users,
   Settings, HelpCircle, FileCheck2, Warehouse, ScrollText, Activity,
   GaugeCircle, Upload, Images, Store, ShieldCheck, LayoutGrid, Key, BarChart3,
+  // Indent Stock Assignment.
+  Shuffle,
   // FMS (src/fms/navigation.js).
   ListChecks, Truck, Ban,
   // Upcoming Stock demo (utils/navigation.js).

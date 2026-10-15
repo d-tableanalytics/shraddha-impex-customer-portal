@@ -53,4 +53,14 @@ describe("Indent-to-Booking Allocations", () => {
     expect(screen.getByText("Dispatched")).toBeTruthy();
     expect(screen.getAllByText("after PO")).toHaveLength(2);
   });
+
+  test("an allocation released with its booking shows as released, with no stage control", () => {
+    const released = {
+      ...line,
+      allocations: [{ seq: 1, quantity: 10, at: "2026-10-12T00:00:00Z", status: "Cancelled", statusAt: "2026-10-20T00:00:00Z" }],
+    };
+    render(<AllocationsSection lines={[released]} onStatusChange={vi.fn()} />);
+    expect(screen.getByText("Cancelled — stock released")).toBeTruthy();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
 });

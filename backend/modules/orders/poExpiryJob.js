@@ -5,7 +5,8 @@ import { sendEmail } from '../../utils/mailer.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { isPoGenerated, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
-import { findProductBySku, releaseStock, consumeStock } from '../../utils/stockLedger.js';
+import { runInTransaction } from '../../utils/transaction.js';
+import { settleBooking, releasedAllocations, indentsReleased } from '../../utils/stockSettlement.js';
 import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
 import { recordExternalStatusChange } from './bookingStatus.service.js';
 import { bookingStatusOf } from '../../utils/bookingLifecycle.js';
@@ -89,7 +90,22 @@ const cancellationEmail = ({ customerName, orderId, lines, bookingDate }) => {
  * @param {object} [opts]
  * @param {boolean} [opts.dryRun] Report what would change without writing.
  */
-export const runPoSettlement = async ({ dryRun = false } = {}) => {
+// One run at a time in this process. The schedule is hourly and a slow run can
+// still be going when the next one fires; the second simply joins the first.
+// Other processes (another server pointed at the same database) are made safe
+// by settleBooking, which never settles a line twice.
+let inFlight = null;
+
+export const runPoSettlement = (opts = {}) => {
+  if (inFlight) {
+    console.log('[Job] PO settlement already running — this run joins it.');
+    return inFlight;
+  }
+  inFlight = settleOnce(opts).finally(() => { inFlight = null; });
+  return inFlight;
+};
+
+const settleOnce = async ({ dryRun = false } = {}) => {
   console.log(`[Job] Starting PO settlement checks${dryRun ? ' (DRY RUN)' : ''}...`);
   const result = { consumed: [], cancelled: [], skipped: 0 };
 
@@ -116,27 +132,29 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
       byBooking.get(r.orderId).push(r);
     }
 
-    for (const [orderId, lines] of byBooking) {
-      const locked = lines.some(isPoGenerated);
-      const age = daysSince(bookingDateOf(lines[0]));
+    for (const [orderId, candidate] of byBooking) {
+      const locked = candidate.some(isPoGenerated);
+      const age = daysSince(bookingDateOf(candidate[0]));
 
       // ── PO raised → consume permanently ──────────────────────────────────
       if (locked) {
+        let lines = candidate;
         if (!dryRun) {
-          for (const row of lines) {
-            const product = await findProductBySku(row.skuCode);
-            if (product) {
-              await consumeStock(product, row.confirmedQty || 0, null, {
-                workflow: 'po-settlement-consume',
-                referenceType: 'booking',
-                referenceId: orderId,
-              });
-              settledSkus.add(row.skuCode);
-            }
-            row.stockState = 'consumed';
-            row.stockSettledAt = new Date();
-            await row.save();
-          }
+          // Re-read and settled in one transaction, so a desk raising the PO at
+          // the same moment cannot consume the same lines twice.
+          const { settled } = await runInTransaction(
+            (session) => settleBooking({
+              orderId,
+              action: 'consume',
+              session,
+              precheck: (fresh) => (fresh.some(isPoGenerated) ? null : 'no-po'),
+              ctx: { workflow: 'po-settlement-consume', referenceType: 'booking', referenceId: orderId },
+            }),
+            { label: 'poSettlement' },
+          );
+          if (!settled.length) continue;
+          lines = settled;
+          lines.forEach((l) => settledSkus.add(l.skuCode));
           await logSystemEvent(
             'Booking Stock Consumed',
             `PO raised for ${orderId} — ${lines.reduce((n, l) => n + (l.confirmedQty || 0), 0)} unit(s) permanently deducted from inventory.`,
@@ -152,40 +170,73 @@ export const runPoSettlement = async ({ dryRun = false } = {}) => {
       }
 
       // ── No PO yet, still inside the window → leave alone ─────────────────
+      // Elapsed time, not calendar days: 7 × 24 hours from the booking date.
       if (age < PO_DEADLINE_DAYS) {
         result.skipped++;
         continue;
       }
 
       // ── Deadline passed → cancel and release ─────────────────────────────
-      const units = lines.reduce((n, l) => n + (l.confirmedQty || 0), 0);
+      let lines = candidate;
+      const sumOf = (ls) => ls.reduce((n, l) => n + (l.confirmedQty || 0), 0);
+      let units = sumOf(lines);
       if (!dryRun) {
         const now = new Date();
-        // Read before the loop rewrites every row to 'Cancelled'.
-        const statusBeforeCancel = bookingStatusOf(lines);
-        for (const row of lines) {
-          const product = await findProductBySku(row.skuCode);
-          if (product) {
-            await releaseStock(product, row.confirmedQty || 0, null, {
+        // Read before the lines are rewritten to 'Cancelled'.
+        const statusBeforeCancel = bookingStatusOf(candidate);
+        // One transaction that re-reads the booking and re-checks the rules on
+        // what it reads: a PO raised, or a cancellation made, since the list
+        // above was read leaves the booking to whoever got there first. And a
+        // second run of this job (another process, an overlapping schedule)
+        // finds nothing still reserved, so stock is never released twice.
+        const { settled, indentsClosed } = await runInTransaction(
+          (session) => settleBooking({
+            orderId,
+            action: 'release',
+            // Its open indent expires with it: no PO means the order is off.
+            closeIndent: `Booking ${orderId} expired: no PO raised within ${PO_DEADLINE_DAYS} days`,
+            session,
+            precheck: (fresh) => {
+              if (fresh.some(isPoGenerated)) return 'po-raised';
+              if (daysSince(bookingDateOf(fresh[0])) < PO_DEADLINE_DAYS) return 'not-due';
+              return null;
+            },
+            set: (row) => ({
+              status: 'Cancelled',
+              autoCancelledAt: now,
+              cancelledAt: now,
+              cancellationReason: `No PO raised within ${PO_DEADLINE_DAYS} days`,
+              remarks: `Auto-cancelled: no PO raised within ${PO_DEADLINE_DAYS} days. ${row.remarks || ''}`.trim(),
+              ...releasedAllocations(row, now),
+            }),
+            ctx: {
               workflow: 'po-settlement-release',
               referenceType: 'booking',
               referenceId: orderId,
               reasonCode: 'REVERSAL',
-            });
-            settledSkus.add(row.skuCode);
-          }
-          row.stockState = 'released';
-          row.stockSettledAt = now;
-          row.status = 'Cancelled';
-          row.autoCancelledAt = now;
-          row.remarks = `Auto-cancelled: no PO raised within ${PO_DEADLINE_DAYS} days. ${row.remarks || ''}`.trim();
-          await row.save();
-        }
+            },
+          }),
+          { label: 'poSettlement' },
+        );
+        if (!settled.length) continue;
+        lines = settled;
+        units = sumOf(lines);
+        lines.forEach((l) => settledSkus.add(l.skuCode));
 
         await logSystemEvent(
           'Booking Auto-Cancelled (No PO)',
           `Booking ${orderId} cancelled after ${PO_DEADLINE_DAYS} days without a PO. ${units} unit(s) returned to stock.`,
-          { orderId, units, lines: lines.map((l) => ({ skuCode: l.skuCode, qty: l.confirmedQty })) },
+          {
+            orderId,
+            units,
+            lines: lines.map((l) => ({ skuCode: l.skuCode, qty: l.confirmedQty })),
+            // The stock-release record: why, when, and which indents the
+            // released units had been allocated from.
+            reason: `No PO raised within ${PO_DEADLINE_DAYS} days`,
+            releasedAt: now,
+            indents: indentsReleased(lines),
+            indentsClosed: indentsClosed.map((i) => ({ skuCode: i.skuCode, indentNumber: i.indentNumber, quantity: i.quantity })),
+          },
         );
 
         // The lifecycle timeline the customer sees must show why the booking

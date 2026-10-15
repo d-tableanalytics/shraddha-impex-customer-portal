@@ -33,6 +33,32 @@ export async function stopTestMongo() {
 }
 
 /**
+ * A single-node REPLICA SET, for tests about transactions.
+ *
+ * The plain server above has no transactions, so every transactional workflow
+ * quietly takes its "run without one" fallback there — which is how the
+ * booking confirmation's real path (commit, abort, retry) went untested. Use
+ * this when the transaction itself is what is under test.
+ *
+ * Builds every model's indexes before returning: an index build holds a
+ * collection lock, and a transaction that meets it fails with a LockTimeout
+ * that has nothing to do with the code under test.
+ */
+export async function startTestReplSet() {
+  const { MongoMemoryReplSet } = await import('mongodb-memory-server');
+  server = await MongoMemoryReplSet.create({
+    replSet: { count: 1, storageEngine: 'wiredTiger' },
+    instanceOpts: [{ launchTimeout: LAUNCH_TIMEOUT_MS }],
+  });
+  await mongoose.connect(server.getUri(), { dbName: 'txn_test' });
+  for (const model of Object.values(mongoose.models)) {
+    await model.createCollection().catch(() => {});
+    await model.init().catch(() => {});
+  }
+  return server.getUri();
+}
+
+/**
  * Build the declared indexes for these models.
  *
  * Mongoose creates indexes in the background, so without this a test could

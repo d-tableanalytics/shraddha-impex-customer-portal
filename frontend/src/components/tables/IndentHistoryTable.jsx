@@ -1,4 +1,5 @@
-import { ChevronUp, ChevronDown, Eye, FileDown, FileSpreadsheet, PackageCheck, MapPin, Phone } from "lucide-react";
+import { ChevronUp, ChevronDown, Eye, FileDown, FileSpreadsheet, PackageCheck, MapPin, Phone, Loader2 } from "lucide-react";
+import { useBusyAction } from "../../hooks/useBusyAction";
 import toast from "react-hot-toast";
 import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
@@ -26,6 +27,7 @@ export const IndentHistoryTable = () => {
     toggleSelectId,
     toggleSelectAll,
   } = useIndentHistoryStore();
+  const { run: runRow, isBusy: isRowBusy } = useBusyAction();
 
   const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
 
@@ -66,27 +68,28 @@ export const IndentHistoryTable = () => {
     { key: "available", label: "Available Qty" },
   ];
 
+  // One busy key per indent and format — see useBusyAction.
   const handleRowPDF = (indent) => {
-    import("../../utils/exportUtils").then(({ exportToPDF }) => {
-      const ok = exportToPDF(
+    runRow(`pdf:${indent.id}`, async () => {
+      const { exportToPDF } = await import("../../utils/exportUtils");
+      return exportToPDF(
         rowsFor(indent),
         rowCols,
         `Indent ${indent.indentNumber || ""} — ${indent.customer || ""}`,
         `Indent_${indent.indentNumber || indent.id}`,
       );
-      if (!ok) toast.error("PDF download failed");
-    });
+    }, { error: "PDF download failed" });
   };
 
   const handleRowExcel = (indent) => {
-    import("../../utils/exportUtils").then(({ exportToExcel }) => {
-      const ok = exportToExcel(
+    runRow(`excel:${indent.id}`, async () => {
+      const { exportToExcel } = await import("../../utils/exportUtils");
+      return exportToExcel(
         rowsFor(indent),
         rowCols,
         `Indent_${indent.indentNumber || indent.id}`,
       );
-      if (!ok) toast.error("Excel download failed");
-    });
+    }, { error: "Excel download failed" });
   };
 
   const renderSortIcon = (field) => {
@@ -257,20 +260,26 @@ export const IndentHistoryTable = () => {
                         e.stopPropagation();
                         handleRowPDF(indent);
                       }}
+                      disabled={isRowBusy(`pdf:${indent.id}`)}
                       className="p-1.5 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors focus:outline-none"
                       title="Download PDF"
                     >
-                      <FileDown size={18} />
+                      {isRowBusy(`pdf:${indent.id}`)
+                        ? <Loader2 size={18} className="animate-spin" />
+                        : <FileDown size={18} />}
                     </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleRowExcel(indent);
                       }}
+                      disabled={isRowBusy(`excel:${indent.id}`)}
                       className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors focus:outline-none"
                       title="Download Excel"
                     >
-                      <FileSpreadsheet size={18} />
+                      {isRowBusy(`excel:${indent.id}`)
+                        ? <Loader2 size={18} className="animate-spin" />
+                        : <FileSpreadsheet size={18} />}
                     </button>
                   </td>
                 </tr>

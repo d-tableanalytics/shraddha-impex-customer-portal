@@ -1,11 +1,13 @@
 import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { Card, CardContent } from "../ui/Card";
+import { SkeletonLoader } from "../ui/SkeletonLoader";
 import { PackageX, Boxes } from "lucide-react";
 
 // Mirrors MetricsCard on Booking History. Only the two headline figures are
 // shown; the store still computes the rest if they are ever wanted back.
 export const IndentMetricsCard = () => {
-  const { metrics } = useIndentHistoryStore();
+  const { metrics, loading, allIndents } = useIndentHistoryStore();
+  const firstLoad = loading && allIndents.length === 0;
 
   const items = [
     {
@@ -38,9 +40,15 @@ export const IndentMetricsCard = () => {
               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate">
                 {item.label}
               </p>
-              <h3 className="text-xl font-bold text-slate-800">
-                {item.value.toLocaleString()}
-              </h3>
+              {/* A placeholder until the first load lands — a 0 here would
+                  read as "you have none", which is a different fact. */}
+              {firstLoad ? (
+                <SkeletonLoader variant="text" className="w-10 h-6 mt-0.5" />
+              ) : (
+                <h3 className="text-xl font-bold text-slate-800">
+                  {item.value.toLocaleString()}
+                </h3>
+              )}
             </div>
           </CardContent>
         </Card>

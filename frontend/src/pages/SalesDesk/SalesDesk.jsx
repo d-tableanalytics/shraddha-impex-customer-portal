@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Search, X, Eye, Clock, Lock, FileCheck2, Download, FileText } from "lucide-react";
+import { Search, X, Eye, Clock, Lock, FileCheck2, Download, FileText, Loader2 } from "lucide-react";
+import { useBusyAction } from "../../hooks/useBusyAction";
 import { PageHeader } from "../../components/common/PageHeader";
 import { Card, CardContent } from "../../components/ui/Card";
 import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
@@ -55,6 +56,8 @@ export const companyNameOf = (booking) =>
 export const SalesDesk = () => {
   const { bookings, meta, scope, search, loading, error, fetchBookings, setScope, setSearch, select } =
     useSalesStore();
+  // Exports of the whole list build their file in the browser; busy until done.
+  const { run: runExport, isBusy: isExporting } = useBusyAction();
   const { user } = useUserStore();
 
   useEffect(() => {
@@ -125,25 +128,27 @@ export const SalesDesk = () => {
 
   const handleExcel = () => {
     if (bookings.length === 0) return toast.error("Nothing to export for the current filter.");
-    const { rows, columns } = buildExport();
-    import("../../utils/exportUtils").then(({ exportToExcel }) => {
+    return runExport("excel", async () => {
+      const { rows, columns } = buildExport();
+      const { exportToExcel } = await import("../../utils/exportUtils");
       const ok = exportToExcel(rows, columns, fileStem());
       if (ok) toast.success(`Exported ${rows.length} booking(s).`);
-      else toast.error("Export failed.");
-    });
+      return ok;
+    }, { error: "Export failed." });
   };
 
   const handlePdf = () => {
     if (bookings.length === 0) return toast.error("Nothing to export for the current filter.");
-    const { rows, columns, title } = buildExport();
     // exportToPDF uses jspdf-autotable, which paginates a long table across
     // pages and repeats the header row on each — nothing extra to do for a
     // large result set.
-    import("../../utils/exportUtils").then(({ exportToPDF }) => {
+    return runExport("pdf", async () => {
+      const { rows, columns, title } = buildExport();
+      const { exportToPDF } = await import("../../utils/exportUtils");
       const ok = exportToPDF(rows, columns, title, fileStem());
       if (ok) toast.success(`Exported ${rows.length} booking(s) as PDF.`);
-      else toast.error("PDF export failed.");
-    });
+      return ok;
+    }, { error: "PDF export failed." });
   };
 
   const exportBtn =
@@ -155,13 +160,13 @@ export const SalesDesk = () => {
         title="Sales Desk"
         actions={(
           <div className="flex items-center gap-2">
-            <button onClick={handleExcel} disabled={loading || bookings.length === 0}
+            <button onClick={handleExcel} disabled={loading || bookings.length === 0 || isExporting("excel")}
               title="Download the bookings shown, as Excel" className={exportBtn}>
-              <Download size={14} /> Excel
+              {isExporting("excel") ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Excel
             </button>
-            <button onClick={handlePdf} disabled={loading || bookings.length === 0}
+            <button onClick={handlePdf} disabled={loading || bookings.length === 0 || isExporting("pdf")}
               title="Download the bookings shown, as PDF" className={exportBtn}>
-              <FileText size={14} /> PDF
+              {isExporting("pdf") ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} PDF
             </button>
           </div>
         )}

@@ -26,6 +26,10 @@ const reservationSchema = new mongoose.Schema({
   poNumber: { type: String, default: null },
   confirmedAt: Date,
   expiredAt: Date,
+  // An indent closed because its booking was cancelled or expired (no PO in
+  // 7 days): when, and why. It holds no stock, so nothing is released.
+  cancelledAt: { type: Date, default: null },
+  cancellationReason: { type: String, default: null },
   lastReminderSent: { type: String, default: null }, // e.g. 'day5', 'day7'
 
   // ── Scheduled availability ────────────────────────────────────────────────

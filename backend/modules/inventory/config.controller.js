@@ -137,6 +137,7 @@ export const updateConfig = async (req, res, next) => {
       adjustmentApprovalThreshold: base.adjustmentApprovalThreshold ?? 100,
       backdatingWindowDays: base.backdatingWindowDays ?? 30,
       deadStockDays: base.deadStockDays ?? 180,
+      indentAssignmentMode: base.indentAssignmentMode || 'auto',
       reasonCodes: base.reasonCodes || [],
     };
 
@@ -187,6 +188,16 @@ export const updateConfig = async (req, res, next) => {
         continue;
       }
       next[key] = value;
+    }
+
+    if ('indentAssignmentMode' in req.body) {
+      if (!['auto', 'manual'].includes(req.body.indentAssignmentMode)) {
+        errors.push('indentAssignmentMode must be "auto" or "manual".');
+      } else if (scope !== 'global') {
+        errors.push('The indent assignment mode is set on the global configuration only.');
+      } else {
+        next.indentAssignmentMode = req.body.indentAssignmentMode;
+      }
     }
 
     if ('reasonCodes' in req.body) {

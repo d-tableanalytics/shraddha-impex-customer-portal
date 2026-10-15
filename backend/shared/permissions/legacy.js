@@ -50,6 +50,9 @@ export const PERMISSIONS = {
   APPROVE_ADJUSTMENT: 'approve_adjustment',             // (M7) approve above threshold
   PERFORM_COUNT: 'perform_count',                       // (M7) enter counts
   APPROVE_COUNT: 'approve_count',                       // (M7) approve variances and post
+  // Choose which customer indent gets arriving stock — run the FIFO auto-assign,
+  // assign to a specific indent, or move an allocation to another indent.
+  ASSIGN_INDENT_STOCK: 'assign_indent_stock',
   TRANSFER_STOCK: 'transfer_stock',                     // (M7) inter-location transfers
 };
 

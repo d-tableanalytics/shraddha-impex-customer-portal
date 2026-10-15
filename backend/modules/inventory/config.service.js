@@ -51,4 +51,17 @@ export const resolveConfig = async ({ skuCode = null, category = null, brand = n
   return null;
 };
 
-export default { liveConfig, resolveConfig };
+/**
+ * 'auto' or 'manual' — what arriving stock does while indents wait. See
+ * InventoryConfig.indentAssignmentMode. Falls back to 'auto' (the behaviour
+ * before the setting existed) if the global row cannot be read.
+ */
+export const indentAssignmentMode = async () => {
+  try {
+    return (await liveConfig('global'))?.indentAssignmentMode || 'auto';
+  } catch {
+    return 'auto';
+  }
+};
+
+export default { liveConfig, resolveConfig, indentAssignmentMode };

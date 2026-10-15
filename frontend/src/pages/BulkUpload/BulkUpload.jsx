@@ -21,6 +21,23 @@ import { Download, AlertTriangle, Check, RefreshCw, PackageCheck, PackageX } fro
 import { computeReview, linesFromBulkRows } from "../../utils/bookingReview";
 import { Modal } from "../../components/ui/Modal";
 import { Button } from "../../components/ui/Button";
+import { ProgressBar } from "../../components/ui/ProgressBar";
+import { StageProgress } from "../../components/ui/StageProgress";
+import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
+
+// The stages a sheet goes through, shown while it does. Reading happens in the
+// browser; validating is one server request that checks every row against the
+// product master and live stock — the slow part for a long sheet.
+const UPLOAD_STAGES = [
+  { key: "reading", label: "Reading file" },
+  { key: "validating", label: "Validating rows" },
+  { key: "ready", label: "Ready to book" },
+];
+const BOOKING_STAGES = [
+  { key: "validated", label: "Rows validated" },
+  { key: "booking", label: "Creating booking" },
+  { key: "done", label: "Done" },
+];
 
 export const BulkUpload = () => {
   const navigate = useNavigate();
@@ -34,6 +51,10 @@ export const BulkUpload = () => {
   const showMsilCode = useShowMsilCode();
   const [isParsing, setIsParsing] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  // Which stage a running upload is in ('reading' | 'validating'), and how many
+  // rows it is working through — null when nothing is running.
+  const [stage, setStage] = useState(null);
+  const [stageRows, setStageRows] = useState(0);
   const [excludedRowIds, setExcludedRowIds] = useState([]);
   const [outcome, setOutcome] = useState(null);
 
@@ -72,8 +93,14 @@ export const BulkUpload = () => {
   const handleUpload = async (uploadedFile) => {
     setIsParsing(true);
     setFile(uploadedFile);
+    let at = "reading";
+    setStage(at);
+    setStageRows(0);
     try {
       const parsed = await parseExcelFile(uploadedFile, showMsilCode);
+      setStageRows(parsed.length);
+      at = "validating";
+      setStage(at);
       const validatedRows = await validateRows(parsed);
 
       const hasErrors = validatedRows.some(r => r.status === 'error');
@@ -83,10 +110,18 @@ export const BulkUpload = () => {
         toast.success("Excel file parsed and validated successfully");
       }
     } catch (error) {
-      toast.error(error.response?.data?.message || "Failed to validate Excel file");
+      // Say which stage failed: a file that cannot be read needs a different
+      // fix from rows the server rejected.
+      toast.error(
+        error.response?.data?.message
+          || (at === "reading"
+            ? `Could not read ${uploadedFile?.name || "the file"} — check it is a valid Excel/CSV file.`
+            : "Failed to validate the rows. Please try again."),
+      );
       setFile(null);
     } finally {
       setIsParsing(false);
+      setStage(null);
     }
   };
 
@@ -119,6 +154,8 @@ export const BulkUpload = () => {
 
   const handleRevalidate = async () => {
     setIsParsing(true);
+    setStage("validating");
+    setStageRows(rows.length);
     try {
       await validateRows(rows);
       toast.success("Rows re-validated");
@@ -126,6 +163,7 @@ export const BulkUpload = () => {
       toast.error(error.response?.data?.message || "Failed to re-validate rows");
     } finally {
       setIsParsing(false);
+      setStage(null);
     }
   };
 
@@ -195,7 +233,7 @@ export const BulkUpload = () => {
       <PageHeader
         title="Bulk Booking Upload"
         actions={
-          <ERPButton variant="outline" size="sm" onClick={() => reset()}>
+          <ERPButton variant="outline" size="sm" onClick={() => reset()} disabled={isParsing || isConfirming}>
             Reset Session
           </ERPButton>
         }
@@ -214,7 +252,7 @@ export const BulkUpload = () => {
           <BulkUploadCard
             file={file}
             onUpload={handleUpload}
-            onRemove={reset}
+            onRemove={() => { if (!isParsing && !isConfirming) reset(); }}
             isLoading={isParsing}
           />
 
@@ -244,8 +282,30 @@ export const BulkUpload = () => {
         </div>
 
         <div className="flex flex-col gap-6">
-          {file ? (
+          {/* A sheet being read or validated: say which stage it is in and how
+              many rows, rather than leaving the old preview (or nothing) up. */}
+          {stage === "reading" || (stage === "validating" && rows.length === 0) ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col gap-5" aria-busy="true">
+              <StageProgress stages={UPLOAD_STAGES} current={stage} />
+              <ProgressBar
+                label={stage === "reading"
+                  ? `Reading ${file?.name || "file"}…`
+                  : `Validating ${stageRows.toLocaleString()} row${stageRows === 1 ? "" : "s"} against the product master and live stock…`}
+                detail="Large files can take a little while. Please keep this page open."
+              />
+              <div className="flex flex-col gap-3">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <SkeletonLoader key={i} variant="text" className={i % 2 ? "w-3/4" : "w-full"} />
+                ))}
+              </div>
+            </div>
+          ) : file ? (
             <>
+              {stage === "validating" && (
+                <div className="bg-white border border-slate-200 rounded-xl p-4" aria-busy="true">
+                  <ProgressBar label={`Re-validating ${stageRows.toLocaleString()} row(s)…`} />
+                </div>
+              )}
               <ImportSummaryCard summary={summary} />
 
               <ErrorPanel rows={rows} />
@@ -298,6 +358,20 @@ export const BulkUpload = () => {
                 </div>
               )}
 
+              {/* The booking is one server transaction over every selected row;
+                  for a long sheet that is noticeable, and leaving the page
+                  half-way is exactly what must not happen. */}
+              {isConfirming && (
+                <div className="bg-white border border-emerald-200 rounded-xl p-5 flex flex-col gap-4" aria-busy="true">
+                  <StageProgress stages={BOOKING_STAGES} current="booking" />
+                  <ProgressBar
+                    tone="success"
+                    label={`Reserving stock and creating the booking for ${selectedCount} line${selectedCount === 1 ? "" : "s"}…`}
+                    detail="Nothing is saved until every line succeeds. Please keep this page open."
+                  />
+                </div>
+              )}
+
               <div className="flex justify-end mt-4 gap-4">
                 {hasPendingRows && (
                   <ERPButton
@@ -316,12 +390,13 @@ export const BulkUpload = () => {
                 <ERPButton
                   variant="success"
                   size="lg"
-                  disabled={!canConfirm}
+                  disabled={!canConfirm || isParsing}
+                  loading={isConfirming}
                   onClick={handleContinue}
                   className="w-full md:w-auto px-8 shadow-md bg-green-600 hover:bg-green-700 ring-2 ring-green-300"
                 >
-                  <Check size={18} className="mr-2 text-white" />
-                  {isConfirming ? "Creating booking..." : `Continue to Booking (${selectedCount})`}
+                  {!isConfirming && <Check size={18} className="mr-2 text-white" />}
+                  {isConfirming ? "Creating booking…" : `Continue to Booking (${selectedCount})`}
                 </ERPButton>
               </div>
             </>

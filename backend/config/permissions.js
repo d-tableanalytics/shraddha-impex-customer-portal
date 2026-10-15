@@ -108,6 +108,9 @@ export const PERMISSIONS = {
   APPROVE_ADJUSTMENT: 'approve_adjustment',             // (M7) approve above threshold
   PERFORM_COUNT: 'perform_count',                       // (M7) enter counts
   APPROVE_COUNT: 'approve_count',                       // (M7) approve variances and post
+  // Choose which customer indent gets arriving stock — run the FIFO auto-assign,
+  // assign to a specific indent, or move an allocation to another indent.
+  ASSIGN_INDENT_STOCK: 'assign_indent_stock',
   TRANSFER_STOCK: 'transfer_stock',                     // (M7) inter-location transfers
   /**
    * (M1) Remove a SKU from the catalogue entirely.
@@ -420,6 +423,8 @@ export const BASELINE_ROLE_PERMISSIONS = {
     // Sales needs to know what can be sold - availability only, never the
     // ledger, costs or adjustments.
     PERMISSIONS.VIEW_INVENTORY,
+    // Sales decides which customer's indent arriving stock goes to.
+    PERMISSIONS.ASSIGN_INDENT_STOCK,
     // O2D stages 1 and 2: Sales receives the customer PO and hands it to
     // Billing. No override — amending a booking is not approving an exception.
     PERMISSIONS.VIEW_O2D,
@@ -519,6 +524,8 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.EXPORT_INVENTORY,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.POST_STOCK_IN,
+    // They receive the stock, so they may say which indent it goes to.
+    PERMISSIONS.ASSIGN_INDENT_STOCK,
   ],
 
   /**

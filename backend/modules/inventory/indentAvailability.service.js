@@ -36,6 +36,7 @@ import {
   findProductBySku, reserveStock, releaseStock, adjustConsumedQty,
 } from '../../utils/stockLedger.js';
 import { ratesForSkus } from '../sales/pricing.service.js';
+import { indentAssignmentMode } from './config.service.js';
 import { isPlaceholderPo, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
@@ -158,7 +159,7 @@ const bookingEmail = ({ customerName, orderNumber, lines, dueAt, allocation = fa
  * @returns {{orderNumber: string, lines: object[]}|null} null when nothing could
  *          be reserved, so the caller does not report a booking that isn't there.
  */
-const bookForCustomer = async (customer, indents) => {
+export const bookForCustomer = async (customer, indents) => {
   const year = new Date().getFullYear();
   const seq = await nextSequence(`order-${year}`);
   const orderNumber = `BO-${year}-${String(seq).padStart(6, '0')}`;
@@ -452,7 +453,11 @@ export const allocateToBooking = async (customer, orderId, items, parentRows = [
       bySku.set(product.skuCode, { row, product, consumed, qty: 0, booked: 0, allocations: [], indents: [] });
     }
     const entry = bySku.get(product.skuCode);
-    const seq = (row?.allocations?.length || 0) + entry.allocations.length + 1;
+    // Numbered after the highest number the line has used, not its count: an
+    // allocation reassigned to another indent leaves the line, and a count
+    // would hand its number out again.
+    const usedSeqs = [...(row?.allocations || []), ...entry.allocations].map((a) => a.seq || 0);
+    const seq = (usedSeqs.length ? Math.max(...usedSeqs) : 0) + 1;
     entry.qty += take;
     entry.booked += indent.quantity;
     entry.indents.push(indent);
@@ -598,6 +603,102 @@ export const allocateToBooking = async (customer, orderId, items, parentRows = [
 };
 
 /**
+ * Tell the customer and the Support Team what was booked or allocated from
+ * their indent: an in-app notice, the customer email and the Support copy.
+ * Shared by the automatic pass and the Indent Stock Assignment screen, so a
+ * manual assignment is announced exactly as an automatic one.
+ *
+ * @returns {Promise<{emailed: number, emailFailed: number, emailSkipped: number}>}
+ */
+export const announceIndentBooking = async (customer, made) => {
+  const told = { emailed: 0, emailFailed: 0, emailSkipped: 0 };
+  // No deadline once the booking's PO is raised; a booking still waiting
+  // for one keeps the deadline it already had.
+  const dueAt = made.poRaised
+    ? null
+    : new Date(new Date(made.bookingDate || Date.now()).getTime() + PO_DEADLINE_DAYS * 24 * 60 * 60 * 1000)
+      .toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const customerName = customer.user || customer.name || customer.company || 'Customer';
+
+  // An allocation logged its own audit entry; this one is for new bookings.
+  if (!made.allocation) await logSystemEvent(
+    'Indent Auto-Booked',
+    `Booking ${made.orderNumber} raised automatically for ${customerName} — `
+    + `${made.lines.length} indent line(s) became available.`,
+    {
+      orderId: made.orderNumber,
+      lines: made.lines.map((l) => ({
+        skuCode: l.skuCode, qty: l.quantity, indent: l.indentNumber || l.reservationId,
+      })),
+    },
+  );
+
+  notifyUser(customer._id, {
+    title: made.allocation ? 'Indented stock allocated to your booking' : 'Booking created from your indent',
+    message: made.allocation
+      ? `${made.lines.reduce((n, l) => n + l.quantity, 0)} unit(s) of your indent came in and were allocated to booking ${made.orderNumber}.`
+      : `${made.lines.length} indented item${made.lines.length === 1 ? '' : 's'} came back in stock. `
+        + `Booking ${made.orderNumber} has been raised and the stock reserved for you.`,
+    type: 'order',
+  });
+
+  if (customer.email && customer.preferences?.emailNotifications !== false) {
+    // AWAITED, and the result believed. This was fire-and-forget with a
+    // .catch attached — but sendEmail handles its own errors and resolves
+    // false rather than rejecting, so that catch was dead code and `emailed`
+    // counted attempts while reading like deliveries. A booking whose
+    // notification silently failed looked identical to one that reached the
+    // customer, which is what made a real "no mail arrived" report
+    // impossible to diagnose after the fact.
+    //
+    // The wait costs a second or two, after stock is already committed, and
+    // buys an answer to "was the customer actually told".
+    const delivered = await sendEmail(
+      customer.email,
+      made.allocation
+        ? `Booking ${made.orderNumber} — indented stock allocated`
+        : `Booking ${made.orderNumber} created — your indented stock is available`,
+      bookingEmail({
+        customerName, orderNumber: made.orderNumber, lines: made.lines, dueAt, allocation: made.allocation,
+      }),
+      { cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC] },
+    );
+    if (delivered) {
+      told.emailed += 1;
+    } else {
+      told.emailFailed += 1;
+      console.error(
+        `[Indent] availability email FAILED for ${customer.email} — booking `
+        + `${made.orderNumber} exists and its stock is reserved, but the customer `
+        + 'has NOT been told. See the mailer error above.',
+      );
+    }
+  } else {
+    told.emailSkipped += 1;
+    console.warn(
+      `[Indent] no email for booking ${made.orderNumber}: `
+      + (customer.email
+        ? 'the customer has email notifications switched off.'
+        : 'no address on the account.'),
+    );
+  }
+
+  // The Support Team's copy. Support was never a recipient of anything on
+  // this path, so an indent that quietly turned into a booking with stock
+  // committed against it was invisible to the people who work indents.
+  // Sent regardless of the customer's own notification preference — it is
+  // an operational record, not a subscription.
+  await sendAutoBookSupportMail({
+    customer,
+    orderNumber: made.orderNumber,
+    lines: made.lines,
+    dueAt,
+    allocation: made.allocation,
+  });
+  return told;
+};
+
+/**
  * MATERIAL INWARD against indents that are STILL OPEN after the auto-book pass.
  *
  * The auto-booker only acts on an indent when the arriving stock covers it in
@@ -720,9 +821,12 @@ const notifyMaterialInward = async ({ skus, inwardBySku, reference, exclude = []
  * @param {string}  [options.reference]    The posting's id, used to recognise a
  *                                         replay of the same receipt.
  * @param {Map<string,number>} [options.inwardBySku]  Units received, per SKU.
+ * @param {boolean} [options.force]  Assign even in MANUAL mode — the Indent
+ *                                   Stock Assignment screen's "Auto-assign".
+ * @param {object}  [options.actor]  Who asked (force only), for the audit trail.
  */
 export const processAvailableIndents = async (skuCodes, options = {}) => {
-  const { event = 'stock-change', reference = null, inwardBySku = null } = options;
+  const { event = 'stock-change', reference = null, inwardBySku = null, force = false } = options;
   const empty = { checked: 0, booked: 0, bookings: 0, emailed: 0 };
   try {
     const skus = [...new Set((skuCodes || []).filter(Boolean))];
@@ -747,6 +851,13 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
         ? notifyMaterialInward({ skus, inwardBySku: inwardBySku ?? new Map(), reference, exclude: allocatedIds })
         : {}
     );
+
+    // MANUAL mode: arriving stock is held for someone to assign on the Indent
+    // Stock Assignment screen, rather than going to the oldest indent by
+    // itself. Customers are still told material came in.
+    if (!force && (await indentAssignmentMode()) === 'manual') {
+      return { ...empty, checked: indents.length, held: true, ...(await inwardNotice()) };
+    }
 
     // Availability summed across locations, matching what every other screen
     // reports for a SKU.
@@ -852,89 +963,10 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
       bookings += 1;
       booked += made.lines.length;
 
-      // No deadline once the booking's PO is raised; a booking still waiting
-      // for one keeps the deadline it already had.
-      const dueAt = made.poRaised
-        ? null
-        : new Date(new Date(made.bookingDate || Date.now()).getTime() + PO_DEADLINE_DAYS * 24 * 60 * 60 * 1000)
-          .toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-      const customerName = customer.user || customer.name || customer.company || 'Customer';
-
-      // An allocation logged its own audit entry; this one is for new bookings.
-      if (!made.allocation) await logSystemEvent(
-        'Indent Auto-Booked',
-        `Booking ${made.orderNumber} raised automatically for ${customerName} — `
-        + `${made.lines.length} indent line(s) became available.`,
-        {
-          orderId: made.orderNumber,
-          lines: made.lines.map((l) => ({
-            skuCode: l.skuCode, qty: l.quantity, indent: l.indentNumber || l.reservationId,
-          })),
-        },
-      );
-
-      notifyUser(customer._id, {
-        title: made.allocation ? 'Indented stock allocated to your booking' : 'Booking created from your indent',
-        message: made.allocation
-          ? `${made.lines.reduce((n, l) => n + l.quantity, 0)} unit(s) of your indent came in and were allocated to booking ${made.orderNumber}.`
-          : `${made.lines.length} indented item${made.lines.length === 1 ? '' : 's'} came back in stock. `
-            + `Booking ${made.orderNumber} has been raised and the stock reserved for you.`,
-        type: 'order',
-      });
-
-      if (customer.email && customer.preferences?.emailNotifications !== false) {
-        // AWAITED, and the result believed. This was fire-and-forget with a
-        // .catch attached — but sendEmail handles its own errors and resolves
-        // false rather than rejecting, so that catch was dead code and `emailed`
-        // counted attempts while reading like deliveries. A booking whose
-        // notification silently failed looked identical to one that reached the
-        // customer, which is what made a real "no mail arrived" report
-        // impossible to diagnose after the fact.
-        //
-        // The wait costs a second or two, after stock is already committed, and
-        // buys an answer to "was the customer actually told".
-        const delivered = await sendEmail(
-          customer.email,
-          made.allocation
-            ? `Booking ${made.orderNumber} — indented stock allocated`
-            : `Booking ${made.orderNumber} created — your indented stock is available`,
-          bookingEmail({
-            customerName, orderNumber: made.orderNumber, lines: made.lines, dueAt, allocation: made.allocation,
-          }),
-          { cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC] },
-        );
-        if (delivered) {
-          emailed += 1;
-        } else {
-          emailFailed += 1;
-          console.error(
-            `[Indent] availability email FAILED for ${customer.email} — booking `
-            + `${made.orderNumber} exists and its stock is reserved, but the customer `
-            + 'has NOT been told. See the mailer error above.',
-          );
-        }
-      } else {
-        emailSkipped += 1;
-        console.warn(
-          `[Indent] no email for booking ${made.orderNumber}: `
-          + (customer.email
-            ? 'the customer has email notifications switched off.'
-            : 'no address on the account.'),
-        );
-      }
-
-      // The Support Team's copy. Support was never a recipient of anything on
-      // this path, so an indent that quietly turned into a booking with stock
-      // committed against it was invisible to the people who work indents.
-      // Sent regardless of the customer's own notification preference — it is
-      // an operational record, not a subscription.
-      await sendAutoBookSupportMail({
-        customer,
-        orderNumber: made.orderNumber,
-        lines: made.lines,
-        dueAt,
-        allocation: made.allocation,
-      });
+      const told = await announceIndentBooking(customer, made);
+      emailed += told.emailed;
+      emailFailed += told.emailFailed;
+      emailSkipped += told.emailSkipped;
       }
     }
 

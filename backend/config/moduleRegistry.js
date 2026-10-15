@@ -330,6 +330,19 @@ export const MODULES = [
         actions: { view: ['view_stock_ledger'] },
       },
       {
+        // Which customer indent arriving stock goes to: the FIFO auto-assign,
+        // a manual assignment, or moving an allocation to another indent.
+        key: 'indent_assignment',
+        label: 'Indent Stock Assignment',
+        path: '/inventory/indent-assignment',
+        icon: 'Shuffle',
+        actions: {
+          view: ['assign_indent_stock'],
+          create: ['assign_indent_stock'],
+          edit: ['assign_indent_stock'],
+        },
+      },
+      {
         key: 'imports',
         label: 'Inventory Import',
         path: '/inventory/import',

@@ -448,3 +448,10 @@ html.dark .border-warning-200 { border-color: rgba(249, 115, 22, 0.30); }
 
   @page { margin: 12mm; }
 }
+
+/* Indeterminate progress bar (components/ui/ProgressBar.jsx): a segment that
+   sweeps across while work without measurable progress is running. */
+@keyframes progress-sweep {
+  0% { left: -33%; }
+  100% { left: 100%; }
+}
