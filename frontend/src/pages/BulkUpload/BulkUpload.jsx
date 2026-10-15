@@ -24,6 +24,7 @@ import { Button } from "../../components/ui/Button";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StageProgress } from "../../components/ui/StageProgress";
 import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
+import { invalidateBookingData } from "../../store/invalidation";
 
 // The stages a sheet goes through, shown while it does. Reading happens in the
 // browser; validating is one server request that checks every row against the
@@ -201,6 +202,9 @@ export const BulkUpload = () => {
       // A booking consumes stock and may close an indent the customer was
       // holding, so the list badge should not keep showing the old position.
       fetchReservations();
+      // Booking History, the Sales Desk, indents and the dashboard figures are
+      // now out of date wherever they were last loaded.
+      invalidateBookingData();
 
       setOutcome({
         outcome: result?.outcome || (result?.totals?.totalConfirmed > 0 ? "booking" : "indent"),

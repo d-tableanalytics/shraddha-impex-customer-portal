@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
 import toast from 'react-hot-toast';
 import { useNotificationStore } from '../store/notificationStore';
+import { throttleTrailing } from '../utils/throttle';
 
 const rawApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 const SOCKET_URL = rawApiUrl.replace(/\/+$/, '');
@@ -54,9 +55,21 @@ export const getSocket = () => socket;
  * else does not leave them displaying a number that is now wrong. Returns an
  * unsubscribe function for the effect's cleanup — without it, remounting the
  * page would stack duplicate handlers and refetch once per mount.
+ *
+ * Throttled by default. An import or a bulk adjustment posts one event per SKU,
+ * and each one used to trigger a full list refetch — dozens of overlapping
+ * requests for one change. Now the first event refreshes at once and the rest of
+ * a burst collapse into one trailing refresh per `throttleMs`, so the screen
+ * still ends on the server's latest figures. Pass `throttleMs: 0` for every event.
  */
-export const onStockUpdated = (handler) => {
+export const STOCK_REFRESH_THROTTLE_MS = 1000;
+
+export const onStockUpdated = (handler, { throttleMs = STOCK_REFRESH_THROTTLE_MS } = {}) => {
   const s = socket || initSocket();
-  s.on('inventory:stock-updated', handler);
-  return () => s.off('inventory:stock-updated', handler);
+  const listener = throttleMs > 0 ? throttleTrailing(handler, throttleMs) : handler;
+  s.on('inventory:stock-updated', listener);
+  return () => {
+    s.off('inventory:stock-updated', listener);
+    listener.cancel?.();
+  };
 };

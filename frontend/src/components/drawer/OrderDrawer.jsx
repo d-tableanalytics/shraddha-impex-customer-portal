@@ -69,7 +69,7 @@ export const OrderDrawer = () => {
     updateAllocationBatchStatus,
   } = useOrderHistoryStore();
   const { user } = useUserStore();
-  const { pendingItems, fetchPendingReservations } = useCartStore();
+  const { pendingItems, fetchPendingReservations, ensurePendingReservations } = useCartStore();
   const showMsilCode = useShowMsilCode();
   // This drawer is also the customer's own order-history view, so the box
   // number is limited to the desk that acts on the booking.
@@ -126,10 +126,14 @@ export const OrderDrawer = () => {
     }
   };
 
-  // Load indents so the drawer can show the ones tied to this booking's PO.
+  // Indents, so the drawer can show the ones tied to this booking's PO. The
+  // history page has normally just loaded them, so opening a booking reuses a
+  // list read in the last few seconds instead of downloading every indent again
+  // per click. Anything done FROM this drawer that can change indents (quantity
+  // save, PO, cancellation) re-reads it explicitly below.
   useEffect(() => {
-    if (selectedOrder) fetchPendingReservations();
-  }, [selectedOrder?.orderNumber, fetchPendingReservations]);
+    if (selectedOrder) ensurePendingReservations();
+  }, [selectedOrder?.orderNumber, ensurePendingReservations]);
 
   // The lifecycle history — when each stage was reached, and (for staff)
   // whether the customer's email for it actually went.
@@ -221,6 +225,8 @@ export const OrderDrawer = () => {
     );
     if (res.success) {
       setDraftQty({});
+      // An increase that outran stock becomes an indent; the list must show it.
+      fetchPendingReservations();
       // An increase that outran stock was split: the covered part stayed on
       // the booking, the rest became an indent. Say so — a plain "updated"
       // would read as the full quantity having been confirmed.

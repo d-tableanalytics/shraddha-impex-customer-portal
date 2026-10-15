@@ -2,9 +2,8 @@ import { Search, Filter, Download, X, Users } from "lucide-react";
 import { ERPButton } from "../ui/ERPButton";
 import { DateField } from "../ui/DateField";
 import { useOrderHistoryStore } from "../../store/orderHistoryStore";
-import { useProductStore } from "../../store/productStore";
-import { useState, useEffect } from "react";
-import { api } from "../../services/api";
+import { productsApi } from "../../services/products";
+import { useState, useMemo } from "react";
 import { useUserStore } from "../../store/userStore";
 import { BOOKING_LIFECYCLE } from "../../constants/bookingLifecycle";
 import {
@@ -13,16 +12,16 @@ import {
 import toast from "react-hot-toast";
 import { Loader2 } from "lucide-react";
 import { useBusyAction } from "../../hooks/useBusyAction";
+import { availabilityFor, fetchExportAvailability } from "../../utils/exportAvailability";
 
 import { isSuperAdmin } from "../../utils/permissions";
 export const OrderToolbar = () => {
-  const { searchQuery, setSearchQuery, filters, setFilters, selectedIds } =
+  const { searchQuery, setSearchQuery, filters, setFilters, selectedIds, allOrders } =
     useOrderHistoryStore();
   const [showFilters, setShowFilters] = useState(false);
   // An export of the whole history builds its file in the browser after
   // loading a large library; busy until it is done — see useBusyAction.
   const { run: runExport, anyBusy: exporting } = useBusyAction();
-  const [companies, setCompanies] = useState([]);
   const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
 
   // Bookings to export: the selected ones, or the full filtered list.
@@ -33,21 +32,27 @@ export const OrderToolbar = () => {
   };
 
   // Flatten bookings into one row per SKU line item with the required columns.
-  // Available Quantity comes from live product stock (SKU → availableStock).
+  // Available Quantity is live product stock, read for exactly the SKUs being
+  // exported at the moment of export — see utils/exportAvailability.js for why
+  // the page no longer downloads the catalogue up front.
   //
   // The customer block repeats on every line of a booking. That is what a flat
   // sheet is for: each row has to stand on its own once it is sorted, filtered
   // or pivoted in Excel, and a name printed once at the top of a group does not
   // survive any of that.
-  const exportData = () => {
+  const exportData = async () => {
     const bookings = selectedBookings();
-    const products = useProductStore.getState().products || [];
-    const availBySku = new Map(products.map((p) => [p.code, p.availableStock]));
+    const lineOf = (b) => (b.lineItems?.length ? b.lineItems : [{ skuCode: '—', bookedQty: b.totalQuantity, confirmedQty: b.totalQuantity, pendingQty: 0 }]);
+    // Rejects if stock cannot be read; the busy wrapper reports it rather than
+    // writing a file full of blanks.
+    const availability = await fetchExportAvailability(
+      bookings.flatMap(lineOf),
+      productsApi.lookupSkus,
+    );
 
     const rows = [];
     for (const b of bookings) {
-      const lines = b.lineItems?.length ? b.lineItems : [{ skuCode: '—', bookedQty: b.totalQuantity, confirmedQty: b.totalQuantity, pendingQty: 0 }];
-      for (const li of lines) {
+      for (const li of lineOf(b)) {
         rows.push({
           // Shared with Indent History — see utils/historyExportColumns.js.
           ...customerExportRow({
@@ -63,7 +68,7 @@ export const OrderToolbar = () => {
           status: b.status,
           date: b.date,
           skuCode: li.skuCode,
-          available: availBySku.has(li.skuCode) ? availBySku.get(li.skuCode) : '—',
+          available: availabilityFor(availability, li),
           bookedQty: li.bookedQty,
           indentQty: li.pendingQty,
         });
@@ -86,16 +91,18 @@ export const OrderToolbar = () => {
     { key: 'indentQty', label: 'Indent Quantity' },
   ];
 
-  // Load distinct company names from real orders
-  useEffect(() => {
-    api.get('/orders')
-      .then(r => {
-        const all = r.data.data || [];
-        const unique = [...new Set(all.map(o => o.company).filter(Boolean))].sort();
-        setCompanies(unique);
-      })
-      .catch(() => setCompanies([]));
-  }, []);
+  // The customer filter's options, from the bookings the page has already
+  // loaded (this used to download the whole order list a second time).
+  //
+  // Built from `customer` — the SAME value the filter compares against
+  // (orderHistoryStore.applyFilters) — so every option selects something. It
+  // used to list the stamped `company` instead, while `customer` prefers the
+  // Customer Master name: for any customer with a master name, picking their
+  // company matched no bookings at all.
+  const customers = useMemo(
+    () => [...new Set(allOrders.map((o) => o.customer).filter(Boolean))].sort(),
+    [allOrders],
+  );
 
   return (
     <div className="flex flex-col gap-4 bg-white p-4 border border-slate-200 rounded-xl shadow-sm">
@@ -140,7 +147,7 @@ export const OrderToolbar = () => {
                 className="appearance-none pl-9 pr-8 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 text-slate-700 font-semibold max-w-55 truncate"
               >
                 <option value="all">All Customers</option>
-                {companies.map((c) => (
+                {customers.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -165,7 +172,7 @@ export const OrderToolbar = () => {
                 disabled={exporting}
                 onClick={() => runExport('excel', async () => {
                   const { exportToExcel } = await import('../../utils/exportUtils');
-                  return exportToExcel(exportData(), exportCols, 'Booking_History');
+                  return exportToExcel(await exportData(), exportCols, 'Booking_History');
                 }, { error: 'Excel export failed' })}
                 className="disabled:opacity-50 disabled:cursor-wait w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors"
               >
@@ -175,7 +182,7 @@ export const OrderToolbar = () => {
                 disabled={exporting}
                 onClick={() => runExport('pdf', async () => {
                   const { exportToPDF } = await import('../../utils/exportUtils');
-                  return exportToPDF(exportData(), exportCols, 'Booking History Report', 'Booking_History');
+                  return exportToPDF(await exportData(), exportCols, 'Booking History Report', 'Booking_History');
                 }, { error: 'PDF export failed' })}
                 className="disabled:opacity-50 disabled:cursor-wait w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
               >
@@ -185,7 +192,7 @@ export const OrderToolbar = () => {
                 disabled={exporting}
                 onClick={() => runExport('print', async () => {
                   const { printData } = await import('../../utils/exportUtils');
-                  return printData(exportData(), exportCols, 'Booking History Report');
+                  return printData(await exportData(), exportCols, 'Booking History Report');
                 }, { error: 'Unable to open print window (check pop-up blocker).' })}
                 className="disabled:opacity-50 disabled:cursor-wait w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-primary-600 transition-colors border-t border-slate-100"
               >

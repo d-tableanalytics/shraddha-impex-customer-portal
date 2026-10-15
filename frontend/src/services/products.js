@@ -86,29 +86,16 @@ export const productsApi = {
     return (response.data.data || []).map(mapProduct);
   },
 
-  // Fetch the full catalog across all brands (admin Inventory). Each product is
-  // tagged with its source brand and low/zero-stock items are included.
-  getAllBrands: async (limit = 2000) => {
-    const brands = ['koken', 'bix', 'imada'];
-    const lists = await Promise.all(
-      brands.map(async (b) => {
-        const list = await productsApi.getAll(b, limit);
-        return list.map((p) => ({ ...p, brand: b.toUpperCase() }));
-      })
-    );
-    return lists.flat();
-  },
-
   // Inventory view across all brands. Search, sort, paging and the KPI counts
   // are resolved server-side, so they cover the whole catalogue rather than a
   // downloaded subset. `total` is the search-filtered count (drives paging);
   // `catalogueTotal` / `lowStockCount` describe the catalogue as a whole.
-  getInventory: async ({ search = '', sort = 'name-asc', page = 1, limit = 12, brand = '', category = '' } = {}) => {
+  getInventory: async ({ search = '', sort = 'name-asc', page = 1, limit = 12, brand = '', category = '' } = {}, { signal } = {}) => {
     const params = new URLSearchParams({ sort, page: String(page), limit: String(limit) });
     if (search) params.set('search', search);
     if (brand) params.set('brand', brand);
     if (category) params.set('category', category);
-    const response = await api.get(`/products?${params.toString()}`);
+    const response = await api.get(`/products?${params.toString()}`, { signal });
     const { data, pagination, totals } = response.data;
     return {
       // The server tags each row with its source brand; keep that over the

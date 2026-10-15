@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { prefetchRoute } from "../../routes/routeChunks";
 import {
   LayoutDashboard,
   PlusCircle,
@@ -337,6 +338,11 @@ export const Sidebar = () => {
         to={item.path}
         title={expanded ? undefined : item.label}
         className={() => linkClass(isActive)}
+        // Pointing at (or tabbing to) a menu entry starts fetching that page's
+        // code, so the click usually finds it already loaded. Code only — the
+        // page's data is still requested when it opens, behind its guards.
+        onMouseEnter={() => prefetchRoute(item.path)}
+        onFocus={() => prefetchRoute(item.path)}
       >
         {() => (
           <>

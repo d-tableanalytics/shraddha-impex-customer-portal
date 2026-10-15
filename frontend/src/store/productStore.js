@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { productsApi } from "../services/products";
 import { useUserStore } from "./userStore";
 import { defaultBrand } from "../utils/brandAccess";
+import { registerSessionReset } from "./sessionReset";
 
 // Resolves which brand collection to search based on the logged-in user's access.
 // Returns null when the user has no brand access — callers must not fall back to
@@ -12,6 +13,9 @@ const getActiveBrand = () => defaultBrand(useUserStore.getState().user);
 // Monotonic ticket for the SKU search. Module scope rather than store state on
 // purpose: bumping it must not re-render every subscriber of the dropdown.
 let searchSeq = 0;
+// Same idea for the Inventory list's page requests.
+let inventorySeq = 0;
+let inventoryInFlight = null;
 
 export const useProductStore = create((set, get) => ({
   products: [],
@@ -45,30 +49,29 @@ export const useProductStore = create((set, get) => ({
     }
   },
 
-  // Load the full catalog across all brands (used by the admin Inventory view so
-  // every item — including low/zero-stock — is visible, not just one brand).
-  fetchAllProducts: async (limit) => {
-    set({ loading: true, error: null });
-    try {
-      const products = await productsApi.getAllBrands(limit);
-      set({ products, loading: false });
-    } catch (err) {
-      set({ error: err.message || "Failed to load products", loading: false });
-    }
-  },
-
-  // Server-paginated Inventory view. Kept separate from fetchAllProducts, which
-  // Booking History still uses to enrich exports with live stock figures.
+  // Server-paginated Inventory view. (The whole-catalogue `fetchAllProducts`
+  // that Booking History used for its export is gone: it capped each brand at
+  // 2,000 rows and left later SKUs blank. See utils/exportAvailability.js.)
   inventory: { items: [], total: 0, pages: 1, catalogueTotal: 0, lowStockCount: 0 },
   inventoryLoading: false,
 
+  // The newest page request wins: changing page, sort or search abandons the
+  // request it replaces, and a reply that still arrives late is ignored.
   fetchInventory: async (params) => {
+    inventoryInFlight?.abort();
+    const controller = new AbortController();
+    inventoryInFlight = controller;
+    const seq = ++inventorySeq;
     set({ inventoryLoading: true, error: null });
     try {
-      const inventory = await productsApi.getInventory(params);
+      const inventory = await productsApi.getInventory(params, { signal: controller.signal });
+      if (seq !== inventorySeq) return;
       set({ inventory, inventoryLoading: false });
     } catch (err) {
+      if (seq !== inventorySeq || err?.code === "ERR_CANCELED") return;
       set({ error: err.message || "Failed to load inventory", inventoryLoading: false });
+    } finally {
+      if (inventoryInFlight === controller) inventoryInFlight = null;
     }
   },
 
@@ -145,3 +148,17 @@ export const useProductStore = create((set, get) => ({
     });
   },
 }));
+
+// Products are brand-scoped per account: the next account must not see this
+// one's Inventory page or search results, even for the moment a refresh takes.
+const signedOutProducts = useProductStore.getState();
+registerSessionReset(() => {
+  inventorySeq += 1;
+  inventoryInFlight?.abort();
+  inventoryInFlight = null;
+  searchSeq += 1;
+  useProductStore.setState({
+    products: [], searchResults: [], inventory: signedOutProducts.inventory,
+    searchTerm: "", searchPage: 1, searchTotal: 0, searchHasMore: false, error: null,
+  });
+});

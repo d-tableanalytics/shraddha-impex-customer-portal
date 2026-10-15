@@ -5,45 +5,47 @@ import { OrderingRoute } from "../components/layout/OrderingRoute";
 import { HomeRoute } from "../components/layout/HomeRoute";
 import { ModuleRoute } from "../components/layout/ModuleRoute";
 import { lazy } from 'react';
+// One loader per page, shared with route prefetching — see routeChunks.js.
+import { lazyPage } from './routeChunks';
 
-const Dashboard = lazy(() => import("../pages/Dashboard/Dashboard").then(m => ({ default: m.Dashboard })));
-const CustomerOrders = lazy(() => import("../pages/CustomerOrders/CustomerOrders").then(m => ({ default: m.CustomerOrders })));
-const OrderHistory = lazy(() => import("../pages/OrderHistory/OrderHistory").then(m => ({ default: m.OrderHistory })));
-const BulkUpload = lazy(() => import("../pages/BulkUpload/BulkUpload").then(m => ({ default: m.BulkUpload })));
-const IndentHistory = lazy(() => import("../pages/IndentHistory/IndentHistory").then(m => ({ default: m.IndentHistory })));
-const SalesDesk = lazy(() => import("../pages/SalesDesk/SalesDesk").then(m => ({ default: m.SalesDesk })));
-const Admin = lazy(() => import("../pages/Admin/Admin").then(m => ({ default: m.Admin })));
-const UserManagement = lazy(() => import("../pages/Admin/Settings/UserManagement").then(m => ({ default: m.UserManagement })));
+const Dashboard = lazy(lazyPage("Dashboard"));
+const CustomerOrders = lazy(lazyPage("CustomerOrders"));
+const OrderHistory = lazy(lazyPage("OrderHistory"));
+const BulkUpload = lazy(lazyPage("BulkUpload"));
+const IndentHistory = lazy(lazyPage("IndentHistory"));
+const SalesDesk = lazy(lazyPage("SalesDesk"));
+const Admin = lazy(lazyPage("Admin"));
+const UserManagement = lazy(lazyPage("UserManagement"));
 // Admin - Product Details. Descriptions, photographs and videos,
 // the content the inventory slide-over shows. The page re-checks the
 // permission itself, and every underlying API is guarded server-side.
-const ProductDetailsAdmin = lazy(() => import("../pages/Admin/Settings/ProductDetails").then(m => ({ default: m.ProductDetailsAdmin })));
-const AuthLayout = lazy(() => import("../pages/Auth/AuthLayout").then(m => ({ default: m.AuthLayout })));
-const Login = lazy(() => import("../pages/Auth/Login").then(m => ({ default: m.Login })));
-const Inventory = lazy(() => import("../pages/Inventory/Inventory").then(m => ({ default: m.Inventory })));
+const ProductDetailsAdmin = lazy(lazyPage("ProductDetailsAdmin"));
+const AuthLayout = lazy(lazyPage("AuthLayout"));
+const Login = lazy(lazyPage("Login"));
+const Inventory = lazy(lazyPage("Inventory"));
 // IMS Module M1 — the internal stock master, distinct from the customer-facing
 // Inventory view above. Both pages re-check their permission themselves.
-const InventoryMaster = lazy(() => import("../pages/Inventory/InventoryMaster").then(m => ({ default: m.InventoryMaster })));
-const StockLedger = lazy(() => import("../pages/Inventory/StockLedger").then(m => ({ default: m.StockLedger })));
-const InventoryHealth = lazy(() => import("../pages/Inventory/InventoryHealth").then(m => ({ default: m.InventoryHealth })));
+const InventoryMaster = lazy(lazyPage("InventoryMaster"));
+const StockLedger = lazy(lazyPage("StockLedger"));
+const InventoryHealth = lazy(lazyPage("InventoryHealth"));
 // Upcoming Stock — DEMO screen on mock data (no API). Opens for anyone who
 // can open Inventory Health, the screen it sits beside in the menu.
-const UpcomingStock = lazy(() => import("../pages/Inventory/UpcomingStock").then(m => ({ default: m.UpcomingStock })));
-const InventoryDashboard = lazy(() => import("../pages/Inventory/InventoryDashboard").then(m => ({ default: m.InventoryDashboard })));
-const InventoryImport = lazy(() => import("../pages/Inventory/InventoryImport").then(m => ({ default: m.InventoryImport })));
-const IndentAssignment = lazy(() => import("../pages/Inventory/IndentAssignment").then(m => ({ default: m.IndentAssignment })));
-const Reports = lazy(() => import("../pages/Reports/Reports").then(m => ({ default: m.Reports })));
-const Settings = lazy(() => import("../pages/Settings/Settings").then(m => ({ default: m.Settings })));
-const Help = lazy(() => import("../pages/Help/Help").then(m => ({ default: m.Help })));
+const UpcomingStock = lazy(lazyPage("UpcomingStock"));
+const InventoryDashboard = lazy(lazyPage("InventoryDashboard"));
+const InventoryImport = lazy(lazyPage("InventoryImport"));
+const IndentAssignment = lazy(lazyPage("IndentAssignment"));
+const Reports = lazy(lazyPage("Reports"));
+const Settings = lazy(lazyPage("Settings"));
+const Help = lazy(lazyPage("Help"));
 // Roles & Permissions — this portal's modules only. The page re-checks
 // manage_roles itself, and the API behind it is guarded server-side.
-const RolesPermissions = lazy(() => import("../pages/Admin/Settings/RolesPermissions").then(m => ({ default: m.RolesPermissions })));
+const RolesPermissions = lazy(lazyPage("RolesPermissions"));
 // FMS (O2D). The Employee Portal's screens, verbatim, calling the Employee API
 // — see src/fms/ and scripts/fms-port.mjs. The guard re-checks view_o2d against
 // that server's answer, and every API behind it is guarded there too.
-const O2dProtectedRoute = lazy(() => import("../fms/components/o2d/O2dProtectedRoute").then(m => ({ default: m.O2dProtectedRoute })));
-const O2dPage = lazy(() => import("../fms/pages/O2d/O2dPage").then(m => ({ default: m.O2dPage })));
-const O2dNewOrderPage = lazy(() => import("../fms/pages/O2d/NewOrderPage").then(m => ({ default: m.NewOrderPage })));
+const O2dProtectedRoute = lazy(lazyPage("O2dProtectedRoute"));
+const O2dPage = lazy(lazyPage("O2dPage"));
+const O2dNewOrderPage = lazy(lazyPage("O2dNewOrderPage", "NewOrderPage"));
 
 export const router = createBrowserRouter([
   {

@@ -1,28 +1,20 @@
-import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Card, CardContent } from '../ui/Card';
 import { Package, Clock, AlertTriangle, Users, PackageX, Layers, Loader2 } from 'lucide-react';
-import { api } from '../../services/api';
+import { useDashboardStats } from '../../store/homeDashboardStore';
 import { useUserStore } from '../../store/userStore';
 import { canUseOrdering, isSuperAdmin} from '../../utils/permissions';
 
 export const KPIStats = () => {
   const navigate = useNavigate();
   const { user } = useUserStore();
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Shared with the other dashboard widgets: one request between them.
+  const { stats, loading } = useDashboardStats();
   // Booking and indent tiles link into the ordering screens, which a role with
   // no ordering permission cannot open. Showing them would offer a tile that
   // bounces straight back here.
   const worksOrders = canUseOrdering(user);
-
-  useEffect(() => {
-    api.get('/dashboard/stats')
-      .then(r => setStats(r.data.data))
-      .catch(() => setStats(null))
-      .finally(() => setLoading(false));
-  }, []);
 
   if (loading) {
     const skeletonCount = isSuperAdmin(user) ? 5 : 3;

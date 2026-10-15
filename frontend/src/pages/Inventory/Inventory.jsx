@@ -50,15 +50,18 @@ export const Inventory = () => {
 
   // Debounce typing so a search costs one request rather than one per keystroke,
   // keeping load off the API and avoiding a burst of results racing each other.
+  //
+  // Back to the first page whenever the result set changes underneath us — in
+  // the SAME update as the change, not in an effect after it. The effect version
+  // fetched twice from page 2 onwards: once for the new search on the old page,
+  // then again for page 1.
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      if (searchTerm !== debouncedSearch) setPage(1);
+    }, 300);
     return () => clearTimeout(timer);
-  }, [searchTerm]);
-
-  // Back to the first page whenever the result set changes underneath us.
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, sortBy, selectedBrand]);
+  }, [searchTerm, debouncedSearch]);
 
   // Search, sort and paging all run server-side, so this covers the whole
   // catalogue instead of whatever subset was downloaded.
@@ -185,7 +188,7 @@ export const Inventory = () => {
                 <select
                   className="w-full md:w-auto px-3 py-1.5 border border-slate-300 rounded-md text-sm font-medium text-slate-700 bg-white outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer"
                   value={selectedBrand}
-                  onChange={(e) => setSelectedBrand(e.target.value)}
+                  onChange={(e) => { setSelectedBrand(e.target.value); setPage(1); }}
                 >
                   <option value="">All Brands</option>
                   {availableBrands.map((b) => (
@@ -197,7 +200,7 @@ export const Inventory = () => {
               <select
                 className="w-full md:w-auto px-3 py-1.5 border border-slate-300 rounded-md text-sm font-medium text-slate-700 bg-white outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer"
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
+                onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
               >
                 <option value="name-asc">Sort: A to Z</option>
                 <option value="name-desc">Sort: Z to A</option>

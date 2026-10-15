@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { Shuffle, Zap, Search, ArrowRightLeft, PackageCheck, RefreshCw } from "lucide-react";
 import { PageHeader } from "../../components/common/PageHeader";
@@ -10,6 +11,8 @@ import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
 import { inventoryApi } from "../../services/inventory";
 import { useUserStore } from "../../store/userStore";
 import { useBusyAction } from "../../hooks/useBusyAction";
+import { queryKeys, STALE } from "../../lib/queryKeys";
+import { invalidateBookingData } from "../../store/invalidation";
 import { hasPermission, PERMISSIONS } from "../../utils/permissions";
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -32,9 +35,6 @@ export const IndentAssignment = () => {
   const canConfigure = hasPermission(user, PERMISSIONS.CONFIGURE_INVENTORY);
   const { run, isBusy, anyBusy } = useBusyAction();
 
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
   const [search, setSearch] = useState("");
   const [withStockOnly, setWithStockOnly] = useState(true);
   // Quantity typed per indent / per allocation move, and the move target.
@@ -42,18 +42,24 @@ export const IndentAssignment = () => {
   const [moveTo, setMoveTo] = useState({});
   const [confirm, setConfirm] = useState(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      setData(await inventoryApi.indentAssignmentQueue());
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(errorOf(err, "Could not load the indents waiting for stock."));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-  useEffect(() => { load(); }, [load]);
+  /**
+   * The queue. Always re-read from the server when the screen opens (it decides
+   * where stock goes), but a revisit shows the last queue at once under the
+   * "Refreshing…" bar instead of a blank page. Assignments themselves are
+   * validated by the server; nothing here trusts the cached figures.
+   */
+  const queue = useQuery({
+    queryKey: queryKeys.indentAssignment.queue(),
+    queryFn: () => inventoryApi.indentAssignmentQueue(),
+    staleTime: STALE.indentAssignment,
+  });
+  const data = queue.data ?? null;
+  const loading = queue.isFetching;
+  const loadError = queue.isError ? errorOf(queue.error, "Could not load the indents waiting for stock.") : null;
+  const load = () => queue.refetch();
+  // After an assignment: re-read this queue and tell every screen showing
+  // bookings or indents that they changed.
+  const reloadAfterChange = () => invalidateBookingData();
 
   const skus = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -70,7 +76,7 @@ export const IndentAssignment = () => {
     toast.success(next === "manual"
       ? "Arriving stock will now be held here for assignment."
       : "Arriving stock will now be assigned automatically, oldest indent first.");
-    await load();
+    await reloadAfterChange();
   }, { error: "Could not change the setting." });
 
   const autoAssign = (sku) => run(`auto:${sku.skuCode}`, async () => {
@@ -82,7 +88,7 @@ export const IndentAssignment = () => {
     } catch (err) {
       toast.error(errorOf(err, "Auto-assign failed."));
     }
-    await load();
+    await reloadAfterChange();
   });
 
   const assign = (sku, indent) => {
@@ -95,7 +101,7 @@ export const IndentAssignment = () => {
       } catch (err) {
         toast.error(errorOf(err, "Assignment failed."));
       }
-      await load();
+      await reloadAfterChange();
     });
   };
 
@@ -118,7 +124,7 @@ export const IndentAssignment = () => {
           toast.error(errorOf(err, "Could not move the allocation."));
         }
         setConfirm(null);
-        await load();
+        await reloadAfterChange();
       }),
     });
     return undefined;

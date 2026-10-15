@@ -148,6 +148,10 @@ const groupIntoBookings = (rawOrders) => {
     const lineItems = rows.map((r) => ({
       id: r._id,
       skuCode: r.skuCode,
+      // Per line, not per booking: the same SKU code can exist under two brands
+      // as two different products, and the export's live stock must be read
+      // for the right one.
+      brand: r.brand || null,
       msilCode: r.msilCode || null,
       boxNo: r.boxNo || null,
       bookedQty: r.bookedQty ?? r.requestedQty ?? 0,   // originally booked

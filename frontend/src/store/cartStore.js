@@ -1,5 +1,25 @@
 import { create } from "zustand";
 import { reservationsApi } from "../services/reservations";
+import { registerSessionReset } from "./sessionReset";
+import { invalidateBookingData, registerStaleMarker } from "./invalidation";
+import { queryClient } from "../lib/queryClient";
+import { queryKeys } from "../lib/queryKeys";
+
+// The selection list feeds the dashboard's "In List" figure.
+const selectionListChanged = () => queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+
+/**
+ * How long a loaded indent list counts as current for a screen that only READS
+ * it (the booking drawer). Writes never rely on it: every action that can change
+ * indents refreshes the list itself, and the server re-checks stock on every
+ * booking regardless of what the browser last saw.
+ */
+export const PENDING_FRESH_MS = 30_000;
+
+// The in-flight /reservations/pending request, so concurrent callers share it,
+// and a ticket so an older response cannot overwrite a newer one.
+let pendingRequest = null;
+let pendingSeq = 0;
 
 const initialHeader = {
   customer: "",
@@ -9,12 +29,52 @@ const initialHeader = {
   remarks: "",
 };
 
+
+/** GET /reservations/pending, mapped to the shape the indent screens use. */
+const loadPendingItems = async () => {
+  const dbPending = await reservationsApi.getPending();
+  const pendingItems = dbPending.map((r) => {
+    const p = r.productId || {};
+    const c = r.customerId || {};
+    return {
+      _id: r._id,
+      id: r.reservationId,
+      status: r.status,
+      indentNumber: r.indentNumber || null, // PI-YYYY-###### (display id)
+      poNumber: r.poNumber || null,          // once a PO exists for it
+      // The booking this indent came from, reported by the server (null for
+      // a standalone indent). The reliable link: a PO number only exists
+      // once one has been raised.
+      bookingId: r.bookingId || null,
+      pendingQuantity: r.quantity,
+      updatedAt: r.updatedAt,
+      customer:
+        typeof c === "object"
+          ? { name: c.name || c.company || c.email || "—" }
+          : { name: "—" },
+      product: {
+        id: p._id || r.productId,
+        code: r.skuCode,
+        msilCode: r.msilCode,
+        category: Array.isArray(p.category) ? p.category.join(", ") : (p.category || "—"),
+        brand: p.brand || "—",
+        availableStock: p.availableForSale !== undefined ? p.availableForSale : 0,
+      },
+    };
+  });
+  return pendingItems;
+};
+
 export const useCartStore = create((set, get) => ({
   items: [], // Stores reservation objects
   pendingItems: [], // Backordered quantities awaiting stock
   // Starts true so the Indent History table shows skeleton rows on first paint
   // rather than a "no indents" flash before the first fetch resolves.
   pendingLoading: true,
+  // Whether an indent list has ever loaded for this session, and when the one on
+  // hand was last read successfully (0 = it must be re-read before reuse).
+  pendingLoaded: false,
+  pendingFetchedAt: 0,
   header: { ...initialHeader },
   loading: false,
   error: null,
@@ -68,44 +128,47 @@ export const useCartStore = create((set, get) => ({
     }
   },
 
-  fetchPendingReservations: async () => {
-    set({ pendingLoading: true });
-    try {
-      const dbPending = await reservationsApi.getPending();
-      const pendingItems = dbPending.map((r) => {
-        const p = r.productId || {};
-        const c = r.customerId || {};
-        return {
-          _id: r._id,
-          id: r.reservationId,
-          status: r.status,
-          indentNumber: r.indentNumber || null, // PI-YYYY-###### (display id)
-          poNumber: r.poNumber || null,          // once a PO exists for it
-          // The booking this indent came from, reported by the server (null for
-          // a standalone indent). The reliable link: a PO number only exists
-          // once one has been raised.
-          bookingId: r.bookingId || null,
-          pendingQuantity: r.quantity,
-          updatedAt: r.updatedAt,
-          customer:
-            typeof c === "object"
-              ? { name: c.name || c.company || c.email || "—" }
-              : { name: "—" },
-          product: {
-            id: p._id || r.productId,
-            code: r.skuCode,
-            msilCode: r.msilCode,
-            category: Array.isArray(p.category) ? p.category.join(", ") : (p.category || "—"),
-            brand: p.brand || "—",
-            availableStock: p.availableForSale !== undefined ? p.availableForSale : 0,
-          },
-        };
-      });
-      set({ pendingItems, pendingLoading: false });
-    } catch {
-      // Non-blocking: pending backorders are supplementary info.
-      set({ pendingItems: [], pendingLoading: false });
-    }
+  /**
+   * The indent list, unless a fresh enough one is already loaded.
+   *
+   * For read-only views. Joins a request already in flight rather than firing a
+   * second one.
+   */
+  ensurePendingReservations: (maxAgeMs = PENDING_FRESH_MS) => {
+    if (pendingRequest) return pendingRequest;
+    const { pendingFetchedAt } = get();
+    if (pendingFetchedAt && Date.now() - pendingFetchedAt < maxAgeMs) return Promise.resolve();
+    return get().fetchPendingReservations();
+  },
+
+  /** Always re-read the indent list — after any action that may have changed it. */
+  fetchPendingReservations: () => {
+    const seq = ++pendingSeq;
+    // Skeletons only while there is nothing to show; a refresh keeps the rows.
+    set((state) => ({ pendingLoading: !state.pendingLoaded }));
+    const request = (async () => {
+      let pendingItems;
+      try {
+        pendingItems = await loadPendingItems();
+      } catch {
+        if (seq !== pendingSeq) return;
+        // Non-blocking: pending backorders are supplementary info. A failed
+        // refresh keeps the last list it had rather than blanking it, and is
+        // marked stale so the next read tries again.
+        set((state) => ({
+          pendingItems: state.pendingLoaded ? state.pendingItems : [],
+          pendingLoading: false,
+          pendingFetchedAt: 0,
+        }));
+        return;
+      } finally {
+        if (pendingRequest === request) pendingRequest = null;
+      }
+      if (seq !== pendingSeq) return;
+      set({ pendingItems, pendingLoading: false, pendingLoaded: true, pendingFetchedAt: Date.now() });
+    })();
+    pendingRequest = request;
+    return request;
   },
 
   // restorePending() backed the indent list's "To Selection List" action, which
@@ -117,6 +180,7 @@ export const useCartStore = create((set, get) => ({
     try {
       const productId = product.id || product._id;
       const { merged } = await reservationsApi.create(productId, quantity);
+      selectionListChanged();
       await get().fetchReservations();
       set({ loading: false });
       return { success: true, merged };
@@ -134,6 +198,7 @@ export const useCartStore = create((set, get) => ({
     set({ loading: true });
     try {
       await reservationsApi.cancel(item._id);
+      selectionListChanged();
       await get().fetchReservations();
     } catch (err) {
       set({ error: err.message, loading: false });
@@ -160,6 +225,7 @@ export const useCartStore = create((set, get) => ({
       }
     });
     const removed = targets.length - failed.length;
+    if (removed > 0) selectionListChanged();
     await get().fetchReservations();
     set({ loading: false });
     return { success: failed.length === 0, removed, failed };
@@ -172,6 +238,7 @@ export const useCartStore = create((set, get) => ({
     set({ loading: true });
     try {
       await reservationsApi.updateQuantity(item._id, quantity);
+      selectionListChanged();
       await get().fetchReservations();
       return { success: true };
     } catch (err) {
@@ -188,6 +255,7 @@ export const useCartStore = create((set, get) => ({
       for (const item of activeItems) {
         await reservationsApi.cancel(item._id);
       }
+      selectionListChanged();
       set({ items: [], loading: false });
     } catch (err) {
       set({ loading: false });
@@ -202,6 +270,9 @@ export const useCartStore = create((set, get) => ({
       const header = get().header;
       const order = await reservationsApi.confirm(header.deliveryLocation, header.remarks);
       set({ items: [], header: { ...initialHeader }, loading: false });
+      // A new booking: every screen showing bookings, indents or the dashboard
+      // figures is now out of date.
+      invalidateBookingData();
       // Refresh backorders — a partial/unfulfilled confirmation may add to them.
       await get().fetchPendingReservations();
       return order;
@@ -217,3 +288,14 @@ export const useCartStore = create((set, get) => ({
     get().items.reduce((total, item) => total + item.orderQuantity, 0),
 
 }));
+
+// Selection list and indents belong to the account that loaded them.
+registerSessionReset(() => {
+  pendingSeq += 1;
+  pendingRequest = null;
+  useCartStore.setState({
+    items: [], pendingItems: [], pendingLoading: true, pendingLoaded: false, pendingFetchedAt: 0,
+    header: { ...initialHeader }, loading: false, error: null,
+  });
+});
+registerStaleMarker(() => useCartStore.setState({ pendingFetchedAt: 0 }));

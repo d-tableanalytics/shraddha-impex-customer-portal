@@ -54,15 +54,19 @@ export const companyNameOf = (booking) =>
   booking?.customerProfile?.company || booking?.customer || null;
 
 export const SalesDesk = () => {
-  const { bookings, meta, scope, search, loading, error, fetchBookings, setScope, setSearch, select } =
-    useSalesStore();
+  const {
+    bookings, meta, scope, search, appliedScope, appliedSearch, loading, refreshing, error,
+    ensureBookings, setScope, setSearch, select,
+  } = useSalesStore();
   // Exports of the whole list build their file in the browser; busy until done.
   const { run: runExport, isBusy: isExporting } = useBusyAction();
   const { user } = useUserStore();
 
+  // A desk reopened within a few seconds keeps the list it has; every write and
+  // any booking change elsewhere forces a re-read (store/invalidation.js).
   useEffect(() => {
-    fetchBookings();
-  }, [fetchBookings]);
+    ensureBookings();
+  }, [ensureBookings]);
 
   // The route is already guarded, but a direct URL hit by the wrong role should
   // explain itself rather than render an empty table.
@@ -93,6 +97,9 @@ export const SalesDesk = () => {
    * and the scope tab before it reaches this component — so an export follows
    * whatever the user is looking at without re-implementing either filter. Both
    * formats share this, so Excel and PDF can never disagree about content.
+   *
+   * The title and file name use the scope and search the rows were FETCHED for,
+   * not the live box: while typing, the box runs a moment ahead of the list.
    */
   const buildExport = () => {
     const rows = bookings.map((b, i) => ({
@@ -119,12 +126,12 @@ export const SalesDesk = () => {
     ];
     // The title records WHICH slice this is, so a file opened next week still
     // says what it was filtered to.
-    const scopeLabel = SCOPES.find((x) => x.key === scope)?.label ?? "All Bookings";
-    const title = `Sales Desk — ${scopeLabel}${search.trim() ? ` — search "${search.trim()}"` : ""}`;
+    const scopeLabel = SCOPES.find((x) => x.key === appliedScope)?.label ?? "All Bookings";
+    const title = `Sales Desk — ${scopeLabel}${appliedSearch.trim() ? ` — search "${appliedSearch.trim()}"` : ""}`;
     return { rows, columns, title };
   };
 
-  const fileStem = () => `SalesDesk_${scope}`;
+  const fileStem = () => `SalesDesk_${appliedScope}`;
 
   const handleExcel = () => {
     if (bookings.length === 0) return toast.error("Nothing to export for the current filter.");
@@ -221,6 +228,14 @@ export const SalesDesk = () => {
                 size={14}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 cursor-pointer hover:text-slate-600"
                 onClick={() => setSearch("")}
+              />
+            )}
+            {/* A refresh keeps the current rows on screen; this says one is running. */}
+            {refreshing && (
+              <Loader2
+                size={14}
+                aria-label="Refreshing bookings"
+                className={`absolute ${search ? "right-8" : "right-3"} top-1/2 -translate-y-1/2 text-slate-400 animate-spin`}
               />
             )}
           </div>
@@ -340,7 +355,7 @@ export const SalesDesk = () => {
             ) : (
               <tr>
                 <td colSpan={10} className="px-5 py-10 text-center text-slate-400">
-                  {scope === "pending"
+                  {appliedScope === "pending"
                     ? "No bookings are waiting for a PO."
                     : "No bookings found matching your criteria."}
                 </td>

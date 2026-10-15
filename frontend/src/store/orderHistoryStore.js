@@ -2,11 +2,25 @@ import { create } from "zustand";
 import { ordersApi } from "../services/orders";
 import { reservationsApi } from "../services/reservations";
 import { groupMatches } from "../utils/historySearch";
+import { registerSessionReset } from "./sessionReset";
+import { invalidateBookingData, registerStaleMarker } from "./invalidation";
 
 // How long the search box waits for typing to pause before filtering. Until
 // then the table shows a spinner, never the previous query's rows.
 const SEARCH_DEBOUNCE_MS = 300;
 let searchTimer = null;
+// Only the newest /orders response may replace the list: a refresh after an
+// edit and the page's own mount fetch can overlap.
+let ordersSeq = 0;
+let ordersRequest = null;
+
+/**
+ * How long a loaded bookings list is reused when Booking History is reopened.
+ * Every write made here re-reads it, and a booking change anywhere else marks it
+ * stale at once (store/invalidation.js); this only spares a revisit from
+ * downloading every booking again.
+ */
+export const ORDERS_FRESH_MS = 30_000;
 
 const computeMetrics = (orders) => {
   const now = new Date();
@@ -55,24 +69,50 @@ export const useOrderHistoryStore = create((set, get) => ({
     thisMonth: 0,
   },
   // Starts true: the history page fetches on mount, so the table should show
-  // skeleton rows from first paint rather than a "no bookings" flash.
+  // skeleton rows from first paint rather than a "no bookings" flash. It is
+  // only ever true until the FIRST list arrives: a revisit, or the refresh that
+  // follows an edit, keeps the bookings on screen and sets `refreshing`.
   loading: true,
+  refreshing: false,
   error: null,
+  // When the bookings on hand were read (0 = must be re-read before reuse).
+  ordersFetchedAt: 0,
 
-  fetchOrders: async () => {
-    set({ loading: true, error: null });
+  /** On opening the page: reuse a recent list, or join/load one. */
+  ensureOrders: (maxAgeMs = ORDERS_FRESH_MS) => {
+    if (ordersRequest) return ordersRequest;
+    const { ordersFetchedAt } = get();
+    if (ordersFetchedAt && Date.now() - ordersFetchedAt < maxAgeMs) return Promise.resolve();
+    return get().fetchOrders();
+  },
+
+  fetchOrders: () => {
+    const request = get()._loadOrders();
+    ordersRequest = request;
+    return request.finally(() => {
+      if (ordersRequest === request) ordersRequest = null;
+    });
+  },
+
+  _loadOrders: async () => {
+    const seq = ++ordersSeq;
+    set((state) => ({ error: null, refreshing: !state.loading }));
     try {
       const orders = await ordersApi.getAll();
+      if (seq !== ordersSeq) return;
       set((state) => ({
         allOrders: orders,
         orders,
         // Cancelled comes from reservations, not orders — carry it through.
         metrics: { ...computeMetrics(orders), cancelled: state.metrics.cancelled },
         loading: false,
+        refreshing: false,
+        ordersFetchedAt: Date.now(),
       }));
       get().applyFilters();
     } catch (err) {
-      set({ error: err.message || "Failed to fetch orders", loading: false });
+      if (seq !== ordersSeq) return;
+      set({ error: err.message || "Failed to fetch orders", loading: false, refreshing: false });
     }
   },
 
@@ -224,6 +264,7 @@ export const useOrderHistoryStore = create((set, get) => ({
     set({ savingLines: true });
     try {
       const saved = await ordersApi.updateBookingItems(orderNumber, lines);
+      invalidateBookingData();
       await get().fetchOrders();
       // The edit just wrote an audit entry, so any history already on screen
       // is now one entry short.
@@ -267,6 +308,7 @@ export const useOrderHistoryStore = create((set, get) => ({
   },
 
   refreshSelected: async (orderNumber) => {
+    invalidateBookingData();
     await get().fetchOrders();
     const updated = get().allOrders.find((o) => o.orderNumber === orderNumber);
     if (updated) set({ selectedOrder: updated });
@@ -294,6 +336,7 @@ export const useOrderHistoryStore = create((set, get) => ({
   updateOrderStatus: async (booking, status, remarks) => {
     try {
       const res = await ordersApi.updateStatus(booking.orderNumber, status, remarks);
+      invalidateBookingData();
       await get().fetchOrders();
       // Keep the open drawer in sync with the refreshed booking.
       const updated = get().allOrders.find((o) => o.orderNumber === booking.orderNumber);
@@ -353,6 +396,7 @@ export const useOrderHistoryStore = create((set, get) => ({
   updateOrderPO: async (booking, poNumber) => {
     try {
       await ordersApi.updatePO(booking.orderNumber, poNumber);
+      invalidateBookingData();
       await get().fetchOrders();
       const updated = get().allOrders.find((o) => o.orderNumber === booking.orderNumber);
       if (updated) set({ selectedOrder: updated });
@@ -368,6 +412,7 @@ export const useOrderHistoryStore = create((set, get) => ({
   cancelBooking: async (booking, reason) => {
     try {
       const res = await ordersApi.cancel(booking.orderNumber, reason);
+      invalidateBookingData();
       await get().fetchOrders();
       const updated = get().allOrders.find((o) => o.orderNumber === booking.orderNumber);
       if (updated) set({ selectedOrder: updated });
@@ -394,3 +439,19 @@ export const useOrderHistoryStore = create((set, get) => ({
     await get().fetchOrders();
   },
 }));
+
+// The bookings, filters and open drawer belong to the account that loaded them.
+const signedOutState = useOrderHistoryStore.getState();
+registerSessionReset(() => {
+  clearTimeout(searchTimer);
+  searchTimer = null;
+  ordersSeq += 1;
+  ordersRequest = null;
+  useOrderHistoryStore.setState({
+    allOrders: [], orders: [], filters: signedOutState.filters, searchQuery: "", searching: false,
+    sortBy: "date", sortOrder: "desc", page: 1, selectedOrder: null, selectedIds: [],
+    metrics: signedOutState.metrics, loading: true, refreshing: false, error: null,
+    quantityHistory: null, quantityHistoryFor: null, timelines: {}, ordersFetchedAt: 0,
+  });
+});
+registerStaleMarker(() => useOrderHistoryStore.setState({ ordersFetchedAt: 0 }));

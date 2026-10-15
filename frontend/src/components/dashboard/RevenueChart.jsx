@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useDeferredValue, useState } from 'react';
 import {
   ComposedChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import { Card, CardContent } from '../ui/Card';
-import { api } from '../../services/api';
+import { DEFAULT_TREND_RANGE, useDashboardTrend } from '../../store/homeDashboardStore';
 import { Loader2, Download } from 'lucide-react';
 
 const COLORS = { order: '#6366f1', confirmed: '#10b981', confirmedEdge: '#059669', pending: '#f59e0b' };
@@ -44,17 +44,16 @@ const RANGE_OPTIONS = [
 ];
 
 export const RevenueChart = () => {
-  const [trend, setTrend] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [range, setRange] = useState('6m');
-
-  useEffect(() => {
-    setLoading(true);
-    api.get('/dashboard/stats', { params: { range } })
-      .then(r => setTrend(r.data.data?.monthlyTrend || []))
-      .catch(() => setTrend([]))
-      .finally(() => setLoading(false));
-  }, [range]);
+  const [range, setRange] = useState(DEFAULT_TREND_RANGE);
+  // The default range is read from the dashboard's shared payload; any other
+  // range is requested once, when it is first chosen.
+  const { trend: latestTrend, loading: trendLoading } = useDashboardTrend(range);
+  // The chart is the most expensive thing on the dashboard to draw, and it now
+  // arrives in the same response as the KPI tiles. Deferring it lets React paint
+  // the tiles first and draw the chart in a follow-up render; until then the
+  // chart keeps its spinner rather than flashing "no data".
+  const trend = useDeferredValue(latestTrend);
+  const loading = trendLoading || trend !== latestTrend;
 
   const handleExport = () => {
     if (trend.length === 0) return;

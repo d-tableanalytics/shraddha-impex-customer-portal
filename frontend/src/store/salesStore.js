@@ -1,38 +1,140 @@
 import { create } from "zustand";
 import { salesApi } from "../services/sales";
 import { ordersApi } from "../services/orders";
+import { registerSessionReset } from "./sessionReset";
+import { invalidateBookingData, registerStaleMarker } from "./invalidation";
 
-export const useSalesStore = create((set, get) => ({
+/**
+ * How long the search box waits for typing to pause before asking the server.
+ *
+ * The bookings list is built server-side from every booking line, and each
+ * request costs several database round trips, so a request per keystroke queued
+ * work the user had already typed past.
+ */
+export const SEARCH_DEBOUNCE_MS = 300;
+
+// Module scope, not state: none of these should re-render the desk.
+let searchTimer = null;
+// Monotonic ticket — only the newest request may write the list. Out-of-order
+// responses are not hypothetical: a short term matches more rows and answers
+// later than the longer one typed after it.
+let requestSeq = 0;
+let inFlight = null; // AbortController of the newest request
+
+const isCancelled = (err) => err?.code === "ERR_CANCELED" || err?.name === "CanceledError";
+
+const initialList = {
   bookings: [],
   meta: { total: 0, pendingPo: 0, generated: 0 },
+  // What the list on screen was actually fetched for. `search` is the box,
+  // which runs ahead of the data while typing; exports name what is shown.
+  appliedScope: "all",
+  appliedSearch: "",
+  // True until the first list has arrived. Later refreshes keep the current
+  // rows on screen and set `refreshing` instead.
+  loading: true,
+  refreshing: false,
+  error: null,
+  // When the list on screen was read (0 = must be re-read before reuse).
+  fetchedAt: 0,
+};
+
+/**
+ * How long a loaded bookings list is reused when the desk is reopened. Short:
+ * PO deadlines run on this list. Any booking change anywhere marks it stale at
+ * once (store/invalidation.js), and every write on the desk re-reads it.
+ */
+export const BOOKINGS_FRESH_MS = 15_000;
+
+export const useSalesStore = create((set, get) => ({
+  ...initialList,
   scope: "all", // all | pending | generated
   search: "",
   selected: null, // the booking open in the review drawer
-  loading: true,
   saving: false,
-  error: null,
 
+  /**
+   * Load the list for the current scope and search, immediately.
+   *
+   * Used on mount, by the scope tabs and after every write — none of which are
+   * debounced. Supersedes any pending debounced search and aborts the request
+   * it replaces, so a stale answer can never land after this one.
+   */
   fetchBookings: async () => {
-    set({ loading: true, error: null });
+    clearTimeout(searchTimer);
+    searchTimer = null;
+    inFlight?.abort();
+    const controller = new AbortController();
+    inFlight = controller;
+    const seq = ++requestSeq;
+
+    const { scope, search } = get();
+    set((state) => ({ error: null, refreshing: !state.loading }));
     try {
-      const { scope, search } = get();
-      const { data, meta } = await salesApi.getBookings({ status: scope, search });
-      set({ bookings: data, meta, loading: false });
+      const { data, meta } = await salesApi.getBookings(
+        { status: scope, search },
+        { signal: controller.signal },
+      );
+      if (seq !== requestSeq) return;
+      set({
+        bookings: data, meta, appliedScope: scope, appliedSearch: search,
+        loading: false, refreshing: false, fetchedAt: Date.now(),
+      });
     } catch (err) {
+      // Superseded by a newer request: that one reports, this one says nothing.
+      if (seq !== requestSeq || isCancelled(err)) return;
       set({
         error: err.response?.data?.message || err.message || "Failed to load bookings",
         loading: false,
+        refreshing: false,
       });
+    } finally {
+      if (inFlight === controller) inFlight = null;
     }
+  },
+
+  /**
+   * On opening the desk: reuse the list if it is recent and was loaded for the
+   * scope and search now selected; otherwise load it.
+   */
+  ensureBookings: (maxAgeMs = BOOKINGS_FRESH_MS) => {
+    const { fetchedAt, scope, search, appliedScope, appliedSearch } = get();
+    if (inFlight) return Promise.resolve();
+    const matches = scope === appliedScope && search === appliedSearch;
+    if (matches && fetchedAt && Date.now() - fetchedAt < maxAgeMs) return Promise.resolve();
+    return get().fetchBookings();
   },
 
   setScope: (scope) => {
     set({ scope });
     get().fetchBookings();
   },
+
+  /**
+   * The search box. The input updates at once; the request waits for typing to
+   * pause. Clearing the box is a deliberate "show everything" and runs at once.
+   */
   setSearch: (search) => {
     set({ search });
-    get().fetchBookings();
+    clearTimeout(searchTimer);
+    if (search === "") {
+      get().fetchBookings();
+      return;
+    }
+    searchTimer = setTimeout(() => {
+      searchTimer = null;
+      get().fetchBookings();
+    }, SEARCH_DEBOUNCE_MS);
+  },
+
+  /** Back to the signed-out state; cancels anything pending. */
+  reset: () => {
+    clearTimeout(searchTimer);
+    searchTimer = null;
+    inFlight?.abort();
+    inFlight = null;
+    requestSeq += 1;
+    set({ ...initialList, scope: "all", search: "", selected: null, saving: false, pricing: null });
   },
 
   // Selecting a booking drops the previous booking's price quote — see the
@@ -55,6 +157,7 @@ export const useSalesStore = create((set, get) => ({
   updateAllocationBatchStatus: async (orderId, at, status) => {
     try {
       await ordersApi.updateAllocationBatchStatus(orderId, at, status);
+      invalidateBookingData();
       await get().reloadSelected();
       return { success: true };
     } catch (err) {
@@ -67,6 +170,8 @@ export const useSalesStore = create((set, get) => ({
     try {
       const res = await salesApi.updateItems(orderId, lines);
       set({ selected: res.data, saving: false });
+      // Other screens showing bookings must re-read too.
+      invalidateBookingData();
       await get().fetchBookings();
       return { success: true, changes: res.changes || [] };
     } catch (err) {
@@ -92,6 +197,8 @@ export const useSalesStore = create((set, get) => ({
     try {
       const data = await salesApi.reorderLines(orderId, lineIds);
       set({ selected: data, saving: false });
+      // Other screens showing bookings must re-read too.
+      invalidateBookingData();
       await get().fetchBookings();
       return { success: true };
     } catch (err) {
@@ -139,6 +246,8 @@ export const useSalesStore = create((set, get) => ({
     try {
       const res = await salesApi.setPricing(orderId, priceType);
       set({ selected: res.data, saving: false });
+      // Other screens showing bookings must re-read too.
+      invalidateBookingData();
       await get().fetchBookings();
       return { success: true, pricing: res.pricing };
     } catch (err) {
@@ -155,6 +264,8 @@ export const useSalesStore = create((set, get) => ({
     try {
       const updated = await salesApi.raisePo(orderId, poData);
       set({ selected: updated, saving: false });
+      // Other screens showing bookings must re-read too.
+      invalidateBookingData();
       await get().fetchBookings();
       return { success: true, poNumber: updated.poNumber };
     } catch (err) {
@@ -167,3 +278,6 @@ export const useSalesStore = create((set, get) => ({
     }
   },
 }));
+
+registerSessionReset(() => useSalesStore.getState().reset());
+registerStaleMarker(() => useSalesStore.setState({ fetchedAt: 0 }));

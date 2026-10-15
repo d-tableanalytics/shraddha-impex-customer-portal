@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, ArrowRight } from 'lucide-react';
-import { api } from '../../services/api';
+import { useDashboardStats } from '../../store/homeDashboardStore';
 
 // Booking-to-Order conversion. Hero: a donut gauge of the conversion rate.
 // Right: a segmented fulfilment bar (confirmed vs pending) over total booked + legend chips.
@@ -16,15 +15,8 @@ const COLORS = {
 
 export const ConversionSummary = () => {
   const navigate = useNavigate();
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api.get('/dashboard/stats')
-      .then(r => setStats(r.data.data))
-      .catch(() => setStats(null))
-      .finally(() => setLoading(false));
-  }, []);
+  // Shared with the other dashboard widgets: one request between them.
+  const { stats, loading } = useDashboardStats();
 
   const booked = stats?.totalBooked ?? 0;
   const confirmed = stats?.totalConfirmed ?? 0;

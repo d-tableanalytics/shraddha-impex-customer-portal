@@ -6,22 +6,23 @@ import { OrderHistoryTable } from "../../components/tables/OrderHistoryTable";
 import { OrderDrawer } from "../../components/drawer/OrderDrawer";
 import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { useCartStore } from "../../store/cartStore";
-import { useProductStore } from "../../store/productStore";
 
 export const OrderHistory = () => {
-  const { fetchOrders, fetchCancelledCount } = useOrderHistoryStore();
-  const { fetchPendingReservations } = useCartStore();
-  const { fetchAllProducts } = useProductStore();
+  const { ensureOrders, fetchCancelledCount } = useOrderHistoryStore();
+  const { ensurePendingReservations } = useCartStore();
 
+  // Reopening the page reuses a list read in the last few seconds instead of
+  // downloading every booking again; anything that changes a booking — here or
+  // on another screen — makes the next visit re-read (store/invalidation.js).
   useEffect(() => {
-    fetchOrders();
+    ensureOrders();
     // indents drive the per-row "includes indent" badge.
-    fetchPendingReservations();
-    // Products give live Available Quantity for the detailed export.
-    fetchAllProducts();
+    ensurePendingReservations();
+    // Live Available Quantity for the export is read when an export is made,
+    // for its own SKUs only — see utils/exportAvailability.js.
     // Cancelled bookings (expired/removed reservations) for the metric tile.
     fetchCancelledCount();
-  }, [fetchOrders, fetchPendingReservations, fetchAllProducts, fetchCancelledCount]);
+  }, [ensureOrders, ensurePendingReservations, fetchCancelledCount]);
 
   return (
     <div className="flex flex-col gap-6 relative">

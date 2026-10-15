@@ -1,5 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render as rtlRender, screen, fireEvent, waitFor } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("react-hot-toast", () => ({ default: { error: vi.fn(), success: vi.fn() } }));
 
@@ -16,6 +17,10 @@ const userState = vi.hoisted(() => ({ user: { role: "Sales", permissions: ["assi
 vi.mock("../../store/userStore", () => ({ useUserStore: () => userState }));
 
 import { IndentAssignment } from "./IndentAssignment";
+import { queryClient } from "../../lib/queryClient";
+
+// The queue is a TanStack Query; each test starts from an empty cache.
+const render = (ui) => rtlRender(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
 
 const queue = {
   mode: "manual",
@@ -33,6 +38,7 @@ const queue = {
 
 describe("Indent Stock Assignment", () => {
   beforeEach(() => {
+    queryClient.clear();
     vi.clearAllMocks();
     api.indentAssignmentQueue.mockResolvedValue(queue);
   });
@@ -79,5 +85,21 @@ describe("Indent Stock Assignment", () => {
     render(<IndentAssignment />);
     await screen.findByText("Nikita Traders");
     expect(screen.queryByText(/Switch to automatic/)).toBeNull();
+  });
+
+  test("a revisit shows the last queue at once and still re-reads it from the server", async () => {
+    const first = render(<IndentAssignment />);
+    expect(await screen.findByText("Nikita Traders")).toBeTruthy();
+    first.unmount();
+
+    let release;
+    api.indentAssignmentQueue.mockImplementation(() => new Promise((r) => { release = () => r(queue); }));
+    render(<IndentAssignment />);
+    // No blank page while the queue is re-validated...
+    expect(screen.getByText("Nikita Traders")).toBeTruthy();
+    expect(screen.getByText("Refreshing…")).toBeTruthy();
+    // ...but it IS re-validated: stock decisions are never made on the cached copy alone.
+    await waitFor(() => expect(api.indentAssignmentQueue).toHaveBeenCalledTimes(2));
+    release();
   });
 });

@@ -2,10 +2,11 @@ import { api } from "./api";
 
 export const salesApi = {
   /** status: 'pending' | 'generated' | 'all' */
-  getBookings: async ({ status = "pending", search = "" } = {}) => {
+  getBookings: async ({ status = "pending", search = "" } = {}, { signal } = {}) => {
     const params = new URLSearchParams({ status });
     if (search) params.set("search", search);
-    const res = await api.get(`/sales/bookings?${params.toString()}`);
+    // `signal` lets the desk abandon a search the user has already typed past.
+    const res = await api.get(`/sales/bookings?${params.toString()}`, { signal });
     return { data: res.data.data || [], meta: res.data.meta || {} };
   },
 

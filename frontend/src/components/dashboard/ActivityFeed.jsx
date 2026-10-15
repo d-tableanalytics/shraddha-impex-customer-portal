@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Card, CardContent } from '../ui/Card';
 import { Package, CheckCircle, Clock, AlertTriangle, Truck, Loader2 } from 'lucide-react';
-import { api } from '../../services/api';
+import { useDashboardStats } from '../../store/homeDashboardStore';
 
 const STATUS_ICON = {
   'PO Received':        <Clock    size={14} className="text-warning-500" />,
@@ -34,15 +33,9 @@ const timeAgo = (dateStr) => {
 };
 
 export const ActivityFeed = () => {
-  const [activities, setActivities] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api.get('/dashboard/stats')
-      .then(r => setActivities(r.data.data?.recentOrders || []))
-      .catch(() => setActivities([]))
-      .finally(() => setLoading(false));
-  }, []);
+  // Shared with the other dashboard widgets: one request between them.
+  const { stats, loading } = useDashboardStats();
+  const activities = stats?.recentOrders || [];
 
   return (
     <Card className="h-full max-h-[440px] flex flex-col">

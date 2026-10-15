@@ -1,5 +1,6 @@
 import { RouterProvider } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "./lib/queryClient";
 import { Toaster } from "react-hot-toast";
 import { router } from "./routes";
 import { useEffect } from "react";
@@ -7,14 +8,6 @@ import { initSocket } from "./services/socketService";
 import { useUserStore } from "./store/userStore";
 import { useThemeStore } from "./store/themeStore";
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      retry: 1,
-    },
-  },
-});
 
 
 function App() {

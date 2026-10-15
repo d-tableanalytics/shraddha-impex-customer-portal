@@ -2,19 +2,23 @@ import { create } from "zustand";
 import { usersApi } from "../services/users";
 import { refreshSocketAuth } from "../services/socketService";
 import { useNotificationStore } from "./notificationStore";
+import { resetSessionStores } from "./sessionReset";
 
 export const useUserStore = create((set) => ({
   user: null,
   loading: !!localStorage.getItem('token'),
   error: null,
-  
+
   login: async (credentials) => {
     set({ loading: true, error: null });
     try {
       const { token } = await usersApi.login(credentials);
       localStorage.setItem('token', token);
-      
+
       const user = await usersApi.getCurrentUser();
+      // A different account may have been signed in on this tab a moment ago,
+      // and the stores keep their data on screen across refreshes now.
+      resetSessionStores();
       set({ user, loading: false });
       refreshSocketAuth(); // rejoin socket rooms as the logged-in user
 
@@ -73,6 +77,7 @@ export const useUserStore = create((set) => ({
     await usersApi.logout();
     localStorage.removeItem('token');
     set({ user: null });
+    resetSessionStores();
     useNotificationStore.getState().clear();
     refreshSocketAuth(); // drop out of the user/admin rooms
   },
