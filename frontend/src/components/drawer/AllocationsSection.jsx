@@ -1,17 +1,23 @@
 import { useState } from "react";
 import { PackageCheck, Receipt, Loader2 } from "lucide-react";
 import { BOOKING_LIFECYCLE } from "../../constants/bookingLifecycle";
+import { allocationBatches } from "../../utils/allocationBatches";
 
 const stageLabel = (key) => BOOKING_LIFECYCLE.find((s) => s.key === key)?.label || key || "—";
+const fmtDate = (d) => new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
 /**
  * INDENT-TO-BOOKING ALLOCATIONS, under a booking's line items.
  *
  * A line short of stock at booking time keeps its remainder on the booking's
- * indent. Each later receipt that covers part of it is an "inward allocation"
- * on the same line: its own quantity, its own status and its own pick list, so
- * the warehouse can pick and dispatch it separately from what was confirmed at
- * booking time. The line's confirmed quantity already includes them.
+ * indent. When stock arrives, everything it covers for this booking in one run
+ * — however many indents and SKUs — is ONE inward allocation: one number, one
+ * status, one pick list with every SKU in it, picked and dispatched together.
+ * A later run is a separate allocation. Inside each, the rows still say which
+ * SKU and which indent every unit came from. See utils/allocationBatches.js.
+ *
+ * The lines' confirmed quantities already include their allocations; the
+ * summary at the top splits them back out per SKU.
  *
  * Shared by the customer's Booking History drawer and the sales desk drawer.
  * Each passes its lines in this shape:
@@ -19,19 +25,21 @@ const stageLabel = (key) => BOOKING_LIFECYCLE.find((s) => s.key === key)?.label 
  *
  * Renders nothing when no line has an allocation.
  *
- * @param {Function} [onStatusChange] (lineId, seq, status) => Promise<{success}>.
+ * @param {Function} [onStatusChange] (batch, status) => Promise<{success}>.
  *        Omitted for readers who may not move it; they see the stage as text.
- * @param {Function} [onViewPicklist] (line, allocation). Omitted when there is no
- *        document to show yet (the customer's copy needs a raised PO).
+ * @param {Function} [onViewPicklist] (batch). Omitted when there is no document
+ *        to show yet (the customer's copy needs a raised PO).
  */
 export const AllocationsSection = ({ lines, onStatusChange, onViewPicklist }) => {
   const [busy, setBusy] = useState(null);
   const withAllocations = (lines || []).filter((l) => l.allocations?.length);
   if (withAllocations.length === 0) return null;
 
-  const change = async (line, a, status) => {
-    setBusy(`${line.lineId}:${a.seq}`);
-    await onStatusChange(line.lineId, a.seq, status);
+  const batches = allocationBatches(withAllocations);
+
+  const change = async (batch, status) => {
+    setBusy(batch.key);
+    await onStatusChange(batch, status);
     setBusy(null);
   };
 
@@ -45,103 +53,99 @@ export const AllocationsSection = ({ lines, onStatusChange, onViewPicklist }) =>
         </span>
       </div>
 
-      <div className="divide-y divide-slate-100">
+      {/* Per SKU: where its booked quantity stands. */}
+      <div className="px-5 py-3 border-b border-slate-100 flex flex-col gap-1.5">
         {withAllocations.map((line) => {
           const allocated = line.allocations.reduce((n, a) => n + (a.quantity || 0), 0);
           const initial = (line.confirmedQty || 0) - allocated;
           return (
-            <div key={line.lineId || line.skuCode} className="px-5 py-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
-                <span className="font-mono text-sm font-bold text-slate-800">{line.skuCode}</span>
-                <span className="text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-1">
-                  <span>Booked <b className="text-slate-700">{line.bookedQty ?? "—"}</b></span>
-                  <span>Initially confirmed <b className="text-slate-700">{initial}</b></span>
-                  <span>Allocated <b className="text-emerald-700">{allocated}</b></span>
-                  <span>Pending indent <b className="text-amber-600">{line.pendingQty || 0}</b></span>
-                </span>
-              </div>
-
-              {/* Scrolls sideways rather than wrapping: the drawer is narrow,
-                  and five columns squeezed into it broke every label in two. */}
-              <div className="overflow-x-auto -mx-5 px-5">
-              <table className="w-full min-w-160 text-sm whitespace-nowrap">
-                <thead className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-                  <tr className="border-b border-slate-100">
-                    <th className="py-2 pr-4 text-left">Allocation</th>
-                    <th className="py-2 px-4 text-right">Inward qty allocated</th>
-                    <th className="py-2 px-4 text-left">Received</th>
-                    <th className="py-2 px-4 text-left">Status</th>
-                    <th className="py-2 pl-4 text-right">Picklist</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {line.allocations.map((a) => {
-                    const key = `${line.lineId}:${a.seq}`;
-                    return (
-                      <tr key={a.seq}>
-                        <td className="py-2.5 pr-4 font-semibold text-slate-700">
-                          Inward allocation {a.seq}
-                          {a.indentNumber && (
-                            <span className="block text-[10px] font-normal text-slate-400">
-                              from {a.indentNumber}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-4 text-right font-bold text-emerald-700">{a.quantity}</td>
-                        <td className="py-2.5 px-4 text-slate-600">
-                          {new Date(a.at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
-                        </td>
-                        <td className="py-2.5 px-4">
-                          {/* Released with its booking (cancelled, or no PO in
-                              7 days): the units went back to stock, so there is
-                              no stage left to move it to. */}
-                          {a.status === "Cancelled" ? (
-                            <span
-                              className="text-xs font-semibold text-red-600"
-                              title={a.statusAt ? `Released ${new Date(a.statusAt).toLocaleString()}` : undefined}
-                            >
-                              Cancelled — stock released
-                            </span>
-                          ) : onStatusChange ? (
-                            <span className="inline-flex items-center gap-1.5">
-                              <select
-                                value={a.status || "PO Received"}
-                                disabled={busy === key}
-                                onChange={(e) => change(line, a, e.target.value)}
-                                className="text-xs font-semibold border border-slate-300 rounded-lg px-2 py-1 bg-white outline-none focus:border-primary-500"
-                              >
-                                {BOOKING_LIFECYCLE.map((s) => (
-                                  <option key={s.key} value={s.key}>{s.label}</option>
-                                ))}
-                              </select>
-                              {busy === key && <Loader2 size={12} className="animate-spin text-slate-400" />}
-                            </span>
-                          ) : (
-                            <span className="text-xs font-semibold text-slate-700">{stageLabel(a.status)}</span>
-                          )}
-                        </td>
-                        <td className="py-2.5 pl-4 text-right">
-                          {onViewPicklist ? (
-                            <button
-                              type="button"
-                              onClick={() => onViewPicklist(line, a)}
-                              className="inline-flex items-center gap-1 text-xs font-bold text-primary-700 hover:underline"
-                            >
-                              <Receipt size={12} /> View picklist
-                            </button>
-                          ) : (
-                            <span className="text-[11px] text-slate-400">after PO</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              </div>
+            <div key={line.lineId || line.skuCode} className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="font-mono text-sm font-bold text-slate-800">{line.skuCode}</span>
+              <span className="text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-1">
+                <span>Booked <b className="text-slate-700">{line.bookedQty ?? "—"}</b></span>
+                <span>Initially confirmed <b className="text-slate-700">{initial}</b></span>
+                <span>Allocated <b className="text-emerald-700">{allocated}</b></span>
+                <span>Pending indent <b className="text-amber-600">{line.pendingQty || 0}</b></span>
+              </span>
             </div>
           );
         })}
+      </div>
+
+      {/* One block per inward allocation (batch). */}
+      <div className="divide-y divide-slate-100">
+        {batches.map((batch) => (
+          <div key={batch.key} className="px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+              <div>
+                <p className="text-sm font-bold text-slate-800">Inward allocation {batch.number}</p>
+                <p className="text-[11px] text-slate-500">
+                  {fmtDate(batch.at)} · {batch.quantity} pcs across {batch.skuCount} SKU{batch.skuCount === 1 ? "" : "s"}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {/* Released with its booking (cancelled, or no PO in 7 days):
+                    the units went back to stock, so there is no stage left. */}
+                {batch.status === "Cancelled" ? (
+                  <span className="text-xs font-semibold text-red-600">Cancelled — stock released</span>
+                ) : onStatusChange ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <select
+                      value={batch.status === "mixed" ? "" : batch.status}
+                      disabled={busy === batch.key}
+                      onChange={(e) => change(batch, e.target.value)}
+                      aria-label={`Status of inward allocation ${batch.number}`}
+                      className="text-xs font-semibold border border-slate-300 rounded-lg px-2 py-1 bg-white outline-none focus:border-primary-500"
+                    >
+                      {batch.status === "mixed" && <option value="" disabled>Mixed — choose…</option>}
+                      {BOOKING_LIFECYCLE.map((s) => (
+                        <option key={s.key} value={s.key}>{s.label}</option>
+                      ))}
+                    </select>
+                    {busy === batch.key && <Loader2 size={12} className="animate-spin text-slate-400" />}
+                  </span>
+                ) : (
+                  <span className="text-xs font-semibold text-slate-700">
+                    {batch.status === "mixed" ? "Mixed" : stageLabel(batch.status)}
+                  </span>
+                )}
+                {onViewPicklist ? (
+                  <button
+                    type="button"
+                    onClick={() => onViewPicklist(batch)}
+                    className="inline-flex items-center gap-1 text-xs font-bold text-primary-700 hover:underline whitespace-nowrap"
+                  >
+                    <Receipt size={12} /> View picklist
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-slate-400 whitespace-nowrap">picklist after PO</span>
+                )}
+              </div>
+            </div>
+
+            {/* Which SKU and which indent each unit came from. */}
+            <div className="overflow-x-auto -mx-5 px-5">
+              <table className="w-full min-w-120 text-sm whitespace-nowrap">
+                <thead className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                  <tr className="border-b border-slate-100">
+                    <th className="py-1.5 pr-4 text-left">SKU</th>
+                    <th className="py-1.5 px-4 text-left">From indent</th>
+                    <th className="py-1.5 pl-4 text-right">Qty allocated</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {batch.entries.map(({ line, allocation }) => (
+                    <tr key={`${line.lineId || line.skuCode}:${allocation.seq}`}>
+                      <td className="py-2 pr-4 font-mono font-semibold text-slate-700">{line.skuCode}</td>
+                      <td className="py-2 px-4 text-slate-600">{allocation.indentNumber || "—"}</td>
+                      <td className="py-2 pl-4 text-right font-bold text-emerald-700">{allocation.quantity}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

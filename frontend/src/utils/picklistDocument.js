@@ -318,36 +318,43 @@ export const picklistFromCustomerOrder = (order) => {
 };
 
 /**
- * ONE INWARD ALLOCATION'S OWN PICK LIST.
+ * ONE INWARD ALLOCATION'S PICK LIST — every SKU booked in that batch.
  *
- * Stock that arrived later against a booking's indent is picked and dispatched
- * on its own, so it gets its own document: the same paper as the booking's,
- * built by the same adapter, holding just that allocation's quantity of that
- * line, and labelled with it. The open-indent section is left off — it
- * belongs to the booking's own document.
+ * Stock that arrived later against a booking's indents is allocated in batches
+ * (see utils/allocationBatches.js): everything covered in one run is one inward
+ * allocation, picked and dispatched together. Its document is the same paper as
+ * the booking's, built by the same adapter, holding each line's share of that
+ * batch — several indents of one SKU in the batch make one pick line — and
+ * labelled with the allocation's number. The open-indent section is left off;
+ * it belongs to the booking's own document.
+ *
+ * @param {object} batch  From allocationBatches(): { number, entries: [{ line, allocation }] }.
  */
-const asAllocationLine = (line, allocation) => ({
-  ...line,
-  confirmedQty: allocation.quantity,
-  orderQuantity: allocation.quantity,
-  pendingQty: 0,
-  allocations: undefined,
-  amount: undefined,
-});
-
-export const allocationPicklistFromSalesBooking = (booking, line, allocation, opts) => {
-  const doc = picklistFromSalesBooking(
-    { ...booking, lines: [asAllocationLine(line, allocation)], value: null },
-    opts,
-  );
-  return doc && { ...doc, allocationLabel: `Inward allocation ${allocation.seq}` };
+const batchLines = (batch) => {
+  const byLine = new Map();
+  for (const { line, allocation } of batch.entries) {
+    const key = line.lineId ?? line.id ?? line.skuCode;
+    if (!byLine.has(key)) byLine.set(key, { line, quantity: 0 });
+    byLine.get(key).quantity += allocation.quantity || 0;
+  }
+  return [...byLine.values()].map(({ line, quantity }) => ({
+    ...line,
+    confirmedQty: quantity,
+    orderQuantity: quantity,
+    pendingQty: 0,
+    allocations: undefined,
+    amount: undefined,
+  }));
 };
 
-export const allocationPicklistFromCustomerOrder = (order, line, allocation) => {
-  const doc = picklistFromCustomerOrder({
-    ...order, lineItems: [asAllocationLine(line, allocation)], items: [], value: null,
-  });
-  return doc && { ...doc, allocationLabel: `Inward allocation ${allocation.seq}` };
+export const allocationPicklistFromSalesBooking = (booking, batch, opts) => {
+  const doc = picklistFromSalesBooking({ ...booking, lines: batchLines(batch), value: null }, opts);
+  return doc && { ...doc, allocationLabel: `Inward allocation ${batch.number}` };
+};
+
+export const allocationPicklistFromCustomerOrder = (order, batch) => {
+  const doc = picklistFromCustomerOrder({ ...order, lineItems: batchLines(batch), items: [], value: null });
+  return doc && { ...doc, allocationLabel: `Inward allocation ${batch.number}` };
 };
 
 export default {

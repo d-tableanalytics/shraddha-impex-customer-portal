@@ -314,6 +314,18 @@ export const ordersApi = {
     return mapOrder(response.data.data);
   },
 
+  /**
+   * Move one inward allocation — everything allocated to the booking in one
+   * run, identified by its moment `at` — to another stage. Staff only.
+   */
+  updateAllocationBatchStatus: async (orderNumber, at, status) => {
+    const response = await api.put(
+      `/orders/booking/${encodeURIComponent(orderNumber)}/allocation-batches/status`,
+      { at, status },
+    );
+    return response.data;
+  },
+
   // A "booking" spans multiple underlying line-item Order documents that share
   // one orderId. This used to fire one request per line item, which moved the
   // rows correctly but sent the customer one email per SKU. One booking-level
@@ -323,15 +335,6 @@ export const ordersApi = {
   // Returns the server's verdict: `changed` is false when the booking was
   // already at that status (no email), and `notified` reports whether the
   // customer's email actually went.
-  /** Move one inward allocation to another stage. Staff only. */
-  updateAllocationStatus: async (orderNumber, lineId, seq, status) => {
-    const response = await api.put(
-      `/orders/booking/${encodeURIComponent(orderNumber)}/allocations/${lineId}/${seq}/status`,
-      { status },
-    );
-    return response.data;
-  },
-
   updateStatus: async (orderNumber, status, remarks) => {
     const response = await api.put(`/orders/booking/${orderNumber}/status`, { status, remarks });
     return response.data;

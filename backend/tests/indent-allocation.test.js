@@ -31,7 +31,7 @@ const { ProductKoken } = await import('../models/Product.js');
 const {
   processAvailableIndents, allocationModeFor,
 } = await import('../modules/inventory/indentAvailability.service.js');
-const { updateAllocationStatus } = await import('../modules/orders/order.controller.js');
+const { updateAllocationBatchStatus } = await import('../modules/orders/order.controller.js');
 
 before(async () => { await startTestMongo(); });
 after(async () => { await stopTestMongo(); });
@@ -252,41 +252,72 @@ describe('allocationModeFor', () => {
   });
 });
 
-describe('an allocation has its own status', () => {
+describe('one inward allocation per batch', () => {
+  test('indents of one booking covered in the same run share one allocation', async () => {
+    const customer = await customerFor();
+    const p1 = await product('SKU-X');
+    const p2 = await product('SKU-Y');
+    await line(customer, 'BO-2026-001100', 'SKU-X');
+    await line(customer, 'BO-2026-001100', 'SKU-Y', { lineSeq: 1 });
+    await openIndent(customer, p1, 20, 'PI-2026-001100');
+    await openIndent(customer, p2, 20, 'PI-2026-001100');
+
+    // Both SKUs arrive and are allocated in one pass.
+    for (const p of [p1, p2]) {
+      await ProductKoken.updateOne({ _id: p._id }, { $inc: { availableForSale: 4, totalAvailableQuantity: 4 } });
+      await StockBalance.create({ skuCode: p.skuCode, brand: 'Koken', location: new mongoose.Types.ObjectId(), locationCode: 'MAIN', onHand: 4, reserved: 0 });
+    }
+    await processAvailableIndents(['SKU-X', 'SKU-Y']);
+
+    const rows = await Order.find({ orderId: 'BO-2026-001100' }).lean();
+    const ats = rows.flatMap((r) => r.allocations.map((a) => a.at.getTime()));
+    assert.equal(ats.length, 2);
+    assert.equal(new Set(ats).size, 1, 'one batch: the same moment on both lines');
+    assert.equal(sent.filter((m) => m.to === customer.email).length, 1, 'one mail for the batch');
+  });
+});
+
+describe('an inward allocation has its own status', () => {
   const run = async (params, body) => {
     const res = { statusCode: null, payload: null };
     res.status = (c) => { res.statusCode = c; return res; };
     res.json = (b) => { res.payload = b; return res; };
     let err = null;
-    await updateAllocationStatus({ params, body, user: { _id: new mongoose.Types.ObjectId() } }, res, (e) => { err = e; });
+    await updateAllocationBatchStatus({ params, body, user: { _id: new mongoose.Types.ObjectId() } }, res, (e) => { err = e; });
     if (err) throw err;
     return res;
   };
+  const T1 = new Date('2026-10-12T06:00:00Z');
+  const T2 = new Date('2026-10-14T06:00:00Z');
 
-  test('moves one allocation without touching the line or the other allocation', async () => {
+  test('moves every entry of the batch, across lines, and nothing else', async () => {
     const customer = await customerFor();
-    const row = await line(customer, 'BO-2026-001025', 'SKU-1', {
+    await line(customer, 'BO-2026-001025', 'SKU-1', {
       status: 'Dispatched',
       allocations: [
-        { seq: 1, quantity: 10, at: new Date(), status: 'PO Received' },
-        { seq: 2, quantity: 5, at: new Date(), status: 'PO Received' },
+        { seq: 1, quantity: 10, at: T1, status: 'PO Received' },
+        { seq: 2, quantity: 5, at: T2, status: 'PO Received' },
       ],
     });
+    await line(customer, 'BO-2026-001025', 'SKU-2', {
+      lineSeq: 1,
+      allocations: [{ seq: 1, quantity: 3, at: T1, status: 'PO Received' }],
+    });
 
-    const res = await run({ orderId: 'BO-2026-001025', lineId: String(row._id), seq: '1' }, { status: 'Ready for Dispatch' });
+    const res = await run({ orderId: 'BO-2026-001025' }, { at: T1.toISOString(), status: 'Ready for Dispatch' });
     assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.data.lines, 2);
 
-    const after = await Order.findById(row._id).lean();
-    assert.equal(after.status, 'Dispatched');
-    assert.deepEqual(after.allocations.map((a) => a.status), ['Ready for Dispatch', 'PO Received']);
+    const rows = await Order.find({ orderId: 'BO-2026-001025' }).sort({ lineSeq: 1 }).lean();
+    assert.equal(rows[0].status, 'Dispatched', 'the line itself is untouched');
+    assert.deepEqual(rows[0].allocations.map((a) => a.status), ['Ready for Dispatch', 'PO Received']);
+    assert.deepEqual(rows[1].allocations.map((a) => a.status), ['Ready for Dispatch']);
   });
 
-  test('rejects an unknown status and an unknown allocation', async () => {
+  test('rejects an unknown status and an unknown batch', async () => {
     const customer = await customerFor();
-    const row = await line(customer, 'BO-2026-001026', 'SKU-1', {
-      allocations: [{ seq: 1, quantity: 10, at: new Date() }],
-    });
-    assert.equal((await run({ orderId: 'BO-2026-001026', lineId: String(row._id), seq: '1' }, { status: 'Lost' })).statusCode, 400);
-    assert.equal((await run({ orderId: 'BO-2026-001026', lineId: String(row._id), seq: '9' }, { status: 'Dispatched' })).statusCode, 404);
+    await line(customer, 'BO-2026-001026', 'SKU-1', { allocations: [{ seq: 1, quantity: 10, at: T1 }] });
+    assert.equal((await run({ orderId: 'BO-2026-001026' }, { at: T1.toISOString(), status: 'Lost' })).statusCode, 400);
+    assert.equal((await run({ orderId: 'BO-2026-001026' }, { at: T2.toISOString(), status: 'Dispatched' })).statusCode, 404);
   });
 });

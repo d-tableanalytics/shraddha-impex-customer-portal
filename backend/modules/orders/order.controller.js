@@ -789,6 +789,63 @@ export const cancelBooking = async (req, res, next) => {
 };
 
 /**
+ * PUT /api/v1/orders/booking/:orderId/allocation-batches/status
+ * Body: { at, status }
+ *
+ * Move one INWARD ALLOCATION through its stages (PO Received → Ready for
+ * Dispatch → Dispatched → Delivered).
+ *
+ * An inward allocation is everything allocated to this booking in one run —
+ * all the indents and SKUs booked together when stock arrived — and it is
+ * picked and dispatched as one, with one pick list. Its entries sit on the
+ * lines they belong to and share the moment they were allocated (`at`), which
+ * is what identifies the batch. Every entry of it moves together; the lines'
+ * own statuses do not move.
+ *
+ * Staff only, behind the same permission as the booking's own status.
+ */
+export const updateAllocationBatchStatus = async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body || {};
+    const at = new Date(req.body?.at);
+    if (stageIndex(status) < 0) {
+      return res.status(400).json({ success: false, message: `Unknown status: ${status}` });
+    }
+    if (Number.isNaN(at.getTime())) {
+      return res.status(404).json({ success: false, message: 'Allocation not found.' });
+    }
+
+    const now = new Date();
+    const result = await Order.updateMany(
+      { orderId, status: { $ne: 'Cancelled' }, 'allocations.at': at },
+      {
+        $set: {
+          'allocations.$[batch].status': status,
+          'allocations.$[batch].statusAt': now,
+          'allocations.$[batch].statusBy': req.user._id,
+        },
+      },
+      { arrayFilters: [{ 'batch.at': at, 'batch.status': { $ne: 'Cancelled' } }] },
+    );
+    if (!result.matchedCount) {
+      return res.status(404).json({ success: false, message: 'Allocation not found.' });
+    }
+
+    await recordAudit(
+      req.user,
+      'Allocation Status Updated',
+      `${orderId} inward allocation of ${at.toISOString()} (${result.modifiedCount} line(s)) → ${status}.`,
+      req,
+      { meta: { orderId, at, status, lines: result.modifiedCount } },
+    );
+    res.status(200).json({ success: true, data: { at, status, lines: result.modifiedCount } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * PUT /orders/booking/:orderId/schedule
  *
  * Set or clear the expected availability date on individual SKU lines of a
@@ -814,59 +871,6 @@ export const cancelBooking = async (req, res, next) => {
  * inbound delivery sets several dates in one sitting, and that is ONE decision
  * and therefore one email.
  */
-/**
- * PUT /api/v1/orders/booking/:orderId/allocations/:lineId/:seq/status
- * Body: { status }
- *
- * Move one INWARD ALLOCATION through its own stages (PO Received → Ready for
- * Dispatch → Dispatched → Delivered). An allocation is stock that arrived
- * after the booking and is picked and dispatched on its own, so it does not
- * follow the line's status, and the line's status does not follow it.
- *
- * Staff only, behind the same permission as the booking's own status.
- */
-export const updateAllocationStatus = async (req, res, next) => {
-  try {
-    const { orderId, lineId } = req.params;
-    const seq = Number(req.params.seq);
-    const { status } = req.body || {};
-    if (stageIndex(status) < 0) {
-      return res.status(400).json({ success: false, message: `Unknown status: ${status}` });
-    }
-    if (!mongoose.isValidObjectId(lineId) || !Number.isInteger(seq)) {
-      return res.status(404).json({ success: false, message: 'Allocation not found.' });
-    }
-
-    const now = new Date();
-    const updated = await Order.findOneAndUpdate(
-      { _id: lineId, orderId, status: { $ne: 'Cancelled' }, 'allocations.seq': seq },
-      {
-        $set: {
-          'allocations.$.status': status,
-          'allocations.$.statusAt': now,
-          'allocations.$.statusBy': req.user._id,
-        },
-      },
-      { new: true },
-    );
-    if (!updated) {
-      return res.status(404).json({ success: false, message: 'Allocation not found.' });
-    }
-
-    const allocation = updated.allocations.find((a) => a.seq === seq);
-    await recordAudit(
-      req.user,
-      'Allocation Status Updated',
-      `${orderId} ${updated.skuCode} inward allocation ${seq} (${allocation.quantity}) → ${status}.`,
-      req,
-      { meta: { orderId, lineId, seq, status } },
-    );
-    res.status(200).json({ success: true, data: allocation });
-  } catch (error) {
-    next(error);
-  }
-};
-
 export const scheduleBooking = async (req, res, next) => {
   try {
     const orderId = req.params.orderId;

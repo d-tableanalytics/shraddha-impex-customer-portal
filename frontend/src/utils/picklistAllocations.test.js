@@ -6,6 +6,7 @@ import {
   allocationPicklistFromSalesBooking,
   allocationPicklistFromCustomerOrder,
 } from "./picklistDocument";
+import { allocationBatches } from "./allocationBatches";
 
 /**
  * Pick lists when indent stock arrived later.
@@ -47,25 +48,39 @@ describe("the booking's own pick list", () => {
   });
 });
 
-describe("an allocation's own pick list", () => {
-  test("sales desk copy: that allocation only, labelled, no indent section", () => {
-    const doc = allocationPicklistFromSalesBooking(salesBooking, line, line.allocations[0]);
+describe("an inward allocation's pick list — every SKU booked in that batch", () => {
+  // Batch 1 (12 Oct): 10 of 183H.35-8 and the 4 of SKU-B. Batch 2 (14 Oct): 5 of 183H.35-8.
+  const [batch1, batch2] = allocationBatches([line, onlyAllocated]);
+
+  test("sales desk copy: one document for the batch, every SKU in it, no indent section", () => {
+    const doc = allocationPicklistFromSalesBooking(salesBooking, batch1);
     expect(doc.allocationLabel).toBe("Inward allocation 1");
     expect(doc.orderId).toBe("BO-2026-001025");
     expect(doc.poNumber).toBe("PO-1");
-    expect(doc.lines.map((l) => [l.skuCode, l.quantity, l.amount, l.pendingQty])).toEqual([["183H.35-8", 10, 1000, 0]]);
+    expect(doc.lines.map((l) => [l.skuCode, l.quantity, l.amount, l.pendingQty])).toEqual([
+      ["183H.35-8", 10, 1000, 0],
+      ["SKU-B", 4, 200, 0],
+    ]);
     expect(doc.totals.indent).toBeNull();
   });
 
-  test("customer copy: allocation 2", () => {
-    const doc = allocationPicklistFromCustomerOrder(customerOrder, line, line.allocations[1]);
+  test("customer copy: a later batch is its own document", () => {
+    const doc = allocationPicklistFromCustomerOrder(customerOrder, batch2);
     expect(doc.allocationLabel).toBe("Inward allocation 2");
     expect(doc.lines.map((l) => [l.skuCode, l.quantity])).toEqual([["183H.35-8", 5]]);
   });
 
-  test("a line that exists only for its allocation still gets one", () => {
-    const doc = allocationPicklistFromSalesBooking(salesBooking, onlyAllocated, onlyAllocated.allocations[0]);
-    expect(doc.lines.map((l) => [l.skuCode, l.quantity])).toEqual([["SKU-B", 4]]);
+  test("two indents of one SKU in a batch make one pick line", () => {
+    const twice = {
+      ...line,
+      allocations: [
+        { seq: 1, quantity: 10, indentNumber: "PI-A", at: "2026-10-12T00:00:00Z" },
+        { seq: 2, quantity: 6, indentNumber: "PI-B", at: "2026-10-12T00:00:00Z" },
+      ],
+    };
+    const [batch] = allocationBatches([twice]);
+    const doc = allocationPicklistFromSalesBooking({ ...salesBooking, lines: [twice] }, batch);
+    expect(doc.lines.map((l) => [l.skuCode, l.quantity])).toEqual([["183H.35-8", 16]]);
   });
 });
 

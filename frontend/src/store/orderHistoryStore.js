@@ -256,9 +256,9 @@ export const useOrderHistoryStore = create((set, get) => ({
    * silently throw away the admin's filters every time they saved a date.
    */
   // One inward allocation's own stage, then the drawer re-reads the booking.
-  updateAllocationStatus: async (orderNumber, lineId, seq, status) => {
+  updateAllocationBatchStatus: async (orderNumber, at, status) => {
     try {
-      await ordersApi.updateAllocationStatus(orderNumber, lineId, seq, status);
+      await ordersApi.updateAllocationBatchStatus(orderNumber, at, status);
       await get().refreshSelected(orderNumber);
       return { success: true };
     } catch (err) {

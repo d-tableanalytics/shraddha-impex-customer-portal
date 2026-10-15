@@ -52,9 +52,9 @@ export const useSalesStore = create((set, get) => ({
   },
 
   // One inward allocation's own stage, then the drawer re-reads the booking.
-  updateAllocationStatus: async (orderId, lineId, seq, status) => {
+  updateAllocationBatchStatus: async (orderId, at, status) => {
     try {
-      await ordersApi.updateAllocationStatus(orderId, lineId, seq, status);
+      await ordersApi.updateAllocationBatchStatus(orderId, at, status);
       await get().reloadSelected();
       return { success: true };
     } catch (err) {

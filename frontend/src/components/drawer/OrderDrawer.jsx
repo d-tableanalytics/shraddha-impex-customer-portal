@@ -66,7 +66,7 @@ export const OrderDrawer = () => {
     quantityHistoryLoading,
     fetchQuantityHistory,
     refreshSelected,
-    updateAllocationStatus,
+    updateAllocationBatchStatus,
   } = useOrderHistoryStore();
   const { user } = useUserStore();
   const { pendingItems, fetchPendingReservations } = useCartStore();
@@ -789,15 +789,15 @@ export const OrderDrawer = () => {
                 <AllocationsSection
                   lines={(selectedOrder.lineItems || []).map((l) => ({ ...l, lineId: l.id }))}
                   onStatusChange={hasPermission(user, PERMISSIONS.MANAGE_ORDERS)
-                    ? async (lineId, seq, status) => {
-                      const res = await updateAllocationStatus(selectedOrder.orderNumber, lineId, seq, status);
-                      if (res.success) toast.success(`Inward allocation ${seq} moved to ${stageLabel(status)}.`);
+                    ? async (batch, status) => {
+                      const res = await updateAllocationBatchStatus(selectedOrder.orderNumber, batch.at, status);
+                      if (res.success) toast.success(`Inward allocation ${batch.number} moved to ${stageLabel(status)}.`);
                       else toast.error(res.error);
                       return res;
                     }
                     : undefined}
                   onViewPicklist={picklistFromCustomerOrder(selectedOrder)
-                    ? (line, a) => setAllocationDoc(allocationPicklistFromCustomerOrder(selectedOrder, line, a))
+                    ? (batch) => setAllocationDoc(allocationPicklistFromCustomerOrder(selectedOrder, batch))
                     : undefined}
                 />
 

@@ -63,7 +63,7 @@ const toDraft = (booking) =>
 export const SalesBookingDrawer = () => {
   const {
     selected, close, saveItems, raisePo, setPricing, reorderLines, saving, reloadSelected,
-    updateAllocationStatus,
+    updateAllocationBatchStatus,
   } = useSalesStore();
   const { user } = useUserStore();
 
@@ -1173,15 +1173,15 @@ export const SalesBookingDrawer = () => {
             <AllocationsSection
               lines={(selected.lines || []).map((l) => ({ ...l, lineId: l.id }))}
               onStatusChange={hasPermission(user, PERMISSIONS.MANAGE_ORDERS)
-                ? async (lineId, seq, status) => {
-                  const res = await updateAllocationStatus(selected.orderId, lineId, seq, status);
-                  if (res.success) toast.success(`Inward allocation ${seq} moved to ${stageLabel(status)}.`);
+                ? async (batch, status) => {
+                  const res = await updateAllocationBatchStatus(selected.orderId, batch.at, status);
+                  if (res.success) toast.success(`Inward allocation ${batch.number} moved to ${stageLabel(status)}.`);
                   else toast.error(res.error);
                   return res;
                 }
                 : undefined}
-              onViewPicklist={(line, a) => setAllocationDoc(
-                allocationPicklistFromSalesBooking(selected, line, a, { showBoxNo }),
+              onViewPicklist={(batch) => setAllocationDoc(
+                allocationPicklistFromSalesBooking(selected, batch, { showBoxNo }),
               )}
             />
 
