@@ -26,8 +26,16 @@ export const PRICE_TYPES = [
 
 export const PRICE_TYPE_KEYS = PRICE_TYPES.map((t) => t.key);
 
+/**
+ * Rates typed in by the desk, line by line, when no tier is chosen. Not one of
+ * PRICE_TYPES — no product carries a "manual" price — just the marker the
+ * server puts on a hand-priced booking. Mirrors backend/config/pricing.js.
+ */
+export const MANUAL_PRICE_TYPE = "manual";
+
 export const labelForPriceType = (key) =>
-  PRICE_TYPES.find((t) => t.key === key)?.label ?? null;
+  PRICE_TYPES.find((t) => t.key === key)?.label
+  ?? (key === MANUAL_PRICE_TYPE ? "Manual" : null);
 
 /**
  * A number, or null.

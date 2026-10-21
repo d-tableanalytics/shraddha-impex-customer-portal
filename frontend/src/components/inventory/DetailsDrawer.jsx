@@ -206,7 +206,7 @@ export const DetailsDrawer = ({
               </div>
               {!isMsilUser && stockAvailable < moq && (
                 <span className="inline-block mt-1 text-[11px] font-semibold text-rose-600">
-                  Below MOQ ({moq})
+                  Below Multiple ({moq})
                 </span>
               )}
             </div>
@@ -318,7 +318,7 @@ export const DetailsDrawer = ({
 
             {!isMsilUser && (
               <div className="py-2 flex items-center justify-between">
-                <span className="text-slate-500 font-medium">Minimum Order Qty (MOQ)</span>
+                <span className="text-slate-500 font-medium">Multiple (order in multiples of)</span>
                 <span className="font-bold text-slate-900">{currentItem.moq || 1} {currentItem.unit || 'PCS'}</span>
               </div>
             )}

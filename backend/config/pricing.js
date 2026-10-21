@@ -57,8 +57,20 @@ export const PRICE_TYPE_ENUM = [...PRICE_TYPE_KEYS, null];
 
 const BY_KEY = new Map(PRICE_TYPES.map((t) => [t.key, t]));
 
+/**
+ * Rates typed in by the sales desk, line by line, instead of read from a tier.
+ *
+ * NOT one of PRICE_TYPES: there is no column for it in the pricelist and no
+ * product carries a "manual" price, so nothing that walks the tiers (the quote,
+ * the import, the selector cards) should ever see it. It is a marker on the
+ * order rows saying "these unit prices were entered by hand — keep them".
+ */
+export const MANUAL_PRICE_TYPE = 'manual';
+export const MANUAL_PRICE_LABEL = 'Manual';
+
 /** 'trader' -> 'Trader'. Unknown or absent -> null, never a raw key. */
-export const labelForPriceType = (key) => BY_KEY.get(key)?.label ?? null;
+export const labelForPriceType = (key) => BY_KEY.get(key)?.label
+  ?? (key === MANUAL_PRICE_TYPE ? MANUAL_PRICE_LABEL : null);
 
 /**
  * Accept what a caller might plausibly send and return a canonical key.
@@ -73,6 +85,7 @@ export const normalisePriceType = (raw) => {
   if (raw === null || raw === undefined) return null;
   const flat = String(raw).trim().toLowerCase().replace(/[\s_-]+/g, '');
   if (!flat) return null;
+  if (flat === MANUAL_PRICE_TYPE) return MANUAL_PRICE_TYPE;
   for (const type of PRICE_TYPES) {
     if (flat === type.key.toLowerCase()) return type.key;
     if (flat === type.label.toLowerCase().replace(/[\s_-]+/g, '')) return type.key;

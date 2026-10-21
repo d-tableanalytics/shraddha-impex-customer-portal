@@ -180,6 +180,16 @@ export const applyBookingStatus = async ({ orderId, status, remarks, actor = nul
   if (!status || !allowed.includes(status)) {
     return { ok: false, code: 400, message: `Invalid status. Allowed: ${allowed.join(', ')}` };
   }
+  // Cancelling is not a stage change: it releases the booking's stock and
+  // cancels its open indent, in one transaction (cancelBooking). Setting the
+  // status alone would leave both behind, so it is refused here.
+  if (status === 'Cancelled') {
+    return {
+      ok: false,
+      code: 400,
+      message: `Use "Cancel booking" to cancel — it also releases the stock and cancels the booking's indent.`,
+    };
+  }
 
   const rows = await Order.find({ orderId }).sort(LINE_ORDER);
   if (!rows.length) {

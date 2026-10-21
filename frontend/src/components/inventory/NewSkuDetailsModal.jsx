@@ -29,15 +29,18 @@ import { Button } from '../ui/Button';
  * a rejection is surfaced rather than swallowed.
  */
 
-/** The six, in the order the server lists them. */
+/**
+ * The six, in the order the server lists them. Only Brand and Available Stock
+ * are mandatory; the rest may be left blank (and are then not set).
+ */
 const FIELDS = [
   // A dropdown, not a text box: the brand decides which catalogue the SKU is
   // created in, and a typo would file a real part under a brand nobody looks at.
-  { field: 'brand', label: 'Brand', hint: 'Catalogue', type: 'brand' },
+  { field: 'brand', label: 'Brand', hint: 'Catalogue', type: 'brand', required: true },
   // Zero is a REAL answer here — a new part with none on the shelf yet — which
   // is why it carries min="0" while the three planning figures below do not.
-  { field: 'availableStock', label: 'Available Stock', placeholder: 'e.g. 25', hint: 'Units', type: 'number', step: '1', min: '0' },
-  { field: 'moq', label: 'MOQ', placeholder: 'e.g. 10', hint: 'Units', type: 'number', step: '1', min: '1' },
+  { field: 'availableStock', label: 'Available Stock', placeholder: 'e.g. 25', hint: 'Units', type: 'number', step: '1', min: '0', required: true },
+  { field: 'moq', label: 'Multiple', placeholder: 'e.g. 10', hint: 'Units', type: 'number', step: '1', min: '1' },
   // No `min` on the two decimals: the rule is "greater than zero", which a
   // min attribute cannot express, and min="0" would advertise a value the
   // validator below and the server both refuse.
@@ -53,9 +56,12 @@ const FIELDS = [
  * this prompt exists to stop being left behind, and any zero collapses the Max
  * Level to nothing. The same rule is enforced server-side.
  */
+const REQUIRED = new Set(FIELDS.filter((f) => f.required).map((f) => f.field));
+
 const problemWith = (field, raw) => {
   const value = String(raw ?? '').trim();
-  if (!value) return 'Required';
+  // Blank is fine for an optional field; a value, though, must be a valid one.
+  if (!value) return REQUIRED.has(field) ? 'Required' : null;
   // Free text — the server checks the brand against the real list and against
   // what this uploader may write to.
   if (field === 'boxNo' || field === 'brand') return null;
@@ -77,7 +83,8 @@ const problemWith = (field, raw) => {
 };
 
 /**
- * Is every field of one new SKU filled in and valid?
+ * Is one new SKU ready — its mandatory fields filled in, and anything else
+ * that was typed valid?
  *
  * Exported because the preview screen asks the same question to decide whether
  * the Import button may be enabled. One definition, so the button and this
@@ -145,7 +152,7 @@ export const NewSkuDetailsModal = ({
 
   const handleSave = async () => {
     if (ready.length === 0) {
-      toast.error('Fill in all four fields for at least one SKU.');
+      toast.error('Fill in Brand and Available Stock for at least one SKU.');
       return;
     }
 
@@ -180,13 +187,13 @@ export const NewSkuDetailsModal = ({
           <PackagePlus size={16} className="text-primary-600 shrink-0 mt-0.5" />
           <p className="text-xs text-primary-900 leading-relaxed">
             These SKUs are <strong>not in the Inventory Master yet</strong> and this file will
-            create them. Each one needs a <strong>Brand</strong>, its
-            <strong> Available Stock</strong>, and an <strong>MOQ</strong>,
+            create them. Each one needs a <strong>Brand</strong> and its
+            <strong> Available Stock</strong> before the import can run. <strong>Multiple</strong>,
             <strong> Lead Time</strong>, <strong>Safety Factor</strong> and
-            <strong> Box Number</strong> before the import can run — without them the SKU has no
-            reorder point and no picking location. Brand and stock are filled in already where the
-            upload form or the sheet supplied them. SKUs already in the master are unaffected and
-            import as usual.
+            <strong> Box Number</strong> are optional — fill them in now if you know them, or leave
+            them blank and set them later in the Inventory Master. Brand and stock are filled in
+            already where the upload form or the sheet supplied them. SKUs already in the master are
+            unaffected and import as usual.
           </p>
         </div>
 
@@ -200,7 +207,12 @@ export const NewSkuDetailsModal = ({
                     counts. */}
                 <th className="py-2 pr-3">SKU</th>
                 {FIELDS.map((f) => (
-                  <th key={f.field} className="py-2 pr-3 w-32">{f.label} *</th>
+                  <th key={f.field} className="py-2 pr-3 w-32">
+                    {f.label}
+                    {f.required
+                      ? <span className="text-error-600"> *</span>
+                      : <span className="block text-[9px] font-semibold normal-case tracking-normal text-slate-400">Optional</span>}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -288,8 +300,8 @@ export const NewSkuDetailsModal = ({
           <span>
             {outstanding === 0
               ? 'All new SKUs are complete. Save to continue with the import.'
-              : `${ready.length} of ${skus.length} complete. The import stays disabled until all `
-                + `${skus.length} are filled in — nothing you have saved is lost by closing this.`}
+              : `${ready.length} of ${skus.length} complete. The import stays disabled until every `
+                + 'SKU has its Brand and Available Stock — nothing you have saved is lost by closing this.'}
           </span>
         </div>
 

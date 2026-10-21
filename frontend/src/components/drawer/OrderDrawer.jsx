@@ -2,7 +2,6 @@ import {
   X,
   Printer,
   Download,
-  ArrowRight,
   User,
   Hash,
   Calendar as CalendarIcon,
@@ -39,19 +38,12 @@ import toast from "react-hot-toast";
 import { PicklistPreview } from "../pricing/PicklistPreview";
 import { picklistFromCustomerOrder, allocationPicklistFromCustomerOrder } from "../../utils/picklistDocument";
 import { AllocationsSection } from "./AllocationsSection";
-import {
-  BOOKING_LIFECYCLE,
-  TERMINAL_STATUSES,
-  normalizeStatus,
-  stageLabel,
-  nextStageOf,
-} from "../../constants/bookingLifecycle";
+import { stageLabel } from "../../constants/bookingLifecycle";
 
 export const OrderDrawer = () => {
   const {
     selectedOrder,
     setSelectedOrder,
-    updateOrderStatus,
     updateOrderPO,
     cancelBooking,
     timelines,
@@ -66,7 +58,6 @@ export const OrderDrawer = () => {
     quantityHistoryLoading,
     fetchQuantityHistory,
     refreshSelected,
-    updateAllocationBatchStatus,
   } = useOrderHistoryStore();
   const { user } = useUserStore();
   const { pendingItems, fetchPendingReservations, ensurePendingReservations } = useCartStore();
@@ -157,16 +148,9 @@ export const OrderDrawer = () => {
     !['-', ''].includes(String(selectedOrder.poNumber).trim()),
   );
 
-  // Cancellable while the stock is still only reserved and no PO commits it.
-  // Once the PO is raised those units have left inventory against a commitment,
-  // so returning them is a conversation, not a button. The server enforces all
-  // of this too — this only decides whether to offer the action.
-  const canCancel = Boolean(
-    selectedOrder &&
-    selectedOrder.status !== "Cancelled" &&
-    !poRaised &&
-    (selectedOrder.hasReservedStock ?? true),
-  );
+  // Cancellable at any stage, PO or not (decided 2026-10-19): the server puts
+  // every unit back into stock and closes the booking's open indent.
+  const canCancel = Boolean(selectedOrder && selectedOrder.status !== "Cancelled");
 
   // Who may amend quantities here, and when. Staff follow the desk rules;
   // the customer may revise their own booking until the PO is raised. The
@@ -259,38 +243,6 @@ export const OrderDrawer = () => {
       fetchPendingReservations();
     } else {
       toast.error(res.error || "The booking could not be cancelled.");
-    }
-  };
-
-  const applyStatus = async (newStatus) => {
-    if (busy || normalizeStatus(newStatus) === normalizeStatus(selectedOrder.status)) return;
-    setBusy(true);
-    const res = await updateOrderStatus(selectedOrder, newStatus);
-    setBusy(false);
-
-    if (!res.success) {
-      toast.error(res.error || "Failed to update status");
-      return;
-    }
-    if (!res.changed) {
-      // The server refused to re-announce a status the booking already held.
-      toast(res.message || "The booking was already at this status.");
-      return;
-    }
-
-    // The status moved either way — but an admin who is not told the email
-    // failed will assume the customer knows, which is the whole point of
-    // reporting delivery here rather than only in a log.
-    if (res.notified === "sent") {
-      toast.success(`Moved to ${stageLabel(newStatus)} — the customer has been emailed.`);
-    } else if (res.notified === "failed" || res.notified === "skipped") {
-      toast.error(
-        `Moved to ${stageLabel(newStatus)}, but the customer was NOT emailed — ` +
-          `${res.notifyError || "see the timeline"}. You can resend it from the timeline.`,
-        { duration: 8000 },
-      );
-    } else {
-      toast.success(`Moved to ${stageLabel(newStatus)}`);
     }
   };
 
@@ -794,14 +746,7 @@ export const OrderDrawer = () => {
                     receipt with its own status and pick list. */}
                 <AllocationsSection
                   lines={(selectedOrder.lineItems || []).map((l) => ({ ...l, lineId: l.id }))}
-                  onStatusChange={hasPermission(user, PERMISSIONS.MANAGE_ORDERS)
-                    ? async (batch, status) => {
-                      const res = await updateAllocationBatchStatus(selectedOrder.orderNumber, batch.at, status);
-                      if (res.success) toast.success(`Inward allocation ${batch.number} moved to ${stageLabel(status)}.`);
-                      else toast.error(res.error);
-                      return res;
-                    }
-                    : undefined}
+                  // Allocation stages are moved on the Sales Desk; here they are only shown.
                   onViewPicklist={picklistFromCustomerOrder(selectedOrder)
                     ? (batch) => setAllocationDoc(allocationPicklistFromCustomerOrder(selectedOrder, batch))
                     : undefined}
@@ -916,52 +861,19 @@ export const OrderDrawer = () => {
             </div>
           </div>
 
-          {/* Footer Actions — advance through the booking lifecycle.
-              Every change from here emails the customer, so both controls go
-              through the same applyStatus() and the same one-request-per-
-              booking path. The dropdown exists because the next-stage button
-              alone gives an admin no way to correct a stage set by mistake. */}
+          {/* Footer — the booking's stage, shown. It is moved on the Sales
+              Desk (BookingStatusControl), not here. */}
           <div className="px-6 py-4 bg-white border-t border-slate-200 flex items-center justify-between gap-4 shrink-0">
             <span className="text-xs text-slate-400 font-medium">
               Status:{" "}
               <span className="font-bold text-slate-600">{stageLabel(selectedOrder.status)}</span>
             </span>
 
-            {mayManageOrders && !TERMINAL_STATUSES.includes(selectedOrder.status) && (() => {
-              const next = nextStageOf(selectedOrder.status);
-              const current = normalizeStatus(selectedOrder.status);
-              return (
-                <div className="flex items-center gap-2">
-                  <label className="sr-only" htmlFor="booking-stage">Set booking status</label>
-                  <select
-                    id="booking-stage"
-                    value={current}
-                    disabled={busy}
-                    onChange={(e) => applyStatus(e.target.value)}
-                    className="text-xs font-semibold text-slate-700 border border-slate-300 rounded-lg
-                               px-2.5 py-2 outline-none focus:ring-1 focus:ring-primary-500
-                               disabled:opacity-50 disabled:cursor-not-allowed bg-white"
-                  >
-                    {BOOKING_LIFECYCLE.map((stage) => (
-                      <option key={stage.key} value={stage.key}>
-                        {stage.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  {next ? (
-                    <ERPButton variant="primary" disabled={busy} onClick={() => applyStatus(next)}>
-                      {busy ? "Updating..." : `Move to ${stageLabel(next)}`}
-                      <ArrowRight size={16} className="ml-2" />
-                    </ERPButton>
-                  ) : (
-                    <span className="text-xs font-bold text-emerald-600">
-                      Delivered — lifecycle complete
-                    </span>
-                  )}
-                </div>
-              );
-            })()}
+            {/* Booking status is managed on the Sales Desk (decided 2026-10-19);
+                here it is only shown. */}
+            {mayManageOrders && (
+              <span className="text-[11px] text-slate-400">Status is updated from the Sales Desk.</span>
+            )}
           </div>
 
           {/* Cancellation confirmation. Releasing stock is not undoable from
@@ -1087,8 +999,10 @@ export const OrderDrawer = () => {
                     {selectedOrder.totalQuantity} unit
                     {selectedOrder.totalQuantity === 1 ? "" : "s"} across{" "}
                     {lineItems.length} item{lineItems.length === 1 ? "" : "s"} will be
-                    released back into available stock, where anyone can book them.
-                    To order these again you would need to place a fresh booking.
+                    released back into available stock, where anyone can book them
+                    {poRaised ? " — the PO has been raised, so they are taken back into inventory" : ""}
+                    . Any items still waiting on this booking's indent are cancelled too. To order
+                    these again you would need to place a fresh booking.
                   </p>
 
                   <label className="flex flex-col gap-1">

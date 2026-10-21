@@ -428,8 +428,8 @@ export const InventoryImport = () => {
                     {unansweredNewSkus.length > 0 ? (
                       <>
                         <strong>{nf(unansweredNewSkus.length)} new SKU(s)</strong> in this file are not
-                        in the Inventory Master yet and need an MOQ, Lead Time, Safety Factor and Box
-                        Number before the import can run.
+                        in the Inventory Master yet and need a Brand and Available Stock before the
+                        import can run (Multiple, Lead Time, Safety Factor and Box Number are optional).
                       </>
                     ) : (
                       <>
@@ -480,7 +480,7 @@ export const InventoryImport = () => {
                     onClick={handleConfirm}
                     disabled={confirming || job.validRows === 0 || unansweredNewSkus.length > 0}
                     title={unansweredNewSkus.length > 0
-                      ? `${unansweredNewSkus.length} new SKU(s) still need MOQ, Lead Time, Safety Factor and Box Number.`
+                      ? `${unansweredNewSkus.length} new SKU(s) still need a Brand and Available Stock.`
                       : undefined}
                   >
                     {confirming ? <Loader2 size={15} className="mr-2 animate-spin" /> : <PlayCircle size={15} className="mr-2" />}
@@ -598,9 +598,9 @@ export const InventoryImport = () => {
                 <p className="text-xs text-warning-900 flex-1 min-w-48 leading-relaxed">
                   <strong>{nf(outstandingMoq.length)} new SKU(s)</strong> were created by this
                   import and still have no minimum order quantity. The stock is imported — only
-                  the MOQ is outstanding.
+                  the Multiple is outstanding.
                 </p>
-                <Button size="sm" onClick={() => setMoqOpen(true)}>Set MOQ</Button>
+                <Button size="sm" onClick={() => setMoqOpen(true)}>Set Multiple</Button>
               </div>
             )}
 

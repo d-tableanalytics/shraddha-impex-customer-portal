@@ -254,7 +254,7 @@ const DetailPanel = ({
                 {SEASONS.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-            <Input label="MOQ" type="number" min="0" value={form.moq} onChange={set('moq')} disabled={!canEdit} />
+            <Input label="Multiple" type="number" min="0" value={form.moq} onChange={set('moq')} disabled={!canEdit} />
 
             <Input
               label="Daily Avg (Low)" type="number" min="0" step="0.0001"

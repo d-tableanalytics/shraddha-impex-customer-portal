@@ -61,15 +61,28 @@ export const effectiveMoq = (user, product) => {
   return moq > 1 ? moq : 0;
 };
 
-/** @returns {string|null} the error message, or null when the quantity is fine. */
+/**
+ * The quantity must be a MULTIPLE of the product's Multiple (stored as `moq`).
+ * Mirrors backend/utils/moq.js, which is what the server enforces.
+ *
+ * @returns {string|null} the error message, or null when the quantity is fine.
+ */
 export const moqError = (user, product, quantity) => {
-  const moq = effectiveMoq(user, product);
-  if (moq === 0) return null;
-  if (Number(quantity) >= moq) return null;
-  return `Quantity must be at least the MOQ (${moq})`;
+  const multiple = effectiveMoq(user, product);
+  if (multiple === 0) return null;
+  const q = Number(quantity);
+  if (Number.isInteger(q) && q > 0 && q % multiple === 0) return null;
+  return `Quantity must be a multiple of ${multiple} (e.g. ${multiple}, ${multiple * 2}, ${multiple * 3}).`;
+};
+
+/** Is `quantity` allowed under a Multiple? (0 or 1 restricts nothing.) */
+export const isMultipleOf = (quantity, multiple) => {
+  const q = Number(quantity);
+  const m = Number(multiple) || 0;
+  return Number.isInteger(q) && q > 0 && (m <= 1 || q % m === 0);
 };
 
 export default {
   isMsilCustomer, isCompanyUser, COMPANY_EMAIL_DOMAIN,
-  moqAppliesTo, effectiveMoq, moqError,
+  moqAppliesTo, effectiveMoq, moqError, isMultipleOf,
 };

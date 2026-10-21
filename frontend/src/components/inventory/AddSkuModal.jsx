@@ -91,7 +91,7 @@ export const AddSkuModal = ({ brands = [], canSetBoxNo = false, onClose, onCreat
     if (!form.brand) list.push('Choose a brand.');
     if (taken) list.push('That SKU code already exists.');
     if (msilTaken) list.push('That MSIL code already belongs to another SKU.');
-    for (const [key, label] of [['leadTime', 'Lead time'], ['safetyFactor', 'Safety factor'], ['moq', 'MOQ']]) {
+    for (const [key, label] of [['leadTime', 'Lead time'], ['safetyFactor', 'Safety factor'], ['moq', 'Multiple']]) {
       const raw = String(form[key] ?? '').trim();
       if (raw === '') continue;
       const n = Number(raw);
@@ -259,7 +259,7 @@ export const AddSkuModal = ({ brands = [], canSetBoxNo = false, onClose, onCreat
           <Field label="Safety factor">
             <input type="number" min="0" step="any" value={form.safetyFactor} onChange={set('safetyFactor')} className={inputCls} />
           </Field>
-          <Field label="MOQ" hint="Units">
+          <Field label="Multiple" hint="Order in multiples of">
             <input type="number" min="0" step="1" value={form.moq} onChange={set('moq')} className={inputCls} />
           </Field>
           {canSetBoxNo && (

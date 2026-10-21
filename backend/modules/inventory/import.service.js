@@ -1537,7 +1537,7 @@ export const setImportMoq = async ({ jobId, entries, actor, req }) => {
     if (!queued) {
       // Not one of ours. Refused rather than applied, so this endpoint can
       // never become a back door onto an established SKU's MOQ.
-      errors.push(`${skuCode} was not created by this import, so its MOQ cannot be set here.`);
+      errors.push(`${skuCode} was not created by this import, so its Multiple cannot be set here.`);
       continue;
     }
 
@@ -1546,7 +1546,7 @@ export const setImportMoq = async ({ jobId, entries, actor, req }) => {
     // trying not to leave behind.
     const moq = Number(raw.moq);
     if (!Number.isFinite(moq) || !Number.isInteger(moq) || moq < 1) {
-      errors.push(`${skuCode}: MOQ must be a whole number of 1 or more.`);
+      errors.push(`${skuCode}: Multiple must be a whole number of 1 or more.`);
       continue;
     }
 
@@ -1577,7 +1577,7 @@ export const setImportMoq = async ({ jobId, entries, actor, req }) => {
     await recordAudit(
       actor,
       'Inventory Planning Updated',
-      `MOQ set for ${applied.length} SKU(s) created by import ${jobId}: `
+      `Multiple set for ${applied.length} SKU(s) created by import ${jobId}: `
       + applied.map((a) => `${a.skuCode}=${a.moq}`).join(', ') + '.',
       req,
       { meta: { jobId, applied } },
@@ -1686,7 +1686,7 @@ export const setNewSkuDetails = async ({ jobId, entries, actor, req }) => {
       actor,
       'Inventory Planning Updated',
       `Details set for ${applied.length} new SKU(s) on import ${jobId}: `
-      + applied.map((a) => `${a.skuCode} (MOQ ${a.moq}, lead ${a.leadTime}d, `
+      + applied.map((a) => `${a.skuCode} (Multiple ${a.moq}, lead ${a.leadTime}d, `
         + `safety ${a.safetyFactor}, box ${a.boxNo})`).join(', ') + '.',
       req,
       { meta: { jobId, applied } },
@@ -1728,8 +1728,8 @@ export const confirmJob = async ({ jobId, actor, req }) => {
   if (incomplete.length) {
     const named = incomplete.slice(0, 5).map((s) => s.skuCode).join(', ');
     fail(
-      `${incomplete.length} new SKU(s) in this file still need an MOQ, Lead Time, Safety Factor `
-      + `and Box Number: ${named}${incomplete.length > 5 ? ', …' : ''}. `
+      `${incomplete.length} new SKU(s) in this file still need a Brand and Available Stock: `
+      + `${named}${incomplete.length > 5 ? ', …' : ''}. `
       + 'Fill them in before importing.',
       400, 'NEW_SKU_DETAILS_REQUIRED',
     );

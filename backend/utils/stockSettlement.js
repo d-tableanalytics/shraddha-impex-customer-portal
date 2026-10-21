@@ -1,6 +1,6 @@
 import Order, { LINE_ORDER } from '../models/Order.js';
 import Reservation from '../models/Reservation.js';
-import { findProductBySku, releaseStock, consumeStock } from './stockLedger.js';
+import { findProductBySku, releaseStock, consumeStock, adjustConsumedQty } from './stockLedger.js';
 import { isPlaceholderPo } from './bookingLock.js';
 
 /**
@@ -54,6 +54,28 @@ export const indentsReleased = (rows) => rows.flatMap((row) => (row.allocations 
   quantity: a.quantity,
 })));
 
+/**
+ * Cancel the booking's open indent (PI-x for BO-x). An indent holds no stock,
+ * so this releases nothing; it stops the remainder of a cancelled booking from
+ * being assigned stock — or bought for — later.
+ *
+ * @returns {Promise<object[]>} the indent lines it cancelled.
+ */
+export const closeBookingIndent = async ({ orderId, reason, session = null, at = new Date() }) => {
+  const opts = session ? { session } : {};
+  const indentNumber = orderId.replace(/^[A-Z]+-/, 'PI-');
+  const open = { indentNumber, status: { $in: ['Pending', 'Partially Confirmed'] } };
+  const lines = await Reservation.find(open, 'reservationId indentNumber skuCode quantity', opts).lean();
+  if (lines.length) {
+    await Reservation.updateMany(
+      open,
+      { $set: { status: 'Cancelled', cancelledAt: at, cancellationReason: reason } },
+      opts,
+    );
+  }
+  return lines;
+};
+
 /** No PO on the line — the placeholders '-' and '' count as none. */
 export const hasPo = (row) => Boolean(row?.poGeneratedAt) || !isPlaceholderPo(row?.poNumber);
 
@@ -69,6 +91,10 @@ export const hasPo = (row) => Boolean(row?.poGeneratedAt) || !isPlaceholderPo(ro
  * @param {(rows) => string|null} [args.precheck]  Booking-level condition on the
  *        freshly read lines; a non-null answer settles nothing and is returned
  *        as `blocked` (e.g. "a PO was raised in the meantime").
+ * @param {boolean}  [args.includeConsumed]  Release only: also take back lines
+ *        whose PO already consumed their stock — a cancellation after the PO
+ *        (allowed at any stage, decided 2026-10-19). Their units go back into
+ *        inventory: available and total both rise again.
  * @param {string}   [args.closeIndent]  Release only: also close the booking's
  *        open indent (PI-x for BO-x), with this as the reason — a cancelled or
  *        expired booking's remainder must not be booked later for a customer
@@ -79,7 +105,7 @@ export const hasPo = (row) => Boolean(row?.poGeneratedAt) || !isPlaceholderPo(ro
  */
 export const settleBooking = async ({
   orderId, action, session, eligible = () => true, set = () => ({}), ctx = {}, precheck = () => null,
-  closeIndent = null,
+  closeIndent = null, includeConsumed = false,
 }) => {
   const opts = session ? { session } : {};
   const rows = await Order.find({ orderId }, null, opts).sort(LINE_ORDER).lean();
@@ -91,13 +117,18 @@ export const settleBooking = async ({
 
   for (const row of rows) {
     if (row.status === 'Cancelled') continue;
-    if (!['reserved', null, undefined].includes(row.stockState)) continue;
+    const wasConsumed = row.stockState === 'consumed';
+    const movable = ['reserved', null, undefined].includes(row.stockState)
+      || (wasConsumed && includeConsumed && action === 'release');
+    if (!movable) continue;
     if (!eligible(row)) continue;
 
     // Claim the line first. Conditional on it still being reserved, so a line
     // settled by someone else in the meantime is left alone.
     const claimed = await Order.updateOne(
-      { _id: row._id, ...RESERVED, status: { $ne: 'Cancelled' } },
+      // Conditional on the state it was read in, so a line settled by someone
+      // else in the meantime is left alone.
+      { _id: row._id, ...(wasConsumed ? { stockState: 'consumed' } : RESERVED), status: { $ne: 'Cancelled' } },
       {
         $set: {
           stockState: action === 'release' ? 'released' : 'consumed',
@@ -112,9 +143,12 @@ export const settleBooking = async ({
     const qty = row.confirmedQty || 0;
     const product = await findProductBySku(row.skuCode, session);
     if (product && qty > 0) {
-      const ok = action === 'release'
-        ? await releaseStock(product, qty, session, ctx)
-        : await consumeStock(product, qty, session, ctx);
+      const ok = action !== 'release'
+        ? await consumeStock(product, qty, session, ctx)
+        : wasConsumed
+          // The PO had taken these units out of inventory; put them back.
+          ? (await adjustConsumedQty(product, qty, 0, session, ctx)).ok
+          : await releaseStock(product, qty, session, ctx);
       if (!ok) throw new Error(`Stock for ${row.skuCode} could not be ${action}d on ${orderId}.`);
     }
     settled.push(row);
@@ -125,19 +159,10 @@ export const settleBooking = async ({
   // just stops it from being assigned stock later.
   let indentsClosed = [];
   if (closeIndent && action === 'release' && settled.length) {
-    const indentNumber = orderId.replace(/^[A-Z]+-/, 'PI-');
-    const open = { indentNumber, status: { $in: ['Pending', 'Partially Confirmed'] } };
-    indentsClosed = await Reservation.find(open, 'reservationId indentNumber skuCode quantity', opts).lean();
-    if (indentsClosed.length) {
-      await Reservation.updateMany(
-        open,
-        { $set: { status: 'Cancelled', cancelledAt: now, cancellationReason: closeIndent } },
-        opts,
-      );
-    }
+    indentsClosed = await closeBookingIndent({ orderId, reason: closeIndent, session, at: now });
   }
 
   return { rows, settled, blocked: null, indentsClosed };
 };
 
-export default { settleBooking, RESERVED, hasPo, releasedAllocations, indentsReleased };
+export default { settleBooking, RESERVED, hasPo, releasedAllocations, indentsReleased, closeBookingIndent };

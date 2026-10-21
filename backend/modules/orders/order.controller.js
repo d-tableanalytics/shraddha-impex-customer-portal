@@ -20,7 +20,9 @@ import { findProductBySku, consumeStock, releaseStock } from '../../utils/stockL
 import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { runInTransaction } from '../../utils/transaction.js';
-import { settleBooking, releasedAllocations, indentsReleased } from '../../utils/stockSettlement.js';
+import {
+  settleBooking, releasedAllocations, indentsReleased, closeBookingIndent,
+} from '../../utils/stockSettlement.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
 import {
   applyBookingStatus,
@@ -603,7 +605,7 @@ export const updateOrderPO = async (req, res, next) => {
 /**
  * POST /api/v1/orders/:orderId/cancel
  *
- * Cancel a booking whose stock is still reserved, and hand the units back.
+ * Cancel a booking, at any stage, and put its units back into stock.
  *
  * This is the customer's own escape hatch for a booking they no longer want —
  * including one the system raised for them automatically when their indent came
@@ -617,9 +619,10 @@ export const updateOrderPO = async (req, res, next) => {
  * is what makes both idempotent: a line already consumed or released is skipped,
  * so this can never double-release.
  *
- * A booking whose PO has been raised is NOT cancellable here. Those units are
- * already consumed — gone from inventory against a commitment the customer
- * made — and "cancelling" would have to un-issue goods that may have shipped.
+ * CANCELLABLE AT ANY STAGE, PO OR NOT (decided 2026-10-19), by the customer
+ * who owns it or by staff. Lines still only reserved are released; lines whose
+ * PO already consumed their stock are taken back into inventory (available and
+ * total both rise). The booking's open indent is closed with it.
  */
 export const cancelBooking = async (req, res, next) => {
   try {
@@ -641,18 +644,17 @@ export const cancelBooking = async (req, res, next) => {
     }
 
     if (rows.every((r) => r.status === 'Cancelled')) {
+      // Cancelled before indents were cancelled with their booking: its indent
+      // may still be open. Close it now, so a cancelled booking never keeps one.
+      const closed = await closeBookingIndent({
+        orderId: orderNumber,
+        reason: `Booking ${orderNumber} was already cancelled; its indent is cancelled with it`,
+      });
       return res.status(409).json({
         success: false,
-        message: `Booking ${orderNumber} is already cancelled.`,
-      });
-    }
-
-    // Locked means the PO exists and the stock has left inventory.
-    if (isBookingLocked(rows)) {
-      return res.status(423).json({
-        success: false,
-        message: 'This booking cannot be cancelled because its PO has already been raised. '
-          + 'Please contact us to arrange a return or amendment.',
+        message: `Booking ${orderNumber} is already cancelled.`
+          + (closed.length ? ` Its indent (${closed.length} line(s)) has now been cancelled too.` : ''),
+        data: { indentsClosed: closed.map((i) => ({ skuCode: i.skuCode, indentNumber: i.indentNumber, quantity: i.quantity })) },
       });
     }
 
@@ -668,7 +670,8 @@ export const cancelBooking = async (req, res, next) => {
         orderId: orderNumber,
         action: 'release',
         session,
-        precheck: (fresh) => (isBookingLocked(fresh) ? 'locked' : null),
+        // A PO no longer stops a cancellation: consumed lines come back too.
+        includeConsumed: true,
         // Its open indent goes with it: a cancelled booking's remainder must not
         // be booked later for a customer who no longer wants it.
         closeIndent: `Booking ${orderNumber} cancelled by ${byName}${reason ? ` — ${reason}` : ''}`,
@@ -691,12 +694,8 @@ export const cancelBooking = async (req, res, next) => {
       { label: 'cancelBooking' },
     );
 
-    if (blocked === 'locked') {
-      return res.status(423).json({
-        success: false,
-        message: 'This booking cannot be cancelled because its PO has already been raised. '
-          + 'Please contact us to arrange a return or amendment.',
-      });
+    if (blocked) {
+      return res.status(404).json({ success: false, message: blocked });
     }
     if (settled.length === 0) {
       // Already cancelled, expired or settled — by this request's twin, the

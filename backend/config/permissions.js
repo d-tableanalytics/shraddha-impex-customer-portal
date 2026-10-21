@@ -413,6 +413,9 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_CUSTOMER_USERS,
     PERMISSIONS.EDIT_BOOKING_PRE_PO,
     PERMISSIONS.RAISE_PO,
+    // Booking status is moved on the Sales Desk (decided 2026-10-19), and with
+    // it the delivery schedule and cancelling on a customer's behalf.
+    PERMISSIONS.MANAGE_ORDERS,
     // Sales quotes the customer, so Sales sees the price schedule. Admin holds
     // it through the wildcard. No other built-in role does — a warehouse or
     // import user has no reason to know what anyone is charged — and a Super

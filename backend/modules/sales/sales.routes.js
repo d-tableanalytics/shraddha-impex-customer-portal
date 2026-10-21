@@ -2,7 +2,7 @@ import express from 'express';
 import {
   getBookings, getBookingDetail, updateBookingItems, raisePo,
   reorderBookingLines, updateBookingDetails,
-  getBookingPricing, setBookingPricing,
+  getBookingPricing, setBookingPricing, setBookingManualPricing,
 } from './sales.controller.js';
 import { protect } from '../../middlewares/auth.js';
 import { authorize } from '../../middlewares/rbac.js';
@@ -77,5 +77,6 @@ router.patch(
  */
 router.get('/bookings/:orderId/pricing', authorize(PERMISSIONS.VIEW_PRICING), getBookingPricing);
 router.put('/bookings/:orderId/pricing', authorize(PERMISSIONS.VIEW_PRICING), setBookingPricing);
+router.put('/bookings/:orderId/pricing/manual', authorize(PERMISSIONS.VIEW_PRICING), setBookingManualPricing);
 
 export default router;

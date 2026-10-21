@@ -173,6 +173,8 @@ const DELIBERATE_ADDITIONS = {
     PERMISSIONS.WORK_O2D_STAGE,
     // Indent Stock Assignment: which customer's indent arriving stock goes to.
     PERMISSIONS.ASSIGN_INDENT_STOCK,
+    // Booking status on the Sales Desk (Customer Portal).
+    PERMISSIONS.MANAGE_ORDERS,
     ...WORK_QUEUE_DOER,
   ]),
   // O2D stage 7's acknowledgement and stage 9's dispatch.

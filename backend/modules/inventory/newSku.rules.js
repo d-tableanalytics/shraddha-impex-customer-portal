@@ -9,11 +9,14 @@
  * Level of zero, so it is permanently "over-stocked", never reorders, and is
  * picked from nowhere.
  *
- * So the four are asked for BEFORE the import runs, not after: the sheet is
- * staged, the new SKUs are listed, and the import cannot be confirmed until
- * every one of them has been answered.
+ * So they are asked for BEFORE the import runs, not after: the sheet is staged,
+ * the new SKUs are listed, and the import cannot be confirmed until every one
+ * of them has its MANDATORY fields — Brand and Available Stock. MOQ, Lead Time,
+ * Safety Factor and Box Number are optional (the business's call, 2026-10-19):
+ * left blank they are not set, so an import is not held up by planning figures
+ * nobody has yet.
  *
- * ZERO IS REJECTED ON PURPOSE for the three numeric fields. Zero is exactly the
+ * ZERO IS REJECTED ON PURPOSE for the three numeric fields, when they are given. Zero is exactly the
  * value this prompt exists to stop being left behind, so accepting it would
  * defeat the point — and Max Level is DAC x LeadTime x SafetyFactor, which any
  * zero collapses to nothing.
@@ -37,6 +40,15 @@ const asPositive = (raw, { integer = false } = {}) => {
   if (n <= 0) return { problem: integer ? 'must be 1 or more' : 'must be greater than 0' };
   return { value: n };
 };
+
+/**
+ * An OPTIONAL field: left blank, it is simply not set (null); filled in, it must
+ * pass the field's own rule. Only Brand and Available Stock are mandatory —
+ * MOQ, Lead Time, Safety Factor and Box Number may be left for later, so an
+ * import is not held up by planning figures nobody has yet. A SKU created
+ * without an MOQ is still offered on the "Set MOQ" step after the import.
+ */
+const optional = (parse) => (raw) => (String(raw ?? '').trim() === '' ? { value: null } : parse(raw));
 
 const asRequiredText = (raw) => {
   const text = String(raw ?? '').trim();
@@ -74,6 +86,8 @@ export const NEW_SKU_FIELDS = [
     field: 'brand',
     label: 'Brand',
     hint: 'Which catalogue the SKU is created in.',
+    // Mandatory: a SKU has to be filed under one catalogue to exist at all.
+    required: true,
     /**
      * Asked HERE rather than on the upload form.
      *
@@ -98,6 +112,7 @@ export const NEW_SKU_FIELDS = [
     field: 'availableStock',
     label: 'Available Stock',
     hint: 'Opening stock for the new SKU, in units.',
+    required: true,
     /**
      * Zero IS a valid answer here, unlike every other field below.
      *
@@ -115,27 +130,31 @@ export const NEW_SKU_FIELDS = [
   },
   {
     field: 'moq',
-    label: 'MOQ',
+    label: 'Multiple',
     hint: 'Minimum order quantity, in units.',
-    parse: (raw) => asPositive(raw, { integer: true }),
+    required: false,
+    parse: optional((raw) => asPositive(raw, { integer: true })),
   },
   {
     field: 'leadTime',
     label: 'Lead Time',
     hint: 'Days from raising the order to receiving the stock.',
-    parse: (raw) => asPositive(raw),
+    required: false,
+    parse: optional((raw) => asPositive(raw)),
   },
   {
     field: 'safetyFactor',
     label: 'Safety Factor',
     hint: 'Cover multiplier used to work out the Max Level.',
-    parse: (raw) => asPositive(raw),
+    required: false,
+    parse: optional((raw) => asPositive(raw)),
   },
   {
     field: 'boxNo',
     label: 'Box Number',
     hint: 'The box the warehouse picks this SKU from.',
-    parse: asRequiredText,
+    required: false,
+    parse: optional(asRequiredText),
   },
 ];
 

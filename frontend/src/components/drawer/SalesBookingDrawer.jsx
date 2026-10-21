@@ -4,6 +4,7 @@ import {
   X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
   Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle, Download, FileText,
   MapPin, Receipt, IndianRupee, Pencil, GripVertical, SlidersHorizontal,
+  PackageX,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
@@ -21,8 +22,10 @@ import { PicklistPreview } from "../pricing/PicklistPreview";
 import { PriceTypeSelector } from "../pricing/PriceTypeSelector";
 import { picklistFromSalesBooking, allocationPicklistFromSalesBooking } from "../../utils/picklistDocument";
 import { AllocationsSection } from "./AllocationsSection";
-import { stageLabel } from "../../constants/bookingLifecycle";
-import { formatRupees, withGstParts, GST_LABEL } from "../../constants/pricing";
+import { BookingStatusControl, reportStatusChange } from "./BookingStatusControl";
+import { Modal } from "../ui/Modal";
+import { stageLabel, normalizeStatus } from "../../constants/bookingLifecycle";
+import { formatRupees, withGstParts, GST_LABEL, MANUAL_PRICE_TYPE, asPrice } from "../../constants/pricing";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
 //
@@ -62,8 +65,8 @@ const toDraft = (booking) =>
 
 export const SalesBookingDrawer = () => {
   const {
-    selected, close, saveItems, raisePo, setPricing, reorderLines, saving, reloadSelected,
-    updateAllocationBatchStatus,
+    selected, close, saveItems, raisePo, setPricing, setManualPricing, reorderLines, saving, reloadSelected,
+    updateAllocationBatchStatus, updateBookingStatus, cancelBooking,
   } = useSalesStore();
   const { user } = useUserStore();
 
@@ -73,6 +76,12 @@ export const SalesBookingDrawer = () => {
   const [showModal, setShowModal] = useState(false);
   const { run: runExport, isBusy: isExporting } = useBusyAction();
   const [showPicklist, setShowPicklist] = useState(false);
+  // Booking status and cancellation, managed here (see the bar under the header).
+  const mayManageOrders = hasPermission(user, PERMISSIONS.MANAGE_ORDERS);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
   // An inward allocation's own pick list, when one is open.
   const [allocationDoc, setAllocationDoc] = useState(null);
   // Whether the tier picker is open. Closed by default on both sides of the PO:
@@ -80,6 +89,9 @@ export const SalesBookingDrawer = () => {
   // dialog and this is the desk checking what each tier totals; after it,
   // because a raised PO is priced already and this is the correction.
   const [repricing, setRepricing] = useState(false);
+  // Rates typed into the Price column while no tier is chosen, keyed by line
+  // id, holding only what has been changed and not saved yet.
+  const [manualPrices, setManualPrices] = useState({});
   // Admin-only correction of the submitted customer/order details.
   const [editingDetails, setEditingDetails] = useState(false);
   // Which line is being dragged, and which row the pointer is over.
@@ -119,6 +131,9 @@ export const SalesBookingDrawer = () => {
    * swallows its error and keeps the row it has, which would otherwise leave
    * `indent` null and re-trigger this effect on every render.
    */
+  // Kept across a line save (line ids do not change), dropped with the booking.
+  useEffect(() => { setManualPrices({}); }, [selected?.orderId]);
+
   const indentAsked = useRef(null);
   useEffect(() => {
     const orderId = selected?.orderId;
@@ -136,6 +151,18 @@ export const SalesBookingDrawer = () => {
   const mayRaise = canRaisePo(user, selected);
   const mayPrice = canViewPricing(user);
   const pricing = selected.pricing || null;
+  /**
+   * "No pricing" on the Customer Pricing card means the desk prices the lines
+   * itself: the Price column becomes an input on every saved line. Once saved
+   * the booking carries the `manual` marker and stays in this mode.
+   */
+  const manualMode = mayPrice && (!pricing?.priceType || pricing.priceType === MANUAL_PRICE_TYPE);
+  const manualEdits = Object.keys(manualPrices);
+  const manualDirty = manualMode && manualEdits.length > 0;
+  const manualInvalid = manualEdits.filter((id) => {
+    const raw = manualPrices[id];
+    return String(raw ?? "").trim() !== "" && asPrice(raw) === null;
+  });
   /**
    * The FULL order value - booked plus indent - with GST.
    *
@@ -399,6 +426,28 @@ export const SalesBookingDrawer = () => {
     }
   };
 
+  const handleSaveManualPrices = async () => {
+    if (manualInvalid.length) {
+      toast.error("Enter a price above 0, or leave the box empty for no rate.");
+      return;
+    }
+    const prices = Object.fromEntries(manualEdits.map((id) => {
+      const raw = String(manualPrices[id] ?? "").trim();
+      return [id, raw === "" ? null : asPrice(raw)];
+    }));
+    const res = await setManualPricing(selected.orderId, prices);
+    if (res.success) {
+      setManualPrices({});
+      toast.success(
+        res.pricing?.priceType
+          ? `Prices saved — ${res.pricing.pricedLines} of ${res.pricing.lines} line(s) rated.`
+          : "Prices cleared. This booking has no pricing.",
+      );
+    } else {
+      toast.error(res.error);
+    }
+  };
+
   const handleModalConfirm = async (formData) => {
     const res = await raisePo(selected.orderId, formData);
     if (res.success) {
@@ -440,6 +489,32 @@ export const SalesBookingDrawer = () => {
               <X size={24} />
             </button>
           </div>
+
+          {/* Booking status — managed here on the Sales Desk (Booking History
+              only shows it) — and cancellation, which is allowed at any stage. */}
+          {mayManageOrders && (
+            <div className="px-6 py-3 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Booking status</span>
+                <BookingStatusControl
+                  status={selected.status}
+                  busy={statusBusy}
+                  onChange={async (next) => {
+                    if (normalizeStatus(next) === normalizeStatus(selected.status)) return;
+                    setStatusBusy(true);
+                    reportStatusChange(await updateBookingStatus(selected.orderId, next), next);
+                    setStatusBusy(false);
+                  }}
+                />
+              </div>
+              {selected.status !== "Cancelled" && (
+                <ERPButton variant="outline" size="sm" onClick={() => setConfirmCancel(true)}
+                  className="text-red-600 border-red-200 hover:bg-red-50">
+                  <PackageX size={16} className="mr-2" /> Cancel booking
+                </ERPButton>
+              )}
+            </div>
+          )}
 
           {/* Body — the one scroller in the drawer.
 
@@ -676,11 +751,11 @@ export const SalesBookingDrawer = () => {
                     <div>
                       <h3 className="text-sm font-bold text-slate-800">Customer Pricing</h3>
                       <p className="text-[11px] text-slate-500">
-                        {pricing?.priceType
-                          ? `${pricing.priceTypeLabel} rate · ${pricing.pricedLines} of ${pricing.pricedLines + pricing.unpricedLines} line(s) rated`
-                          : locked
-                            ? "This purchase order has no pricing on it."
-                            : "No rate on this booking yet — set it here, or when the PO is raised."}
+                        {pricing?.priceType === MANUAL_PRICE_TYPE
+                          ? `Manual rates · ${pricing.pricedLines} of ${pricing.pricedLines + pricing.unpricedLines} line(s) rated — edit them in Booking Items below`
+                          : pricing?.priceType
+                            ? `${pricing.priceTypeLabel} rate · ${pricing.pricedLines} of ${pricing.pricedLines + pricing.unpricedLines} line(s) rated`
+                            : "No pricing — enter a price on each line in Booking Items below, or choose a rate here."}
                       </p>
                     </div>
                   </div>
@@ -701,7 +776,7 @@ export const SalesBookingDrawer = () => {
                       title={dirty ? "Save your line changes before pricing this booking" : undefined}
                       className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-700 bg-primary-50 border border-primary-200 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      <Pencil size={13} /> {repricing ? "Close" : pricing?.priceType ? "Change" : "Set price"}
+                      <Pencil size={13} /> {repricing ? "Close" : pricing?.priceType ? "Change" : "Choose rate"}
                     </button>
                   </div>
                 </div>
@@ -850,6 +925,35 @@ export const SalesBookingDrawer = () => {
                   <h3 className="text-sm font-bold text-slate-800">Booking Items</h3>
                 </div>
                 <div className="flex items-center gap-2">
+                  {manualDirty && (
+                    <>
+                      <button
+                        onClick={() => setManualPrices({})}
+                        disabled={saving}
+                        className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-all disabled:opacity-40"
+                      >
+                        <RotateCcw size={14} /> Discard prices
+                      </button>
+                      {/* Blocked while line edits are unsaved: the response
+                          replaces the booking, which resyncs the draft and
+                          would drop those edits. */}
+                      <button
+                        onClick={handleSaveManualPrices}
+                        disabled={saving || dirty || manualInvalid.length > 0}
+                        title={
+                          dirty
+                            ? "Save your line changes first"
+                            : manualInvalid.length
+                              ? "Every price must be above 0 (leave a box empty for no rate)"
+                              : "Save the prices typed into the Price column"
+                        }
+                        className="inline-flex items-center gap-1.5 text-xs font-bold text-white bg-emerald-600 border border-emerald-600 px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        Save prices ({manualEdits.length})
+                      </button>
+                    </>
+                  )}
                   {/* Available whether or not the booking is editable — a locked
                       booking is exactly the one the warehouse picks against. */}
                   <button
@@ -948,7 +1052,7 @@ export const SalesBookingDrawer = () => {
                           rendering the column would show a row of dashes that
                           look like unrated lines. */}
                       {mayPrice && (
-                        <th className="px-5 py-3 text-right w-[130px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">
+                        <th className="px-4 py-3 text-right w-[150px] min-w-[150px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">
                           Price
                         </th>
                       )}
@@ -1086,8 +1190,59 @@ export const SalesBookingDrawer = () => {
                             free — the server is careful to omit the price
                             rather than zero it for exactly that reason.
                           */
-                          <td className="px-5 py-3 text-right whitespace-nowrap">
-                            {line.unitPrice == null ? (
+                          <td className="px-4 py-3 text-right whitespace-nowrap align-top">
+                            {manualMode ? (
+                              /* "No pricing" chosen: the desk types the rate.
+                                 Only on SAVED lines — the rate is stored on the
+                                 order row, which a new line does not have yet. */
+                              line.id ? (
+                                <>
+                                  {/* Text, not type="number": the spinner arrows
+                                      ate most of a 150px cell and hid the figure. */}
+                                  <div className="relative">
+                                  <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">₹</span>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    autoComplete="off"
+                                    aria-label={`Price for ${line.skuCode}`}
+                                    placeholder="0.00"
+                                    value={manualPrices[line.id] ?? (line.unitPrice ?? "")}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/[^\d.]/g, "");
+                                      setManualPrices((m) => {
+                                        const next = { ...m };
+                                        if (String(v) === String(line.unitPrice ?? "")) delete next[line.id];
+                                        else next[line.id] = v;
+                                        return next;
+                                      });
+                                    }}
+                                    disabled={saving}
+                                    className={`${cellInput} min-w-[110px] pl-6 text-right tabular-nums font-semibold ${
+                                      manualInvalid.includes(String(line.id))
+                                        ? "border-rose-400 focus:border-rose-500 focus:ring-rose-500"
+                                        : manualPrices[line.id] !== undefined
+                                          ? "border-emerald-400 bg-emerald-50/40"
+                                          : ""
+                                    }`}
+                                  />
+                                  </div>
+                                  {line.amount != null && manualPrices[line.id] === undefined && (
+                                    <div
+                                      className="text-[11px] text-slate-500 tabular-nums mt-0.5"
+                                      title={`${formatRupees(line.unitPrice)} x ${line.confirmedQty ?? 0} confirmed pc(s)`}
+                                    >
+                                      {formatRupees(line.amount)}
+                                    </div>
+                                  )}
+                                  {manualPrices[line.id] !== undefined && (
+                                    <div className="text-[10px] font-semibold text-emerald-700 mt-0.5">Unsaved</div>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-[11px] font-semibold text-slate-400">Save line first</span>
+                              )
+                            ) : line.unitPrice == null ? (
                               <span
                                 className="text-[11px] font-semibold text-amber-600"
                                 title="No rate on this line yet. Set one in Customer Pricing, or when the PO is raised."
@@ -1391,6 +1546,57 @@ export const SalesBookingDrawer = () => {
             </div>
           </div>
         </motion.div>
+
+        <Modal
+          isOpen={confirmCancel}
+          onClose={() => { if (!cancelling) setConfirmCancel(false); }}
+          title={`Cancel booking ${selected.orderId}?`}
+          size="sm"
+        >
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Every unit on this booking goes back into available stock, and its open indent is
+              closed. {locked
+                ? "Its PO has been raised, so the units it had taken out of inventory are put back."
+                : "No PO has been raised yet."} The customer is notified. This cannot be undone.
+            </p>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Reason (optional)</span>
+              <input
+                type="text"
+                value={cancelReason}
+                maxLength={300}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="e.g. customer called to cancel"
+                className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-1 focus:ring-primary-500"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <ERPButton variant="outline" size="sm" onClick={() => setConfirmCancel(false)} disabled={cancelling}>
+                Keep booking
+              </ERPButton>
+              <ERPButton
+                variant="danger"
+                size="sm"
+                loading={cancelling}
+                onClick={async () => {
+                  setCancelling(true);
+                  const res = await cancelBooking(selected.orderId, cancelReason.trim());
+                  setCancelling(false);
+                  if (res.success) {
+                    toast.success(res.message || `Booking ${selected.orderId} cancelled.`);
+                    setConfirmCancel(false);
+                    setCancelReason("");
+                  } else {
+                    toast.error(res.error || "The booking could not be cancelled.");
+                  }
+                }}
+              >
+                Cancel booking
+              </ERPButton>
+            </div>
+          </div>
+        </Modal>
 
         {allocationDoc && (
           <PicklistPreview

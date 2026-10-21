@@ -84,6 +84,15 @@ export const salesApi = {
     );
     return res.data;
   },
+
+  /** Save hand-typed rates: { [lineId]: unitPrice | null }. */
+  setManualPricing: async (orderId, prices) => {
+    const res = await api.put(
+      `/sales/bookings/${encodeURIComponent(orderId)}/pricing/manual`,
+      { prices },
+    );
+    return res.data;
+  },
 };
 
 export default salesApi;

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { isMultipleOf } from "../../utils/moq";
 import { motion, AnimatePresence } from "framer-motion";
 import { Trash2, PackagePlus } from "lucide-react";
 import toast from "react-hot-toast";
@@ -29,11 +30,10 @@ const QtyCell = ({ item, enforceMoq, onUpdateQty }) => {
       setDraft(String(item.orderQuantity)); // revert invalid entry
       return;
     }
-    // MOQ is a minimum, not a pack size — see utils/moq.js. The multiple-of
-    // check that used to follow this one had no counterpart on the server, so
-    // it reverted quantities the API would have accepted.
-    if (applyMoq && val < rowMoq) {
-      toast.error(`Quantity must be at least the MOQ (${rowMoq})`);
+    // Quantities go in multiples of the product's Multiple — the same rule the
+    // server enforces (utils/moq.js).
+    if (applyMoq && !isMultipleOf(val, rowMoq)) {
+      toast.error(`Quantity must be a multiple of ${rowMoq}`);
       setDraft(String(item.orderQuantity));
       return;
     }
@@ -46,13 +46,13 @@ const QtyCell = ({ item, enforceMoq, onUpdateQty }) => {
         type="number"
         value={draft}
         min={applyMoq ? rowMoq : 1}
-        step={1}
+        step={applyMoq ? rowMoq : 1}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
         className="w-16 px-1 py-1 text-center font-bold border border-slate-300 text-slate-800 rounded-md outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 bg-white text-xs shadow-sm"
       />
-      {applyMoq && <span className="text-[9px] text-slate-400 font-semibold">MOQ {rowMoq}</span>}
+      {applyMoq && <span className="text-[9px] text-slate-400 font-semibold">Multiple {rowMoq}</span>}
       {shortfall > 0 && <span className="text-[9px] text-amber-600 font-bold">+{shortfall} indent</span>}
     </div>
   );

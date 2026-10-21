@@ -355,7 +355,7 @@ export const Inventory = () => {
           },
           {
             key: 'moq',
-            label: 'Min Order',
+            label: 'Multiple',
             align: 'right',
             className: 'text-slate-500',
             render: (r) => (r.moq > 1 ? r.moq.toLocaleString() : '—'),

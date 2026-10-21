@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { IndianRupee, Loader2, AlertTriangle, Check, ShieldAlert, Ban } from "lucide-react";
 
 import { useSalesStore } from "../../store/salesStore";
-import { PRICE_TYPES, formatRupees } from "../../constants/pricing";
+import { PRICE_TYPES, MANUAL_PRICE_TYPE, formatRupees } from "../../constants/pricing";
 
 /**
  * Choose the rate a customer is being offered.
@@ -119,27 +119,34 @@ export const PriceTypeSelector = ({
         })}
 
         {/* An explicit choice, not the absence of one. A PO can legitimately go
-            out unpriced — every one raised before this feature did. */}
+            out unpriced — every one raised before this feature did — or with
+            rates the desk types into each line of the booking table.
+
+            Already hand-priced? The card stays selected and clicking it again
+            does nothing: it must not wipe rates somebody typed in. Clearing
+            those is done line by line, in the table. */}
         <button
           type="button"
           disabled={disabled}
-          onClick={() => onChange(null)}
+          onClick={() => { if (value !== MANUAL_PRICE_TYPE) onChange(null); }}
           className={`text-left px-3 py-2.5 rounded-lg border transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
-            value === null || value === undefined || value === ""
+            value === null || value === undefined || value === "" || value === MANUAL_PRICE_TYPE
               ? "border-slate-400 bg-slate-100 ring-1 ring-slate-400/30"
               : "border-slate-200 bg-white hover:border-slate-300"
           }`}
         >
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-            <Ban size={13} /> No pricing
+            <Ban size={13} /> {value === MANUAL_PRICE_TYPE ? "Manual rates" : "No pricing"}
           </div>
           <div className="text-[10px] font-semibold text-slate-400 mt-1.5">
-            Raise the PO without rates
+            {value === MANUAL_PRICE_TYPE
+              ? "Rates entered per line in Booking Items"
+              : "Enter rates per line, or raise the PO without rates"}
           </div>
         </button>
       </div>
 
-      {selectedTotal?.unpricedLines > 0 && (
+      {selectedTotal?.unpricedLines > 0 && value !== MANUAL_PRICE_TYPE && (
         <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
           <AlertTriangle size={14} className="text-amber-600 shrink-0 mt-0.5" />
           <p className="text-[11px] text-amber-900 leading-relaxed">
@@ -153,7 +160,7 @@ export const PriceTypeSelector = ({
       {/* The lines at the chosen rate. This is the "clearly show the selected
           price type and the corresponding price" half of the requirement —
           a total alone does not let anyone check a quote. */}
-      {value && (
+      {value && value !== MANUAL_PRICE_TYPE && (
         /* A booking can carry a hundred SKUs, and this table used to render
            every one of them at full height — pushing the Confirm & Lock
            buttons off the bottom of a dialog that already scrolls, so the

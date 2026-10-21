@@ -6,7 +6,7 @@ import { ReviewIndentModal } from "../../components/booking/ReviewIndentModal";
 import { computeReview } from "../../utils/bookingReview";
 import { useUserStore } from "../../store/userStore";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
-import { isMsilCustomer, moqAppliesTo, effectiveMoq } from "../../utils/moq";
+import { isMsilCustomer, moqAppliesTo, effectiveMoq, isMultipleOf } from "../../utils/moq";
 import toast from "react-hot-toast";
 
 import { OrderTable } from "../../components/tables/OrderTable";
@@ -97,12 +97,10 @@ export const CustomerOrders = () => {
       return;
     }
 
-    // non-MSIL customers must book at least the product's MOQ. It is a
-    // minimum, not a pack size — the multiple-of check that used to sit here
-    // was never enforced by the server, so it refused quantities the same
-    // customer could push through Bulk Upload unchallenged.
-    if (moqApplies && data.quantity < productMoq) {
-      toast.error(`Quantity must be at least the MOQ (${productMoq})`, { icon: "❌" });
+    // non-MSIL customers book in multiples of the product's Multiple — the
+    // same rule the server enforces (utils/moq.js), on every booking path.
+    if (moqApplies && !isMultipleOf(data.quantity, productMoq)) {
+      toast.error(`Quantity must be a multiple of ${productMoq}`, { icon: "❌" });
       return;
     }
 
@@ -275,8 +273,8 @@ export const CustomerOrders = () => {
               </div>
             </div>
 
-            {/* STOCK AVAILABILITY — shown just above Booking Qty. MOQ column is
-                shown only for non-MSIL customers; MSIL customers have no MOQ. */}
+            {/* STOCK AVAILABILITY — shown just above Booking Qty. The Multiple
+                column is shown only for non-MSIL customers; MSIL customers have none. */}
             <div className="flex flex-col p-4 bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
               <div className="absolute top-0 left-0 w-1 h-full bg-[#1a5b9e]/80 rounded-l-xl"></div>
               <div className="flex items-center gap-2 mb-3">
@@ -292,7 +290,7 @@ export const CustomerOrders = () => {
                 </div>
                 {!isMsil && (
                   <div className="flex flex-col items-center justify-center">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">MOQ</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Multiple</span>
                     <span className={`text-xl font-black ${selectedProduct ? "text-[#1a5b9e]" : "text-slate-300"}`}>
                       {selectedProduct ? (productMoq > 1 ? productMoq : "—") : "-"}
                     </span>
@@ -310,7 +308,7 @@ export const CustomerOrders = () => {
             {/* QTY INPUT */}
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-bold text-slate-500 tracking-widest uppercase">
-                Booking Qty {moqApplies && <span className="text-slate-400 normal-case">(MOQ {productMoq})</span>}
+                Booking Qty {moqApplies && <span className="text-slate-400 normal-case">(Multiple {productMoq})</span>}
               </label>
               <div className="relative">
                 <input
@@ -318,12 +316,12 @@ export const CustomerOrders = () => {
                     valueAsNumber: true,
                     validate: value => {
                       if (!Number.isInteger(value) || value < 1) return "Enter a whole-number quantity of at least 1";
-                      if (moqApplies && value < productMoq) return `Quantity must be at least the MOQ (${productMoq})`;
+                      if (moqApplies && !isMultipleOf(value, productMoq)) return `Quantity must be a multiple of ${productMoq}`;
                       return true;
                     },
                   })}
                   type="number"
-                  step={1}
+                  step={moqApplies ? productMoq : 1}
                   min={moqApplies ? productMoq : 1}
                   placeholder="Enter Qty"
                   className="w-full px-4 py-3 border border-slate-200/80 rounded-xl outline-none focus:border-[#1a5b9e] focus:ring-2 focus:ring-[#1a5b9e]/20 text-slate-800 font-bold placeholder-slate-300 transition-all bg-slate-50/50 focus:bg-white"
@@ -331,15 +329,15 @@ export const CustomerOrders = () => {
                 />
               </div>
               {errors.quantity && <span className="text-xs text-red-500 mt-1 font-semibold">{errors.quantity.message}</span>}
-              {/* MOQ reminder for Customer: quantity must be at least the MOQ. */}
+              {/* Multiple reminder for Customer: quantity must be a multiple of it. */}
               {moqApplies && selectedProduct && (
-                Number.isInteger(watchQuantity) && watchQuantity >= 1 && watchQuantity < productMoq ? (
+                Number.isInteger(watchQuantity) && watchQuantity >= 1 && !isMultipleOf(watchQuantity, productMoq) ? (
                   <span className="text-xs text-red-500 mt-1 font-semibold">
-                    Enter {productMoq} or more units (MOQ {productMoq}).
+                    Enter a multiple of {productMoq} (e.g. {productMoq}, {productMoq * 2}, {productMoq * 3}).
                   </span>
                 ) : (
                   <span className="text-[11px] text-slate-400 mt-1 font-medium">
-                    Minimum {productMoq} units — enter {productMoq} or more.
+                    Book in multiples of {productMoq} — e.g. {productMoq}, {productMoq * 2}, {productMoq * 3}.
                   </span>
                 )
               )}
@@ -353,7 +351,7 @@ export const CustomerOrders = () => {
             {/* ADD TO LIST BUTTON */}
             <button
               type="submit"
-              disabled={loading || !selectedProduct || !Number.isInteger(watchQuantity) || watchQuantity < 1 || (moqApplies && watchQuantity < productMoq)}
+              disabled={loading || !selectedProduct || !Number.isInteger(watchQuantity) || watchQuantity < 1 || (moqApplies && !isMultipleOf(watchQuantity, productMoq))}
               className="w-full py-3.5 mt-2 bg-gradient-to-r from-[#1a5b9e] to-[#15467a] hover:from-[#15467a] hover:to-[#0f345a] text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed tracking-wider text-sm active:scale-[0.98]"
             >
               <span className="text-lg font-light leading-none mb-0.5">+</span> ADD TO LIST

@@ -82,18 +82,22 @@ export const effectiveMoq = (user, product) => {
 };
 
 /**
- * The agreed rule: the quantity must be AT LEAST the MOQ. Any amount at or
- * above it is allowed — it is a minimum, not a pack size, so no multiple-of
- * check belongs here.
+ * The rule: the quantity must be a MULTIPLE of the product's Multiple (the
+ * field is still called `moq` in the data). With a Multiple of 10, 10, 20 and
+ * 30 are allowed; 15 is not. Decided 2026-10-19 — before then it was a minimum
+ * ("at least the MOQ"), and the label shown everywhere changed from MOQ to
+ * Multiple at the same time.
  *
  * @returns {string|null} the error message, or null when the quantity is fine.
  */
 export const moqError = (user, product, quantity) => {
-  const moq = effectiveMoq(user, product);
-  if (moq === 0) return null;
-  if (Number(quantity) >= moq) return null;
-  return `Quantity must be at least the Minimum Order Quantity (${moq})`
-    + (product?.skuCode ? ` for ${product.skuCode}.` : '.');
+  const multiple = effectiveMoq(user, product);
+  if (multiple === 0) return null;
+  const q = Number(quantity);
+  if (Number.isInteger(q) && q > 0 && q % multiple === 0) return null;
+  return `Quantity must be a multiple of ${multiple}`
+    + (product?.skuCode ? ` for ${product.skuCode}` : '')
+    + ` (e.g. ${multiple}, ${multiple * 2}, ${multiple * 3}).`;
 };
 
 /** Throwing form, for the request paths that surface an Error to the client. */

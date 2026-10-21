@@ -72,7 +72,7 @@ export const NewSkuMoqModal = ({ jobId, skus = [], onClose, onSaved }) => {
       return;
     }
     if (ready.length === 0) {
-      toast.error('Enter an MOQ for at least one SKU.');
+      toast.error('Enter a Multiple for at least one SKU.');
       return;
     }
 
@@ -86,12 +86,12 @@ export const NewSkuMoqModal = ({ jobId, skus = [], onClose, onSaved }) => {
       // save is how a SKU ends up believed-configured and is not.
       for (const err of res.errors) toast.error(err);
       if (res.applied.length) {
-        toast.success(`MOQ set for ${res.applied.length} SKU(s).`);
+        toast.success(`Multiple set for ${res.applied.length} SKU(s).`);
       }
       setTouched(false);
       onSaved?.(res.pendingMoqSkus);
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not save the MOQ values.');
+      toast.error(err.response?.data?.message || 'Could not save the Multiple values.');
     } finally {
       setSaving(false);
     }
@@ -110,14 +110,14 @@ export const NewSkuMoqModal = ({ jobId, skus = [], onClose, onSaved }) => {
     <Modal
       isOpen
       onClose={handleClose}
-      title={`Set MOQ for ${skus.length} new SKU${skus.length === 1 ? '' : 's'}`}
+      title={`Set Multiple for ${skus.length} new SKU${skus.length === 1 ? '' : 's'}`}
     >
       <div className="flex flex-col gap-4">
         <div className="flex items-start gap-2 p-3 rounded-lg bg-primary-50 border border-primary-200">
           <PackagePlus size={16} className="text-primary-600 shrink-0 mt-0.5" />
           <p className="text-xs text-primary-900 leading-relaxed">
             These SKUs were <strong>created by this import</strong> and have no minimum order
-            quantity yet. The stock has already been imported — this only sets the MOQ.
+            quantity yet. The stock has already been imported — this only sets the Multiple.
             You can save some now and the rest later.
           </p>
         </div>
@@ -129,7 +129,7 @@ export const NewSkuMoqModal = ({ jobId, skus = [], onClose, onSaved }) => {
                 <th className="py-2 pr-3">SKU</th>
                 <th className="py-2 pr-3">Brand</th>
                 <th className="py-2 pr-3 text-right">Imported Qty</th>
-                <th className="py-2 w-32">MOQ *</th>
+                <th className="py-2 w-32">Multiple *</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -194,7 +194,7 @@ export const NewSkuMoqModal = ({ jobId, skus = [], onClose, onSaved }) => {
           </Button>
           <Button size="sm" onClick={handleSave} loading={saving} disabled={ready.length === 0}>
             {!saving && <Save size={15} className="mr-2" />}
-            Save {ready.length > 0 ? `${ready.length} ` : ''}MOQ
+            Save {ready.length > 0 ? `${ready.length} ` : ''}Multiple
             {ready.length === 1 ? '' : 's'}
           </Button>
         </div>

@@ -1,7 +1,7 @@
 import Order from '../../models/Order.js';
 import { Product } from '../../models/Product.js';
 import {
-  PRICE_TYPES, normalisePriceType, labelForPriceType, asPrice, lineAmount,
+  PRICE_TYPES, MANUAL_PRICE_TYPE, normalisePriceType, labelForPriceType, asPrice, lineAmount,
 } from '../../config/pricing.js';
 import { boxKey } from './booking.shape.js';
 
@@ -197,7 +197,9 @@ export const ratesForSkus = async ({ rows = [], skus = [] } = {}) => {
     if (rate !== null) rateBySku.set(row.skuCode, rate);
   }
 
-  // Only the SKUs the booking cannot rate itself need the master.
+  // Only the SKUs the booking cannot rate itself need the master — and a
+  // hand-priced booking has no tier to look them up under.
+  if (type === MANUAL_PRICE_TYPE) return rateBySku;
   const orphans = [...new Set(skus)].filter((sku) => !rateBySku.has(sku));
   if (orphans.length) {
     const brand = rows[0].brand;
@@ -334,6 +336,11 @@ export const applyPricing = async ({ orderId, rows, priceType, actor = null }) =
     };
   }
 
+  // Manual rates are KEPT, not re-read: there is no tier to read them from.
+  // This is what the PO dialog sends for a hand-priced booking, so raising the
+  // PO carries the typed-in rates onto it instead of wiping them.
+  if (type === MANUAL_PRICE_TYPE) return summariseRows(rows, MANUAL_PRICE_TYPE);
+
   const book = await priceBookFor(rows);
   const pricedAt = new Date();
 
@@ -366,6 +373,86 @@ export const applyPricing = async ({ orderId, rows, priceType, actor = null }) =
   };
 };
 
+const summariseRows = (rows, type, pricedAt = null) => {
+  let pricedLines = 0;
+  let unpricedLines = 0;
+  let totalAmount = 0;
+  for (const row of rows) {
+    if (asPrice(row.unitPrice) === null) { unpricedLines += 1; continue; }
+    pricedLines += 1;
+    totalAmount += lineAmount(row.unitPrice, chargeableQty(row)) || 0;
+  }
+  return {
+    priceType: type,
+    priceTypeLabel: labelForPriceType(type),
+    pricedAt: pricedAt ?? rows.find((r) => r.pricedAt)?.pricedAt ?? null,
+    lines: rows.length,
+    pricedLines,
+    unpricedLines,
+    totalAmount: Math.round(totalAmount * 100) / 100,
+  };
+};
+
+/**
+ * Rates typed in by the desk, one per line — the "No pricing" path.
+ *
+ * `prices` maps an order row id to a unit price. A row left out keeps whatever
+ * manual rate it already had; a row sent blank (null / '') has its rate
+ * removed. Every row of the booking is stamped `priceType: 'manual'` so the
+ * booking reads as hand-priced everywhere (summary, totals, PO, picklist).
+ *
+ * If that leaves no line with a rate at all, the booking goes back to having
+ * no pricing rather than being "manual with nothing in it".
+ *
+ * Throws a 400-shaped error for a price that is not a positive number or a row
+ * that is not on this booking — a typo must not become a free line.
+ */
+export const applyManualPricing = async ({ orderId, rows, prices = {}, actor = null }) => {
+  const byId = new Map(rows.map((r) => [String(r._id), r]));
+  const wanted = new Map();
+  for (const [id, raw] of Object.entries(prices || {})) {
+    if (!byId.has(String(id))) {
+      throw Object.assign(new Error(`Line ${id} is not on booking ${orderId}.`), { statusCode: 400 });
+    }
+    const blank = raw === null || raw === undefined || String(raw).trim() === '';
+    const price = blank ? null : asPrice(raw);
+    if (!blank && price === null) {
+      const sku = byId.get(String(id)).skuCode;
+      throw Object.assign(new Error(`"${raw}" is not a valid price for ${sku}. Enter an amount above 0.`), { statusCode: 400 });
+    }
+    wanted.set(String(id), price);
+  }
+
+  // A booking switching from a tier to manual starts from blank rates, not the
+  // tier's: the desk chose "No pricing" and is typing its own.
+  const wasManual = normalisePriceType(rows[0]?.priceType) === MANUAL_PRICE_TYPE;
+  const next = rows.map((r) => {
+    const id = String(r._id);
+    const unitPrice = wanted.has(id) ? wanted.get(id) : (wasManual ? asPrice(r.unitPrice) : null);
+    // Plain fields only — `rows` may be Mongoose documents, and spreading one
+    // copies its internals rather than its values.
+    return { _id: r._id, confirmedQty: r.confirmedQty, unitPrice };
+  });
+
+  if (!next.some((r) => r.unitPrice !== null)) {
+    return applyPricing({ orderId, rows, priceType: null, actor });
+  }
+
+  const pricedAt = new Date();
+  await Order.bulkWrite(next.map((r) => ({
+    updateOne: {
+      filter: { _id: r._id, orderId },
+      update: {
+        $set: {
+          priceType: MANUAL_PRICE_TYPE, unitPrice: r.unitPrice, pricedAt, pricedBy: actor?._id ?? null,
+        },
+      },
+    },
+  })));
+
+  return summariseRows(next, MANUAL_PRICE_TYPE, pricedAt);
+};
+
 /**
  * What the booking was priced at, from the rows themselves.
  *
@@ -375,4 +462,4 @@ export const applyPricing = async ({ orderId, rows, priceType, actor = null }) =
  */
 export { pricingSummary } from './booking.shape.js';
 
-export default { quoteBooking, applyPricing };
+export default { quoteBooking, applyPricing, applyManualPricing };

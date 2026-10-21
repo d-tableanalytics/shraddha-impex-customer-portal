@@ -153,6 +153,42 @@ export const useSalesStore = create((set, get) => ({
     }
   },
 
+  /**
+   * Move the booking to another stage. Booking status is managed on the Sales
+   * Desk; the server moves every line, records the timeline entry and emails
+   * the customer once. Returns its verdict for reportStatusChange().
+   */
+  updateBookingStatus: async (orderId, status) => {
+    try {
+      const res = await ordersApi.updateStatus(orderId, status);
+      invalidateBookingData();
+      await get().reloadSelected();
+      await get().fetchBookings();
+      return {
+        success: true,
+        changed: res?.changed !== false,
+        message: res?.message,
+        notified: res?.notified?.state || null,
+        notifyError: res?.notified?.error || res?.notified?.reason || null,
+      };
+    } catch (err) {
+      return { success: false, error: err.response?.data?.message || err.message };
+    }
+  },
+
+  /** Cancel the booking at any stage; its stock comes back and its indent closes. */
+  cancelBooking: async (orderId, reason) => {
+    try {
+      const res = await ordersApi.cancel(orderId, reason);
+      invalidateBookingData();
+      await get().reloadSelected();
+      await get().fetchBookings();
+      return { success: true, message: res?.message };
+    } catch (err) {
+      return { success: false, error: err.response?.data?.message || err.message };
+    }
+  },
+
   // One inward allocation's own stage, then the drawer re-reads the booking.
   updateAllocationBatchStatus: async (orderId, at, status) => {
     try {
@@ -255,6 +291,24 @@ export const useSalesStore = create((set, get) => ({
       return {
         success: false,
         error: err.response?.data?.message || err.message || "Could not set the price.",
+      };
+    }
+  },
+
+  /** Save the rates typed into the line table ("No pricing" chosen). */
+  setManualPricing: async (orderId, prices) => {
+    set({ saving: true });
+    try {
+      const res = await salesApi.setManualPricing(orderId, prices);
+      set({ selected: res.data, saving: false });
+      invalidateBookingData();
+      await get().fetchBookings();
+      return { success: true, pricing: res.pricing };
+    } catch (err) {
+      set({ saving: false });
+      return {
+        success: false,
+        error: err.response?.data?.message || err.message || "Could not save the prices.",
       };
     }
   },

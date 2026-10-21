@@ -1,6 +1,6 @@
 {
   "config/moduleRegistry.js": "b34daa7f02045fe8a30210250ddab3c1d166aef6ecc4fb2e9b4dce21d6a4cfd1",
-  "config/permissions.js": "0d6f869b7a74a29513796fd24d6e208034513b2bc567f93d043e9b47c23217e8",
+  "config/permissions.js": "70d038519205652144086ccef0cc43cffaf0dc89f334a1965f8770b721d58f5a",
   "middlewares/auth.js": "6703eadb56c0de1550e7ee3039a13c619d3a031951e514652ae8e8f82c806c28",
   "middlewares/portalGuard.js": "bfbb22d974441a2cec30512530ace7c72949154df43ed264e869bdf9f9091211",
   "middlewares/rbac.js": "06cec9bbbf87049c01f23a7c2fb6a40c59617e1e5469c508bdec47553d6042a2",

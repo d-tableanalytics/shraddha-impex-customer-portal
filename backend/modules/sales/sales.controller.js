@@ -10,7 +10,7 @@ import { assertBookingEditable, isPlaceholderPo } from '../../utils/bookingLock.
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { boxKey, currentBoxNumbers, shapeBooking, pricingSummary } from './booking.shape.js';
 import {
-  quoteBooking, applyPricing, valueBooking, valueIndentLines,
+  quoteBooking, applyPricing, applyManualPricing, valueBooking, valueIndentLines,
 } from './pricing.service.js';
 import { PRICE_TYPES, normalisePriceType } from '../../config/pricing.js';
 import {
@@ -1221,6 +1221,76 @@ export const setBookingPricing = async (req, res, next) => {
 };
 
 
+/**
+ * PUT /api/v1/sales/bookings/:orderId/pricing/manual   { prices: { [lineId]: unitPrice } }
+ *
+ * The desk's own rates, typed into the booking's line table when no price tier
+ * is chosen ("No pricing"). Saved onto each order row as its unitPrice with the
+ * `manual` marker, so the totals, the PO and the picklist all use them exactly
+ * as they use a tier's rates.
+ *
+ * Same gate and the same reasoning about the PO lock as setBookingPricing: a
+ * price is not what is being supplied, so it stays correctable after the PO.
+ */
+export const setBookingManualPricing = async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+    const rows = await loadBooking(orderId);
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+    const prices = req.body?.prices;
+    if (!prices || typeof prices !== 'object' || Array.isArray(prices)) {
+      return res.status(400).json({ success: false, message: 'Send the rates as { prices: { lineId: unitPrice } }.' });
+    }
+
+    const before = pricingSummary(rows);
+    let result;
+    try {
+      result = await applyManualPricing({ orderId, rows, prices, actor: req.user });
+    } catch (error) {
+      if (error.statusCode === 400) {
+        return res.status(400).json({ success: false, message: error.message });
+      }
+      throw error;
+    }
+
+    await recordAudit(
+      req.user,
+      'Booking Priced',
+      result.priceType
+        ? `Booking ${orderId} priced manually`
+          + (before?.priceType && before.priceType !== result.priceType
+            ? ` (was ${before.priceTypeLabel})` : '')
+          + `. ${result.pricedLines} of ${result.lines} line(s) rated, total ₹${result.totalAmount}.`
+        : `Pricing removed from booking ${orderId}`
+          + (before?.priceType ? ` (was ${before.priceTypeLabel}).` : '.'),
+      req,
+      {
+        meta: {
+          orderId,
+          from: before?.priceType ?? null,
+          to: result.priceType,
+          prices,
+          totalAmount: result.totalAmount,
+          unpricedLines: result.unpricedLines,
+        },
+      },
+    );
+
+    const updated = await loadBooking(orderId);
+    res.status(200).json({
+      success: true,
+      data: (await attachCustomerDetails([
+        await shapedWithValue(updated, req, { includePricing: true }),
+      ]))[0],
+      pricing: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 
 // ---------------------------------------------------------------------------
 // Line order and header details
@@ -1294,5 +1364,5 @@ export const updateBookingDetails = async (req, res, next) => {
 export default {
   getBookings, getBookingDetail, updateBookingItems, raisePo,
   reorderBookingLines, updateBookingDetails,
-  getBookingPricing, setBookingPricing,
+  getBookingPricing, setBookingPricing, setBookingManualPricing,
 };

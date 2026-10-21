@@ -110,7 +110,7 @@ describe('cancelling a confirmed booking', () => {
     assert.deepEqual(await stockOf(p._id), { available: 3, booked: 0, total: 3 }, 'closing it moved no stock');
   });
 
-  test('once the PO is raised the booking cannot be cancelled and the stock stays out', async () => {
+  test('once the PO is raised the booking can still be cancelled, and the stock comes back', async () => {
     const user = await customer();
     const p = await ProductKoken.create({ skuCode: 'SKU-4', availableForSale: 10, totalAvailableQuantity: 10, bookedQuantity: 0 });
     const orderId = await book(user, p, 4);
@@ -119,7 +119,7 @@ describe('cancelling a confirmed booking', () => {
     assert.deepEqual(await stockOf(p._id), { available: 6, booked: 0, total: 6 }, 'PO raised: 4 consumed');
 
     const res = await call(cancelBooking, { user, params: { orderId } });
-    assert.equal(res.statusCode, 423);
-    assert.deepEqual(await stockOf(p._id), { available: 6, booked: 0, total: 6 });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(await stockOf(p._id), { available: 10, booked: 0, total: 10 }, 'the 4 are back in inventory');
   });
 });

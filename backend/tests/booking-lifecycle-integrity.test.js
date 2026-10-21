@@ -232,15 +232,33 @@ describe('cancellation', () => {
     for (const p of [k, x, i]) assert.deepEqual(await stock(p), { available: 10, booked: 0, total: 10 });
   });
 
-  test('a booking whose PO was raised cannot be cancelled', async () => {
+  test('a booking whose PO was raised can be cancelled: its units go back into inventory', async () => {
     const user = await customer();
     const p = await product(ProductKoken, 'K-5', 10);
     const id = bookingIdOf(await bulk(user, [[p, 4]]));
     await call(updateOrderPO, { user: ADMIN, params: { orderId: id }, body: { poNumber: 'PO-1' } });
     assert.deepEqual(await stock(p), { available: 6, booked: 0, total: 6 }, 'consumed');
 
-    assert.equal((await call(cancelBooking, { user, params: { orderId: id } })).statusCode, 423);
-    assert.deepEqual(await stock(p), { available: 6, booked: 0, total: 6 });
+    assert.equal((await call(cancelBooking, { user, params: { orderId: id } })).statusCode, 200);
+    assert.deepEqual(await stock(p), { available: 10, booked: 0, total: 10 }, 'all 4 back on the shelf');
+    const row = await Order.findOne({ orderId: id }).lean();
+    assert.equal(row.status, 'Cancelled');
+    assert.equal(row.stockState, 'released');
+  });
+
+  test('a delivered booking can be cancelled too, and only once', async () => {
+    const user = await customer();
+    const p = await product(ProductKoken, 'K-5D', 10);
+    const id = bookingIdOf(await bulk(user, [[p, 4]]));
+    await call(updateOrderPO, { user: ADMIN, params: { orderId: id }, body: { poNumber: 'PO-D' } });
+    await Order.updateMany({ orderId: id }, { $set: { status: 'Delivered' } });
+
+    const [a, b] = await Promise.all([
+      call(cancelBooking, { user: ADMIN, params: { orderId: id } }),
+      call(cancelBooking, { user, params: { orderId: id } }),
+    ]);
+    assert.deepEqual([a.statusCode, b.statusCode].sort(), [200, 409]);
+    assert.deepEqual(await stock(p), { available: 10, booked: 0, total: 10 });
   });
 });
 
@@ -475,5 +493,46 @@ describe("a cancelled or expired booking's open indent", () => {
     await processAvailableIndents([p.skuCode]);
 
     assert.equal(await Order.countDocuments({ user: a._id, status: { $ne: 'Cancelled' } }), 0, 'no new booking for a customer who cancelled');
+  });
+});
+
+describe("a cancelled booking never keeps an open indent", () => {
+  const indentOf = (id) => Reservation.find({ indentNumber: id.replace(/^BO-/, 'PI-') }).lean();
+
+  test('cancelling after the PO is raised cancels the indent too', async () => {
+    const a = await customer();
+    const p = await product(ProductKoken, 'K-IND-PO', 2);
+    const id = bookingIdOf(await bulk(a, [[p, 5]])); // 2 booked, 3 on indent
+    await call(updateOrderPO, { user: ADMIN, params: { orderId: id }, body: { poNumber: 'PO-X' } });
+
+    const res = await call(cancelBooking, { user: ADMIN, params: { orderId: id } });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual((await indentOf(id)).map((r) => r.status), ['Cancelled']);
+  });
+
+  test('the status route cannot cancel — only "Cancel booking" can', async () => {
+    const { applyBookingStatus } = await import('../modules/orders/bookingStatus.service.js');
+    const a = await customer();
+    const p = await product(ProductKoken, 'K-IND-ST', 2);
+    const id = bookingIdOf(await bulk(a, [[p, 5]]));
+
+    const out = await applyBookingStatus({ orderId: id, status: 'Cancelled', actor: ADMIN });
+    assert.equal(out.ok, false);
+    assert.match(out.message, /Cancel booking/);
+    assert.equal((await Order.findOne({ orderId: id }).lean()).status, 'PO Received', 'nothing changed');
+    assert.deepEqual((await indentOf(id)).map((r) => r.status), ['Partially Confirmed'], 'the indent is still open');
+  });
+
+  test('an older cancelled booking with its indent still open gets it cancelled', async () => {
+    const a = await customer();
+    const p = await product(ProductKoken, 'K-IND-OLD', 2);
+    const id = bookingIdOf(await bulk(a, [[p, 5]]));
+    // As it was before the rule: booking cancelled, indent left open.
+    await Order.updateMany({ orderId: id }, { $set: { status: 'Cancelled', stockState: 'released' } });
+
+    const res = await call(cancelBooking, { user: a, params: { orderId: id } });
+    assert.equal(res.statusCode, 409);
+    assert.match(res.payload.message, /indent .* has now been cancelled too/);
+    assert.deepEqual((await indentOf(id)).map((r) => r.status), ['Cancelled']);
   });
 });

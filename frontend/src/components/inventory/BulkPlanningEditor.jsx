@@ -126,7 +126,7 @@ export const BulkPlanningEditor = ({ open, skuCodes = [], onClose, onDone }) => 
               value={form.safetyFactor ?? ''} onChange={(e) => set('safetyFactor', e.target.value)} />
           </Field>
 
-          <Field label="MOQ">
+          <Field label="Multiple">
             <input type="number" min="0" className={inputCls} placeholder="Leave unchanged"
               value={form.moq ?? ''} onChange={(e) => set('moq', e.target.value)} />
           </Field>
