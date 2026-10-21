@@ -88,6 +88,30 @@ export const openIndentsByOrder = async (orderIds = []) => {
   return out;
 };
 
+/**
+ * How many open indent lines per booking the MSIL supply check is holding for
+ * a Convert / Cancel decision (utils/msilSupply.js). One query for the page, so
+ * the bookings list can flag them without opening each booking.
+ */
+export const awaitingDecisionByOrder = async (orderIds = []) => {
+  const ids = [...new Set(orderIds.filter(Boolean).map(String))];
+  const out = new Map();
+  if (ids.length === 0) return out;
+  const bookingByIndent = new Map(ids.map((id) => [indentIdFor(id), id]));
+  const rows = await Reservation.aggregate([
+    {
+      $match: {
+        indentNumber: { $in: [...bookingByIndent.keys()] },
+        status: { $in: ['Pending', 'Partially Confirmed'] },
+        'supplyCheck.status': 'Awaiting decision',
+      },
+    },
+    { $group: { _id: '$indentNumber', n: { $sum: 1 } } },
+  ]);
+  for (const r of rows) out.set(bookingByIndent.get(r._id), r.n);
+  return out;
+};
+
 /** The single-booking case. */
 export const openIndentBySku = async (orderId) =>
   (await openIndentsByOrder([orderId])).get(String(orderId)) ?? new Map();
@@ -125,7 +149,7 @@ export const openIndentLinesFor = async (orderId) => {
     indentNumber,
     status: { $in: ['Pending', 'Partially Confirmed'] },
   })
-    .select('reservationId skuCode msilCode quantity status reservationDate expiryDate')
+    .select('reservationId skuCode msilCode quantity status reservationDate expiryDate supplyDate supplyCheck')
     .sort({ skuCode: 1 })
     .lean();
 
@@ -139,6 +163,17 @@ export const openIndentLinesFor = async (orderId) => {
       status: r.status,
       reservedOn: r.reservationDate || null,
       expiresOn: r.expiryDate || null,
+      // The MSIL supply check's verdict (utils/msilSupply.js). 'Awaiting
+      // decision' is what puts Convert / Cancel on the desk.
+      supplyDate: r.supplyDate || null,
+      supplyCheck: r.supplyCheck?.status
+        ? {
+          status: r.supplyCheck.status,
+          reason: r.supplyCheck.reason || null,
+          arrivedAt: r.supplyCheck.arrivedAt || null,
+          decidedAt: r.supplyCheck.decidedAt || null,
+        }
+        : null,
     })),
   };
 };

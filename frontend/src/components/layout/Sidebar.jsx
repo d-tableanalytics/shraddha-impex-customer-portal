@@ -22,6 +22,7 @@ import {
   GaugeCircle,
   Upload,
   Images,
+  Tags,
   Store,
   ShieldCheck,
   LayoutGrid,
@@ -57,7 +58,7 @@ import { fmsNavGroup, withFmsGroup } from "../../fms/navigation";
 const ICONS = {
   LayoutDashboard, PlusCircle, UploadCloud, History, PackageX, Boxes, Users,
   Settings, HelpCircle, FileCheck2, Warehouse, ScrollText, Activity,
-  GaugeCircle, Upload, Images, Store, ShieldCheck, LayoutGrid, Key, BarChart3,
+  GaugeCircle, Upload, Images, Tags, Store, ShieldCheck, LayoutGrid, Key, BarChart3,
   // Indent Stock Assignment.
   Shuffle,
   // FMS (src/fms/navigation.js).

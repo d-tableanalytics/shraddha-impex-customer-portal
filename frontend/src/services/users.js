@@ -1,4 +1,5 @@
 import { api } from './api';
+import { setBrandRegistry } from '../utils/brandAccess';
 
 export const usersApi = {
   login: async (credentials) => {
@@ -8,7 +9,11 @@ export const usersApi = {
   
   getCurrentUser: async () => {
     const response = await api.get('/auth/me');
-    return response.data.data;
+    const user = response.data.data;
+    // The brand list rides with the user, so it is installed before any
+    // screen that reads allowedBrands(user) renders with the new user.
+    setBrandRegistry(user?.brands);
+    return user;
   },
 
   updateProfile: async (updates) => {

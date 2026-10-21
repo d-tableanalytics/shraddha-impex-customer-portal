@@ -66,6 +66,33 @@ const reservationSchema = new mongoose.Schema({
   // unique pair the moment the same customer indents the same SKU twice. The
   // cancellation screen needs to name the booking, and an auditor needs to see
   // that nobody typed it in by hand.
+  // The booking's MSIL Supply Date, mirrored here so the conversion rule can
+  // read it even for a booking with no rows yet. Set with Order.msilSupplyDate.
+  supplyDate: { type: Date, default: null },
+  /**
+   * The outcome of the MSIL supply check for this indent (utils/msilSupply.js).
+   *
+   *   Awaiting decision   stock arrived too late (after the Supply Date or the
+   *                       7-day window from the booking) — NOT converted; the
+   *                       desk must Convert or Cancel.
+   *   Auto-converted      stock arrived in time and was converted by itself.
+   *   Converted manually  the desk chose Convert.
+   *   Cancelled           the desk chose Cancel.
+   *
+   * Null on every indent the check has never applied to.
+   */
+  supplyCheck: {
+    status: {
+      type: String,
+      enum: ['Awaiting decision', 'Auto-converted', 'Converted manually', 'Cancelled', null],
+      default: null,
+    },
+    reason: { type: String, default: null },
+    arrivedAt: { type: Date, default: null },
+    decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    decidedAt: { type: Date, default: null },
+  },
+
   autoBookedOrderId: { type: String, default: null },
   autoBookedAt: { type: Date, default: null }
 }, { timestamps: true });

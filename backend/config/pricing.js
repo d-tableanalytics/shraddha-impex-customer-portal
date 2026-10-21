@@ -108,6 +108,44 @@ export const asPrice = (raw) => {
   return Math.round(n * 100) / 100;
 };
 
+/** The highest price a SKU may carry: ₹10 crore. Anything above is a typo. */
+export const MAX_PRICE = 100_000_000;
+
+// Plain digits, or digits grouped the Western (1,250,000) or Indian (12,50,000)
+// way. Anything else with a comma — "12,5", "1.250,50" — is a European decimal
+// that a comma-stripping read would silently turn into a different amount.
+const PLAIN = /^\d+(\.\d+)?$/;
+const WESTERN = /^\d{1,3}(,\d{3})+(\.\d+)?$/;
+const INDIAN = /^\d{1,2}(,\d{2})*,\d{3}(\.\d+)?$/;
+
+/**
+ * Read a price someone TYPED (a form, an API body, a spreadsheet cell).
+ *
+ * Stricter than asPrice(), which reads prices already on file: an input is
+ * refused, not reinterpreted, when it is not unambiguously an amount — a
+ * European decimal, hex or exponent notation, an amount that rounds to ₹0.00,
+ * or one beyond MAX_PRICE. A leading ₹ / Rs / INR is allowed.
+ *
+ * @returns {{ ok: true, value: number } | { ok: false, error: string }}
+ */
+export const parsePriceInput = (raw) => {
+  let n;
+  if (typeof raw === 'number') {
+    n = raw;
+  } else {
+    const text = String(raw ?? '').trim().replace(/^(₹|rs\.?|inr)\s*/i, '');
+    if (!(PLAIN.test(text) || WESTERN.test(text) || INDIAN.test(text))) {
+      return { ok: false, error: `"${raw}" is not an amount. Use digits, e.g. 1250.50 or 1,250.50` };
+    }
+    n = Number(text.replace(/,/g, ''));
+  }
+  if (!Number.isFinite(n)) return { ok: false, error: `"${raw}" is not an amount` };
+  const value = Math.round(n * 100) / 100;
+  if (value <= 0) return { ok: false, error: 'must be at least ₹0.01' };
+  if (value > MAX_PRICE) return { ok: false, error: `must be at most ₹${MAX_PRICE.toLocaleString('en-IN')}` };
+  return { ok: true, value };
+};
+
 /** The unit price a product carries for one type, or null if it has none. */
 export const priceOf = (product, type) => {
   const key = normalisePriceType(type);

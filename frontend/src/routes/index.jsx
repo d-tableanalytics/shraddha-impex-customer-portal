@@ -33,6 +33,7 @@ const InventoryHealth = lazy(lazyPage("InventoryHealth"));
 const UpcomingStock = lazy(lazyPage("UpcomingStock"));
 const InventoryDashboard = lazy(lazyPage("InventoryDashboard"));
 const InventoryImport = lazy(lazyPage("InventoryImport"));
+const InventoryBrands = lazy(lazyPage("InventoryBrands"));
 const IndentAssignment = lazy(lazyPage("IndentAssignment"));
 const Reports = lazy(lazyPage("Reports"));
 const Settings = lazy(lazyPage("Settings"));
@@ -180,6 +181,11 @@ export const router = createBrowserRouter([
             // here writes to a projection.
             path: "inventory/import",
             element: <ModuleRoute module="inventory" submodule="imports"><InventoryImport /></ModuleRoute>,
+          },
+          {
+            // The brand master — every brand list in both portals reads it.
+            path: "inventory/brands",
+            element: <ModuleRoute module="inventory" submodule="brands"><InventoryBrands /></ModuleRoute>,
           },
           {
             path: "reports",

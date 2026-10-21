@@ -4,12 +4,11 @@ import {
   sendDeliverySchedule, OPEN_BOOKING_STATUSES as SCHEDULABLE_STATUSES,
 } from '../../utils/deliverySchedule.js';
 import Reservation from '../../models/Reservation.js';
-import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
 import AuditLog from '../../models/AuditLog.js';
 import { nextSequence } from '../../models/Counter.js';
 import { io } from '../../server.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
-import { allowedBrandModels, canAccessBrand, brandFilter } from '../../utils/brandAccess.js';
+import { allowedBrandModels, allBrandModels, canAccessBrand, brandFilter } from '../../utils/brandAccess.js';
 import { isBookingLocked, canOverrideLock } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS, isSuperAdmin} from '../../middlewares/rbac.js';
 import { withBoxNoVisibility } from '../../utils/boxNoVisibility.js';
@@ -34,18 +33,11 @@ import { bookingStatusOf, stageLabel, stageIndex } from '../../utils/bookingLife
 import User from '../../models/User.js';
 import { QTY_EDIT_ACTIONS } from '../sales/sales.controller.js';
 
-// Product is stored one-collection-per-brand; brand is implied by the collection.
-const BRAND_MODELS = [
-  [ProductKoken, 'Koken'],
-  [ProductBIX, 'BIX'],
-  [ProductIMADA, 'IMADA'],
-];
-
 // Pass `user` to restrict the lookup to that user's permitted brands, so a
 // product they cannot access resolves to null instead of being orderable by id.
 const findProductById = async (productId, session = null, user = null) => {
   const opts = session ? { session } : {};
-  const models = user ? allowedBrandModels(user) : BRAND_MODELS;
+  const models = user ? allowedBrandModels(user) : allBrandModels();
   for (const [Model, brand] of models) {
     const p = await Model.findById(productId, null, opts);
     if (p) return { product: p, brand };
@@ -200,7 +192,7 @@ export const createOrder = async (req, res, next) => {
         ordersToCreate.push({
           lineSeq,
           orderId: orderNumber,
-          brand: brand || 'Koken',
+          brand,
           user: req.user._id,
           status: 'PO Received',
           orderTimestamp: now,

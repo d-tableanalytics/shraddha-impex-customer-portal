@@ -349,6 +349,24 @@ export const applyPricing = async ({ orderId, rows, priceType, actor = null }) =
   let totalAmount = 0;
 
   for (const row of rows) {
+    /*
+     * A BOOKING KEEPS THE PRICE IT WAS FIRST GIVEN (decided 2026-10-21).
+     *
+     * Re-applying the SAME tier — which raising the PO does, with the tier the
+     * dialog pre-fills — leaves a line that already has a rate under that tier
+     * exactly as it is, so a price-list change between pricing and PO never
+     * reprices the customer. Only a line with no rate yet (added since, or not
+     * on the list when the booking was priced) takes today's figure.
+     *
+     * Choosing a DIFFERENT tier is a new pricing decision, and reads the list.
+     */
+    const kept = normalisePriceType(row.priceType) === type ? asPrice(row.unitPrice) : null;
+    if (kept !== null) {
+      pricedLines += 1;
+      totalAmount += lineAmount(kept, chargeableQty(row)) || 0;
+      continue;
+    }
+
     const prices = book.get(boxKey(row.skuCode, row.brand)) || {};
     const unitPrice = asPrice(prices[type]);
     if (unitPrice === null) unpricedLines += 1;

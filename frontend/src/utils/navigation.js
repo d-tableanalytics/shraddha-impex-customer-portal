@@ -96,6 +96,7 @@ const FALLBACK_MODULES = [
       { key: "ledger", label: "Stock Ledger", path: "/inventory/ledger", icon: "ScrollText", any: [PERMISSIONS.VIEW_STOCK_LEDGER] },
       { key: "imports", label: "Inventory Import", path: "/inventory/import", icon: "Upload", any: [PERMISSIONS.VIEW_INVENTORY] },
       { key: "product_content", label: "Product Details", path: "/admin/product-details", icon: "Images", any: [PERMISSIONS.MANAGE_INVENTORY_MASTER] },
+      { key: "brands", label: "Brands", path: "/inventory/brands", icon: "Tags", any: [PERMISSIONS.CONFIGURE_INVENTORY] },
     ],
   },
   {

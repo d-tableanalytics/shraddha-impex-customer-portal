@@ -52,7 +52,10 @@ test('the top-up restores view_pricing to Sales, through the Customer Pricing ce
   assert.ok(resolved(topUp).has(PERMISSIONS.VIEW_PRICING));
   // A matrix cell, so the Super Admin sees it ticked — not a hidden flat key.
   const cell = topUp.grants.find((g) => g.module === 'sales' && g.submodule === 'pricing');
-  assert.deepEqual(cell?.actions, ['view']);
+  // View, and Edit since Sales may update the price schedule (decided 2026-10-21):
+  // the same top-up is what delivers manage_pricing to existing Sales rows.
+  assert.deepEqual(cell?.actions, ['view', 'edit']);
+  assert.ok(topUp.missing.includes(PERMISSIONS.MANAGE_PRICING));
 });
 
 test('after the top-up the row resolves to at least the whole Sales baseline', () => {

@@ -327,6 +327,15 @@ export const SalesDesk = () => {
                   </td>
                   <td className="px-5 py-4">
                     <PoStatusBadge locked={b.locked} poNumber={b.poNumber} />
+                    {/* MSIL indent lines the supply check held for Convert / Cancel. */}
+                    {b.awaitingDecision > 0 && (
+                      <span
+                        className="mt-1 block w-fit px-1.5 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-800 border-amber-200 whitespace-nowrap"
+                        title="Stock arrived after the MSIL Supply Date or the 7-day window. Open the booking to Convert or Cancel."
+                      >
+                        {b.awaitingDecision} indent line{b.awaitingDecision === 1 ? "" : "s"} need a decision
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-4">
                     {b.locked ? (

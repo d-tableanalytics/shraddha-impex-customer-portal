@@ -4,8 +4,10 @@ import {
   listCategories, checkSkuAvailable, createItem, getItemReferences, deleteItem, renameItemCode,
 } from './inventory.controller.js';
 import { postAdjustment, getAdjustmentPreview, getReasonCodes } from './adjustment.controller.js';
+import { getPricing, putPricing } from './skuPricing.controller.js';
 import { recalculate as recalculateConsumption } from './consumption.controller.js';
 import { listLocations, createLocation, updateLocation, setDefaultLocation } from './location.controller.js';
+import { listBrandsHandler, createBrand, updateBrand, deleteBrand } from './brand.controller.js';
 import { getConfig, getConfigHistory, updateConfig } from './config.controller.js';
 import { getQueue, postAuto, postAssign, postReassign } from './indentAssignment.controller.js';
 import {
@@ -127,6 +129,12 @@ router.patch('/items/:sku/planning', authorize(PERMISSIONS.MANAGE_INVENTORY_MAST
 router.get('/adjustments/reason-codes', authorize(PERMISSIONS.ADJUST_STOCK), getReasonCodes);
 router.get('/items/:sku/adjust', authorize(PERMISSIONS.ADJUST_STOCK), getAdjustmentPreview);
 router.post('/items/:sku/adjust', authorize(PERMISSIONS.ADJUST_STOCK), postAdjustment);
+
+// SKU pricing — the Pricing side of the same Update Stock dialog. Writes
+// Product.prices only; stock is untouched. MANAGE_PRICING for the read as well,
+// because the tier figures are commercially sensitive and this is the editor.
+router.get('/items/:sku/pricing', authorize(PERMISSIONS.MANAGE_PRICING), getPricing);
+router.put('/items/:sku/pricing', authorize(PERMISSIONS.MANAGE_PRICING), putPricing);
 
 // ── Stock ledger (M2) ─────────────────────────────────────────────────────
 // Read-only. Movements are posted through LedgerService by workflows in later
@@ -270,6 +278,9 @@ const MAY_IMPORT = [
   PERMISSIONS.POST_STOCK_OUT,
   PERMISSIONS.ADJUST_STOCK,
   PERMISSIONS.PERFORM_COUNT,
+  // The SKU Pricing sheet. Its staged rows carry prices, so its preview and
+  // error report are additionally held to this permission in the controller.
+  PERMISSIONS.MANAGE_PRICING,
 ];
 
 router.get('/imports/types', authorize(...MAY_IMPORT), listImportTypes);
@@ -303,6 +314,13 @@ router.get('/exports/:exportType', authorize(PERMISSIONS.EXPORT_INVENTORY), down
 // ── Locations ─────────────────────────────────────────────────────────────
 // Readable by anyone who can see inventory (they pick a location on later
 // screens); mutable only by whoever configures the system.
+// Brand master. Same permission as locations: adding a brand changes every
+// brand list in both portals, which is a configuration decision.
+router.get('/brands', authorize(PERMISSIONS.CONFIGURE_INVENTORY), listBrandsHandler);
+router.post('/brands', authorize(PERMISSIONS.CONFIGURE_INVENTORY), createBrand);
+router.patch('/brands/:key', authorize(PERMISSIONS.CONFIGURE_INVENTORY), updateBrand);
+router.delete('/brands/:key', authorize(PERMISSIONS.CONFIGURE_INVENTORY), deleteBrand);
+
 router.get('/locations', authorize(PERMISSIONS.VIEW_INVENTORY), listLocations);
 router.post('/locations', authorize(PERMISSIONS.CONFIGURE_INVENTORY), createLocation);
 router.patch('/locations/:id', authorize(PERMISSIONS.CONFIGURE_INVENTORY), updateLocation);

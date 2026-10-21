@@ -25,7 +25,7 @@ import { useInventoryStore } from '../../store/inventoryStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import {
-  canUseInventoryMaster, canEditPlanning, canEditBoxNo, canAdjustStock,
+  canUseInventoryMaster, canEditPlanning, canEditBoxNo, canAdjustStock, canManagePricing,
   hasPermission, PERMISSIONS,
 } from '../../utils/permissions';
 import { onStockUpdated } from '../../services/socketService';
@@ -443,13 +443,20 @@ export const InventoryMaster = () => {
 
   // The route is also guarded server-side on every request; this only avoids
   // rendering a screen the user could not populate.
-  if (user && !canUseInventoryMaster(user)) return <Navigate to="/" replace />;
+  // Pricing holders reach this screen for the Update Stock → Pricing tab even
+  // when their role does not use the inventory master otherwise (Sales). What
+  // they can do here is still decided per action below.
+  if (user && !canUseInventoryMaster(user) && !canManagePricing(user)) return <Navigate to="/" replace />;
 
   const canEdit = canEditPlanning(user);
   // Narrower than canEdit on purpose — an Inventory Manager maintains planning
   // inputs but only an Admin may move a SKU's box. Enforced server-side too.
   const canEditBox = canEditBoxNo(user);
   const canAdjust = canAdjustStock(user);
+  // Pricing lives in the same Update Stock dialog, as its own tab. A role may
+  // hold either permission without the other, so the row action shows for either.
+  const canPrice = canManagePricing(user);
+  const canUpdate = canAdjust || canPrice;
   // Admin only, and narrower than editing on purpose: a SKU code is a
   // business key other records name, so removing one is not maintenance.
   const canDelete = hasPermission(user, PERMISSIONS.DELETE_SKU);
@@ -668,14 +675,14 @@ export const InventoryMaster = () => {
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs text-right">Available</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs text-center">Planning</th>
                   <th className="px-6 py-4 font-bold text-slate-600 uppercase text-xs">Status</th>
-                  {canAdjust && <th className="px-6 py-4 w-px" aria-label="Actions" />}
+                  {canUpdate && <th className="px-6 py-4 w-px" aria-label="Actions" />}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filtering && (
                   <TableSkeleton
                     rows={items.length || 10}
-                    columns={9 + (canEdit ? 1 : 0) + (canAdjust ? 1 : 0)}
+                    columns={9 + (canEdit ? 1 : 0) + (canUpdate ? 1 : 0)}
                   />
                 )}
 
@@ -755,7 +762,7 @@ export const InventoryMaster = () => {
                     </td>
                     {/* stopPropagation, or the row's own click opens the detail
                         panel behind the dialog. */}
-                    {canAdjust && (
+                    {canUpdate && (
                       <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
@@ -765,7 +772,7 @@ export const InventoryMaster = () => {
                                      hover:text-primary-700 hover:border-primary-300 transition-colors"
                         >
                           <PackagePlus size={13} />
-                          Update stock
+                          {canAdjust ? 'Update stock' : 'Update pricing'}
                         </button>
                       </td>
                     )}
@@ -775,7 +782,7 @@ export const InventoryMaster = () => {
                 {!filtering && items.length === 0 && (
                   <tr>
                     <td
-                      colSpan={9 + (canEdit ? 1 : 0) + (canAdjust ? 1 : 0)}
+                      colSpan={9 + (canEdit ? 1 : 0) + (canUpdate ? 1 : 0)}
                       className="px-6 py-12 text-center text-slate-500 font-medium"
                     >
                       No products match these filters.
@@ -900,6 +907,8 @@ export const InventoryMaster = () => {
         brand={adjusting?.brand}
         onClose={() => setAdjusting(null)}
         onDone={() => fetchItems()}
+        canAdjust={canAdjust}
+        canPrice={canPrice}
       />
     </div>
   );

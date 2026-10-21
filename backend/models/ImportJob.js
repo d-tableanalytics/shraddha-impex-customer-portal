@@ -30,6 +30,7 @@ export const IMPORT_TYPES = [
   'physical-count',
   'locations',
   'product-details',
+  'sku-pricing',
 ];
 
 /**

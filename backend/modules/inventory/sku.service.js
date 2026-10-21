@@ -9,7 +9,7 @@ import StockAdjustment from '../../models/StockAdjustment.js';
 import InventoryAlert from '../../models/InventoryAlert.js';
 import ProductDetail from '../../models/ProductDetail.js';
 import { removeImageFile } from '../../middlewares/productImageUpload.js';
-import { ALL_BRANDS } from '../../utils/brandAccess.js';
+import { allBrands } from '../../utils/brandAccess.js';
 import { registerMsilCode } from '../../utils/msilRegistry.js';
 
 /**
@@ -137,11 +137,11 @@ const CREATE_FIELDS = [
 export const createSku = async ({ payload = {}, actor, allowedBrandList }) => {
   const skuCode = normaliseSkuCode(payload.skuCode);
 
-  const brand = ALL_BRANDS.find(
+  const brand = allBrands().find(
     (b) => b.toLowerCase() === String(payload.brand ?? '').trim().toLowerCase(),
   );
   if (!brand) {
-    fail(`Brand must be one of ${ALL_BRANDS.join(', ')}.`, 400, 'BRAND_REQUIRED');
+    fail(`Brand must be one of ${allBrands().join(', ')}.`, 400, 'BRAND_REQUIRED');
   }
   if (Array.isArray(allowedBrandList) && !allowedBrandList.includes(brand)) {
     fail(`You do not have access to ${brand}.`, 403, 'BRAND_FORBIDDEN');

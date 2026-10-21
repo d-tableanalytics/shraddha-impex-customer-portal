@@ -1,4 +1,5 @@
 import User from '../../models/User.js';
+import { mergeBrandAccess } from '../../utils/brandRegistry.js';
 import ArchivedUser from '../../models/ArchivedUser.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { RoleAssignmentError } from '../../shared/permissions/assignment.js';
@@ -238,7 +239,8 @@ export const createUser = async (req, res, next) => {
       role: requestedRole,
       customerCategory: customerCategory === 'MSIL' ? 'MSIL' : 'Customer',
       status: status || 'Active',
-      ...(brandAccess ? { brandAccess } : {}),
+      // Keyed by configured brands only — see mergeBrandAccess().
+      ...(brandAccess ? { brandAccess: mergeBrandAccess(null, brandAccess) } : {}),
       // Written once, here. updateUser() refuses them from now on.
       ...master,
     });
@@ -282,6 +284,11 @@ export const updateUser = async (req, res, next) => {
     const updates = {};
     for (const key of ALLOWED_UPDATES) {
       if (key in req.body) updates[key] = req.body[key];
+    }
+    // Merged per brand onto what is stored, never replaced: a form that does
+    // not know about a newer brand must not revoke it. See mergeBrandAccess().
+    if ('brandAccess' in updates) {
+      updates.brandAccess = mergeBrandAccess(target.brandAccess, updates.brandAccess);
     }
 
     // The two legacy spellings stay accepted so an integration still sending

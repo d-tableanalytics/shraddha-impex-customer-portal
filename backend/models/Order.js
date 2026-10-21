@@ -1,9 +1,11 @@
 import mongoose from 'mongoose';
 
 const orderSchema = new mongoose.Schema({
+  // A configured brand (models/Brand.js). No enum: brands are created at
+  // runtime, and the value is always copied from the product being ordered,
+  // which already carries a real one.
   brand: {
     type: String,
-    enum: ['Koken', 'BIX', 'IMADA'],
     required: true
   },
   user: {
@@ -174,6 +176,22 @@ const orderSchema = new mongoose.Schema({
    * has no schedule and is left out of the email entirely.
    */
   scheduledDate: { type: Date, default: null },
+  /**
+   * MSIL SUPPLY DATE — the date the MSIL customer needs the goods by, entered
+   * on the Sales Desk by Sales or an Admin. BOOKING-LEVEL: written to every
+   * row of the booking (and mirrored onto its open indents, which is where the
+   * auto-conversion rule reads it — see utils/msilSupply.js).
+   *
+   * Separate from promiseDate / supplyByDate ("Supply By" on the picklist),
+   * which is the PO's promise and only exists once a PO is raised; an indent
+   * can convert long before that.
+   *
+   * Null means none given, and then arriving stock converts the indent exactly
+   * as it always has.
+   */
+  msilSupplyDate: { type: Date, default: null },
+  msilSupplyDateSetBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  msilSupplyDateSetAt: { type: Date, default: null },
   scheduledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   scheduledAt: { type: Date, default: null },
   scheduleNote: { type: String, default: null },

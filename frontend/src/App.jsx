@@ -4,7 +4,7 @@ import { queryClient } from "./lib/queryClient";
 import { Toaster } from "react-hot-toast";
 import { router } from "./routes";
 import { useEffect } from "react";
-import { initSocket } from "./services/socketService";
+import { initSocket, onBrandsUpdated } from "./services/socketService";
 import { useUserStore } from "./store/userStore";
 import { useThemeStore } from "./store/themeStore";
 
@@ -12,6 +12,7 @@ import { useThemeStore } from "./store/themeStore";
 
 function App() {
   const fetchUser = useUserStore((state) => state.fetchUser);
+  const refreshSession = useUserStore((state) => state.refreshSession);
   const initTheme = useThemeStore((state) => state.initTheme);
 
   useEffect(() => {
@@ -19,6 +20,10 @@ function App() {
     initSocket();
     fetchUser();
   }, [fetchUser, initTheme]);
+
+  // A brand created anywhere appears in every brand list on this screen
+  // without a reload.
+  useEffect(() => onBrandsUpdated(() => refreshSession()), [refreshSession]);
 
   return (
     <QueryClientProvider client={queryClient}>

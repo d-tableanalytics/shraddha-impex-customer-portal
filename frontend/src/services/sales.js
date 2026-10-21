@@ -15,6 +15,23 @@ export const salesApi = {
     return res.data.data;
   },
 
+  /**
+   * MSIL Supply Date for a booking: 'YYYY-MM-DD', or null to clear it. The
+   * server re-checks the booking's waiting indents against the new date.
+   */
+  setSupplyDate: async (orderId, supplyDate) => {
+    const res = await api.put(`/sales/bookings/${encodeURIComponent(orderId)}/supply-date`, { supplyDate });
+    return res.data.data;
+  },
+
+  /** Convert an MSIL indent the supply check held back. */
+  convertHeldIndent: async (reservationId) =>
+    (await api.post(`/sales/indents/${encodeURIComponent(reservationId)}/convert`)).data,
+
+  /** Cancel an MSIL indent the supply check held back. */
+  cancelHeldIndent: async (reservationId, reason = null) =>
+    (await api.post(`/sales/indents/${encodeURIComponent(reservationId)}/cancel`, { reason })).data,
+
   /** lines: [{ id?, skuCode, quantity }] — omit id to add a new line. */
   updateItems: async (orderId, lines) => {
     const res = await api.put(`/sales/bookings/${encodeURIComponent(orderId)}/items`, { lines });

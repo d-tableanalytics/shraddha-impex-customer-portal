@@ -3,6 +3,7 @@ import {
   getBookings, getBookingDetail, updateBookingItems, raisePo,
   reorderBookingLines, updateBookingDetails,
   getBookingPricing, setBookingPricing, setBookingManualPricing,
+  setBookingSupplyDate, convertHeldIndent, cancelHeldIndent,
 } from './sales.controller.js';
 import { protect } from '../../middlewares/auth.js';
 import { authorize } from '../../middlewares/rbac.js';
@@ -24,6 +25,27 @@ router.put(
 );
 
 router.post('/bookings/:orderId/po', authorize(PERMISSIONS.RAISE_PO), raisePo);
+
+/**
+ * MSIL Supply Date (utils/msilSupply.js). Booking-level, and editable after the
+ * PO too: it is not a line edit, it is the date the customer needs goods by,
+ * and it only decides how indent stock is converted.
+ */
+router.put(
+  '/bookings/:orderId/supply-date',
+  authorize(PERMISSIONS.EDIT_BOOKING_PRE_PO, PERMISSIONS.OVERRIDE_PO_LOCK),
+  setBookingSupplyDate,
+);
+// The desk's decision on an MSIL indent the supply check held back. Same
+// permission as choosing where arriving stock goes on Indent Stock Assignment.
+//
+// BOTH permissions (two guards; `authorize` alone is ANY-of): the booking desk,
+// because the decision is about a customer's booking, and assign_indent_stock,
+// because it is about where stock goes. Import Team holds the second without
+// the first and must not decide customers' bookings.
+const MAY_DECIDE_INDENT = [authorize(PERMISSIONS.VIEW_ALL_BOOKINGS), authorize(PERMISSIONS.ASSIGN_INDENT_STOCK)];
+router.post('/indents/:id/convert', ...MAY_DECIDE_INDENT, convertHeldIndent);
+router.post('/indents/:id/cancel', ...MAY_DECIDE_INDENT, cancelHeldIndent);
 
 /**
  * Rearrange the SKU lines to match the customer's actual PO.

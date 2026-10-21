@@ -18,10 +18,11 @@ import {
   adjustReservedQty, adjustConsumedQty,
 } from '../../utils/stockLedger.js';
 import { recordAudit } from '../../utils/auditLog.js';
+import { brandOfProduct } from '../../utils/brandAccess.js';
 import { attachCustomerDetails } from '../../utils/customerContact.js';
 import {
   QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
-  openIndentBySku, openIndentsByOrder, openIndentLinesFor,
+  openIndentBySku, openIndentsByOrder, openIndentLinesFor, awaitingDecisionByOrder,
 } from '../../utils/bookingJourney.js';
 import { runInTransaction } from '../../utils/transaction.js';
 import { settleBooking } from '../../utils/stockSettlement.js';
@@ -30,6 +31,7 @@ import {
 } from '../../utils/deliverySchedule.js';
 import { reorderLines, updateDetails } from './bookingEdit.service.js';
 import { FieldValidationError } from '../../utils/bookingFields.js';
+import { setSupplyDate, convertIndent, cancelIndent } from './msilSupply.service.js';
 
 /**
  * Sales desk: review confirmed bookings, amend them while the PO is pending,
@@ -288,17 +290,22 @@ export const getBookings = async (req, res, next) => {
       await (async () => {
         const groups = [...byBooking.values()];
         const indents = await openIndentsByOrder(groups.map((g) => g[0]?.orderId));
+        const held = await awaitingDecisionByOrder(groups.map((g) => g[0]?.orderId));
         // Sequential rather than Promise.all: valueBooking only queries for a
         // booking that has an indent SKU its own rows cannot rate, so most
         // iterations touch no database at all.
         const shaped = [];
         for (const b of groups) {
           const indentBySku = indents.get(String(b[0]?.orderId)) ?? new Map();
-          shaped.push(shapeBooking(b, boxNumbers, {
-            includePricing: mayPrice(req.user),
-            indentBySku,
-            value: mayPrice(req.user) ? await valueBooking({ rows: b, indentBySku }) : null,
-          }));
+          shaped.push({
+            ...shapeBooking(b, boxNumbers, {
+              includePricing: mayPrice(req.user),
+              indentBySku,
+              value: mayPrice(req.user) ? await valueBooking({ rows: b, indentBySku }) : null,
+            }),
+            // MSIL indent lines waiting for Convert / Cancel (utils/msilSupply.js).
+            awaitingDecision: held.get(String(b[0]?.orderId)) || 0,
+          });
         }
         return shaped;
       })(),
@@ -599,8 +606,7 @@ const runUpdateItems = async (req, session) => {
         shopNumber: template.shopNumber || null,
         gstCode: template.gstCode || null,
         orderId: template.orderId,
-        brand: product.constructor.modelName.toLowerCase().includes('bix') ? 'BIX'
-          : product.constructor.modelName.toLowerCase().includes('imada') ? 'IMADA' : 'Koken',
+        brand: brandOfProduct(product),
         user: template.user,
         status: template.status,
         orderTimestamp: template.orderTimestamp,
@@ -1022,7 +1028,7 @@ export const raisePo = async (req, res, next) => {
       // The price offered is part of what was agreed, so it belongs in the
       // trail beside the lock rather than only on the rows it was written to.
       + (pricing?.priceType
-        ? ` Priced at the ${pricing.priceTypeLabel} rate — ${pricing.pricedLines} of ${pricing.lines} line(s) rated, total ₹${pricing.totalAmount}.`
+        ? ` Priced at the ${pricing.priceTypeLabel} rate — ${pricing.pricedLines} of ${pricing.lines} line(s) rated.`
         : '')
       // A delivery date given to the customer is a commitment, so it goes on
       // the trail beside the lock and the price rather than only on the rows.
@@ -1034,7 +1040,10 @@ export const raisePo = async (req, res, next) => {
         meta: {
           orderId, poNumber, poGeneratedAt: now, reBoxed,
           priceType: pricing?.priceType ?? null,
-          totalAmount: pricing?.totalAmount ?? null,
+          // No amount: the audit log is shared with the Employee Portal, whose
+          // HRMS audit screen shows it to roles without pricing access. The
+          // amounts are on the order rows, behind view_pricing.
+          pricedLines: pricing?.pricedLines ?? null,
           deliveryScheduleDate: scheduleDate,
         },
       },
@@ -1192,7 +1201,7 @@ export const setBookingPricing = async (req, res, next) => {
         ? `Booking ${orderId} priced at the ${result.priceTypeLabel} rate`
           + (before?.priceType && before.priceType !== priceType
             ? ` (was ${before.priceTypeLabel})` : '')
-          + `. ${result.pricedLines} of ${result.lines} line(s) rated, total ₹${result.totalAmount}.`
+          + `. ${result.pricedLines} of ${result.lines} line(s) rated.`
         : `Pricing removed from booking ${orderId}`
           + (before?.priceType ? ` (was ${before.priceTypeLabel}).` : '.'),
       req,
@@ -1201,7 +1210,8 @@ export const setBookingPricing = async (req, res, next) => {
           orderId,
           from: before?.priceType ?? null,
           to: result.priceType,
-          totalAmount: result.totalAmount,
+          // No amount — see the note on the PO audit entry above.
+          pricedLines: result.pricedLines,
           unpricedLines: result.unpricedLines,
         },
       },
@@ -1262,7 +1272,7 @@ export const setBookingManualPricing = async (req, res, next) => {
         ? `Booking ${orderId} priced manually`
           + (before?.priceType && before.priceType !== result.priceType
             ? ` (was ${before.priceTypeLabel})` : '')
-          + `. ${result.pricedLines} of ${result.lines} line(s) rated, total ₹${result.totalAmount}.`
+          + `. ${result.pricedLines} of ${result.lines} line(s) rated.`
         : `Pricing removed from booking ${orderId}`
           + (before?.priceType ? ` (was ${before.priceTypeLabel}).` : '.'),
       req,
@@ -1272,7 +1282,8 @@ export const setBookingManualPricing = async (req, res, next) => {
           from: before?.priceType ?? null,
           to: result.priceType,
           prices,
-          totalAmount: result.totalAmount,
+          // No amount — see the note on the PO audit entry above.
+          pricedLines: result.pricedLines,
           unpricedLines: result.unpricedLines,
         },
       },
@@ -1365,4 +1376,43 @@ export default {
   getBookings, getBookingDetail, updateBookingItems, raisePo,
   reorderBookingLines, updateBookingDetails,
   getBookingPricing, setBookingPricing, setBookingManualPricing,
+};
+
+// ─── MSIL Supply Date and held indents (rule: utils/msilSupply.js) ───────────
+
+/** PUT /api/v1/sales/bookings/:orderId/supply-date — Body: { supplyDate: 'YYYY-MM-DD' | null } */
+export const setBookingSupplyDate = async (req, res, next) => {
+  try {
+    const data = await setSupplyDate({
+      orderId: req.params.orderId, supplyDate: req.body?.supplyDate ?? null, actor: req.user, req,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/v1/sales/indents/:id/convert */
+export const convertHeldIndent = async (req, res, next) => {
+  try {
+    const data = await convertIndent({ id: req.params.id, actor: req.user, req });
+    res.status(200).json({
+      success: true,
+      message: `${data.quantity} unit(s) of ${data.skuCode} converted onto ${data.orderId}.`
+        + (data.remaining > 0 ? ` ${data.remaining} still waiting on the indent.` : ''),
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/v1/sales/indents/:id/cancel — Body: { reason? } */
+export const cancelHeldIndent = async (req, res, next) => {
+  try {
+    const data = await cancelIndent({ id: req.params.id, reason: req.body?.reason, actor: req.user, req });
+    res.status(200).json({ success: true, message: 'Indent cancelled.', data });
+  } catch (error) {
+    next(error);
+  }
 };

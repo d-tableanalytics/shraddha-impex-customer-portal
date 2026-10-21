@@ -22,9 +22,10 @@ import mongoose from 'mongoose';
  * That is exactly the behaviour the separate collections used to provide, so
  * every existing caller — the reservations, orders and sales controllers, the
  * stock ledger, brandAccess and the migration scripts — keeps working unchanged
- * while the storage underneath is unified. `constructor.modelName` still reads
- * 'Product_koken' / 'Product_bix' / 'Product_imada', so the brand-sniffing
- * helpers in those controllers also keep working.
+ * while the storage underneath is unified. A product's brand is read from the
+ * `brand` field the discriminator stores, never guessed from the model name:
+ * brands are created at runtime (models/Brand.js), so a list of names to match
+ * against would always be one brand out of date.
  *
  * Query across all brands at once with the base `Product` model.
  */
@@ -173,31 +174,55 @@ export const Product = mongoose.models.Product
   ? mongoose.models.Product
   : mongoose.model('Product', productSchema, 'products');
 
-// Canonical brand names. The discriminator VALUE is what lands in the document,
-// so these strings are the stored representation and must not drift.
+// Canonical brand names, by Brand.key. The discriminator VALUE is what lands in
+// the document, so these strings are the stored representation and must not
+// drift. Seeded with the three built-in brands; a brand created at runtime is
+// added by registerBrandValue(), which utils/brandAccess.js calls whenever the
+// brand list (utils/brandRegistry.js) changes. Kept here rather than imported
+// from the registry so the model has no dependency on it.
 export const BRAND_VALUES = {
   koken: 'Koken',
   bix: 'BIX',
   imada: 'IMADA',
 };
 
+export const registerBrandValue = (key, name) => {
+  if (key && name) BRAND_VALUES[key] = name;
+};
+
+/** Brand name or key, any case -> Brand.key ('Stanley Tools' -> 'stanleytools'). */
+const brandKeyOf = (brand) => {
+  const text = String(brand ?? '').trim().toLowerCase();
+  if (BRAND_VALUES[text]) return text;
+  const named = Object.entries(BRAND_VALUES).find(([, name]) => name.toLowerCase() === text);
+  return named ? named[0] : text.replace(/[^a-z0-9]/g, '');
+};
+
 /**
  * Brand-scoped model. Kept with the same name and signature as before so
- * existing imports continue to resolve.
+ * existing imports continue to resolve. Accepts the brand's name or key in any
+ * case, and works for any brand — a discriminator can be added to the base
+ * model at any time, which is what lets a brand created at runtime get one.
  */
 export const createProductModel = (brand) => {
-  const key = String(brand).trim().toLowerCase();
+  const key = brandKeyOf(brand);
   const modelName = `Product_${key}`;
+  const value = BRAND_VALUES[key] ?? String(brand).trim();
 
   // Re-registering a discriminator throws, and this module is imported from many
-  // entry points (server, scripts, tests).
-  if (mongoose.models[modelName]) return mongoose.models[modelName];
+  // entry points (server, scripts, tests) — so an existing model is reused...
+  const existing = mongoose.models[modelName];
+  if (existing) {
+    if (existing.schema?.discriminatorMapping?.value === value) return existing;
+    // ...unless it stamps a different brand name. That happens when a brand is
+    // deleted and created again under the same key with another spelling
+    // ("Stanley Tools" -> "Stanley-Tools"): the old model would keep filing new
+    // products under the deleted name. Rebuilt so it stamps the current one.
+    delete Product.discriminators[modelName];
+    mongoose.deleteModel(modelName);
+  }
 
-  return Product.discriminator(
-    modelName,
-    new mongoose.Schema({}),
-    BRAND_VALUES[key] ?? brand,
-  );
+  return Product.discriminator(modelName, new mongoose.Schema({}), value);
 };
 
 export const ProductKoken = createProductModel('koken');

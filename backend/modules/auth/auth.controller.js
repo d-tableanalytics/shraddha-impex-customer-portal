@@ -31,6 +31,7 @@ import {
   menuFor,
 } from '../../utils/roleResolver.js';
 import { isHrmsRoleKey } from '../../shared/permissions/constants.js';
+import { brandsVisibleTo } from '../../utils/brandAccess.js';
 
 /** The device label stored against a session, so a person can recognise it. */
 const agentOf = (req) => String(req?.headers?.['user-agent'] ?? '').slice(0, 255) || null;
@@ -464,6 +465,14 @@ export const getMe = async (req, res, next) => {
         permissions: resolveUserPermissions(user),
         grants: grantsForUser(user),
         menu: menuFor(user),
+        /**
+         * The configured brands this browser should know about — every
+         * dropdown, filter and account form builds its brand options from
+         * this, so a brand created in Inventory Configuration appears in all of
+         * them without any screen hard-coding a list. Scoped by
+         * brandsVisibleTo(): a customer is told only about their own brands.
+         */
+        brands: brandsVisibleTo(user),
         /**
          * Whether this account has HRMS access at all, and which HRMS roles it
          * holds. NOT the HRMS actor: that needs the Employee record behind the

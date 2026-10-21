@@ -263,6 +263,16 @@ export const IndentAssignment = () => {
                           <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">
                             {fmtDate(i.date)}
                             {i.scheduledDate && <span className="block text-[10px] text-slate-400">promised {fmtDate(i.scheduledDate)}</span>}
+                            {/* MSIL supply check: the stock arrived late for this
+                                line. Assigning it here counts as the desk's Convert. */}
+                            {i.supplyCheck?.status === 'Awaiting decision' && (
+                              <span
+                                className="mt-1 inline-block px-1.5 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-800 border-amber-200"
+                                title={i.supplyCheck.reason || undefined}
+                              >
+                                MSIL: arrived late, awaiting decision
+                              </span>
+                            )}
                           </td>
                           <td className="px-5 py-2.5">
                             <div className="flex items-center justify-end gap-2">

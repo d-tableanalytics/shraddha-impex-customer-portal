@@ -1,5 +1,4 @@
 import Reservation from '../../models/Reservation.js';
-import { ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
 import Order from '../../models/Order.js';
 import AuditLog from '../../models/AuditLog.js';
 import MsilCode from '../../models/MsilCode.js';
@@ -7,7 +6,9 @@ import { nextSequence, nextSequenceBlock } from '../../models/Counter.js';
 import { io } from '../../server.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
-import { allowedBrandModels, canAccessBrand } from '../../utils/brandAccess.js';
+import {
+  allowedBrandModels, allBrandModels, canAccessBrand, brandOfProduct,
+} from '../../utils/brandAccess.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
 import { sendDeliverySchedule } from '../../utils/deliverySchedule.js';
 import { recordAudit } from '../../utils/auditLog.js';
@@ -17,14 +18,7 @@ import { msilAppliesTo } from '../../utils/msilVisibility.js';
 import { hasPermission, PERMISSIONS, isSuperAdmin} from '../../middlewares/rbac.js';
 import { enforceMoq, moqError } from '../../utils/moq.js';
 import { sendIndentRaisedMails, sendBookingMails } from '../../utils/indentMail.js';
-
-// The product collection is split one-per-brand; the brand is implied by which
-// collection a doc lives in (there is no brand field on the schema).
-const BRAND_MODELS = [
-  [ProductKoken, 'Koken'],
-  [ProductBIX, 'BIX'],
-  [ProductIMADA, 'IMADA'],
-];
+import { supplyCheckNow, holdForDecision } from '../inventory/indentAvailability.service.js';
 
 // Helper to find product across brands. Pass a session to read within a
 // transaction so the stock value is consistent for the read-modify-write cycle.
@@ -35,7 +29,7 @@ const BRAND_MODELS = [
 // internal/system callers (e.g. the expiry job), never for a request path.
 const findProductById = async (productId, session = null, user = null) => {
   const opts = session ? { session } : {};
-  const models = user ? allowedBrandModels(user) : BRAND_MODELS;
+  const models = user ? allowedBrandModels(user) : allBrandModels();
   for (const [Model] of models) {
     const p = await Model.findById(productId, null, opts);
     if (p) return p;
@@ -43,20 +37,15 @@ const findProductById = async (productId, session = null, user = null) => {
   return null;
 };
 
-// Derive the brand from a live product doc's model (products_koken → 'Koken').
-// The brand is not a schema field — it is implied by which collection it lives in.
-const brandFromModel = (doc) => {
-  const name = (doc?.constructor?.modelName || '').toLowerCase();
-  if (name.includes('bix')) return 'BIX';
-  if (name.includes('imada')) return 'IMADA';
-  return 'Koken';
-};
+// The brand a live product doc belongs to — the field the discriminator
+// stores, so a brand created at runtime is reported as itself.
+const brandFromModel = brandOfProduct;
 
 // Read-side lookup that also resolves the brand (derived from the collection).
 // Returns a plain object so callers can safely spread extra fields onto it.
 // Scoped to the user's permitted brands when `user` is supplied.
 const findProductWithBrand = async (productId, user = null) => {
-  const models = user ? allowedBrandModels(user) : BRAND_MODELS;
+  const models = user ? allowedBrandModels(user) : allBrandModels();
   for (const [Model, brand] of models) {
     const p = await Model.findById(productId);
     if (p) return { product: { ...p.toObject(), brand }, brand };
@@ -443,7 +432,7 @@ export const restoreBackorder = async (req, res, next) => {
     // bookingCcEmails is selected because the notification below copies the
     // customer's own Cc list, as every other customer-facing mail does.
     const reservation = await Reservation.findById(req.params.id)
-      .populate('customerId', 'user email company bookingCcEmails');
+      .populate('customerId', 'user email company bookingCcEmails customerCategory');
     if (!reservation) {
       throw new Error('Indent not found.');
     }
@@ -482,6 +471,21 @@ export const restoreBackorder = async (req, res, next) => {
       throw new Error(
         `Not enough stock to restore this indent. Requires ${reservation.quantity}, only ${available} available.`
       );
+    }
+
+    // MSIL SUPPLY CHECK (utils/msilSupply.js) — the same rule the automatic
+    // conversion applies, so an admin restore is not a way around it. Stock is
+    // there (checked just above); if it is too late for the booking's Supply
+    // Date or 7-day window, the indent is held for the desk's Convert / Cancel
+    // instead of being restored. On time, it is restored as it always was.
+    const supply = await supplyCheckNow(reservation);
+    if (supply.applies && !supply.onTime) {
+      await holdForDecision(reservation, supply.reason);
+      const err = new Error(`Not restored. ${supply.reason} It is waiting on the Sales Desk for Convert or Cancel.`);
+      err.statusCode = 409;
+      err.status = 409;
+      err.code = 'MSIL_SUPPLY_HELD';
+      throw err;
     }
 
     // Move it back into the active selection list with a fresh 7-day window.

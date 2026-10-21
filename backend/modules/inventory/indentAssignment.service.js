@@ -130,6 +130,12 @@ export const assignmentQueue = async ({ skuCodes = null } = {}) => {
           pending: r.quantity,
           date: r.reservationDate || r.createdAt,
           scheduledDate: r.scheduledDate || null,
+          // The MSIL supply check, so this screen can say a line arrived late
+          // before someone assigns it (doing so counts as the desk's Convert).
+          supplyDate: r.supplyDate || null,
+          supplyCheck: r.supplyCheck?.status
+            ? { status: r.supplyCheck.status, reason: r.supplyCheck.reason || null }
+            : null,
           // With no live booking to join (none, or it was cancelled) the indent
           // can only become a booking of its own, and only whole.
           wholeOnly: !allocationModeFor(r, rowsOf.get(bookingId) || []),
@@ -213,6 +219,19 @@ export const assignToIndent = async ({ indentId, quantity, actor, req, silent = 
     made = await bookForCustomer(customer, [indentDoc]);
   }
   if (!made) throw fail(409, 'The stock or the indent changed a moment ago. Refresh and try again.');
+
+  // An MSIL indent the supply check was holding: assigning it here is the same
+  // decision as Convert on the Sales Desk, and is recorded as one — otherwise
+  // the desk keeps showing Convert / Cancel for a line someone already settled.
+  if (indent.supplyCheck?.status === 'Awaiting decision') {
+    await Reservation.updateOne({ _id: indent._id, 'supplyCheck.status': 'Awaiting decision' }, {
+      $set: {
+        'supplyCheck.status': 'Converted manually',
+        'supplyCheck.decidedBy': actor?._id ?? null,
+        'supplyCheck.decidedAt': new Date(),
+      },
+    });
+  }
 
   if (!silent) await announceIndentBooking(customer, made);
   await audit(

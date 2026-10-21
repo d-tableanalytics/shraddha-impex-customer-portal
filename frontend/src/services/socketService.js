@@ -64,6 +64,17 @@ export const getSocket = () => socket;
  */
 export const STOCK_REFRESH_THROTTLE_MS = 1000;
 
+/**
+ * A brand was created, changed or deleted (Inventory Configuration). Returns an
+ * unsubscribe function. The payload is only a hint — the handler re-reads the
+ * signed-in user, which carries the brand list this browser is allowed.
+ */
+export const onBrandsUpdated = (handler) => {
+  const s = socket || initSocket();
+  s.on('brands:updated', handler);
+  return () => s.off('brands:updated', handler);
+};
+
 export const onStockUpdated = (handler, { throttleMs = STOCK_REFRESH_THROTTLE_MS } = {}) => {
   const s = socket || initSocket();
   const listener = throttleMs > 0 ? throttleTrailing(handler, throttleMs) : handler;

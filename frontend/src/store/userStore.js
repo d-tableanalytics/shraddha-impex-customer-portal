@@ -52,6 +52,23 @@ export const useUserStore = create((set) => ({
     }
   },
 
+  /**
+   * Re-read the signed-in user WITHOUT the loading state, so the screen stays
+   * where it is. Used when something the user object carries changes
+   * elsewhere — today, the brand list. Replacing `user` re-renders every
+   * screen that reads it, which is what puts a new brand into dropdowns that
+   * are already open.
+   */
+  refreshSession: async () => {
+    if (!localStorage.getItem('token')) return;
+    try {
+      const user = await usersApi.getCurrentUser();
+      set({ user });
+    } catch {
+      // A failed background refresh changes nothing; the next one will retry.
+    }
+  },
+
   updateProfile: async (updates) => {
     try {
       const user = await usersApi.updateProfile(updates);

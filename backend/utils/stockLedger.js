@@ -1,4 +1,4 @@
-import { ProductKoken, ProductBIX, ProductIMADA } from '../models/Product.js';
+import { allBrandModels } from './brandAccess.js';
 import { recordStockMovement } from './dualWrite.js';
 
 /**
@@ -28,12 +28,10 @@ import { recordStockMovement } from './dualWrite.js';
  * unmigrated caller degrades rather than silently dropping history.
  */
 
-const MODELS = [ProductKoken, ProductBIX, ProductIMADA];
-
 /** Find a product by SKU across every brand collection. */
 export const findProductBySku = async (skuCode, session = null) => {
   const opts = session ? { session } : {};
-  for (const Model of MODELS) {
+  for (const [Model] of allBrandModels()) {
     const p = await Model.findOne({ skuCode }, null, opts);
     if (p) return p;
   }

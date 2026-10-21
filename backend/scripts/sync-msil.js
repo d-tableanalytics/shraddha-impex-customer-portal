@@ -43,13 +43,17 @@ const { connectDatabase } = await import('../config/database.js');
 const { Product } = await import('../models/Product.js');
 const MsilCode = (await import('../models/MsilCode.js')).default;
 const { registerMsilCodes } = await import('../utils/msilRegistry.js');
-const { ALL_BRANDS } = await import('../utils/brandAccess.js');
+const { allBrands } = await import('../utils/brandAccess.js');
+const { loadBrands } = await import('../utils/brandRegistry.js');
 
 const APPLY = process.argv.includes('--apply');
 const INCLUDE_UNKNOWN_BRANDS = process.argv.includes('--all-brands');
 
 const main = async () => {
   await connectDatabase();
+  // Brands are configurable; read the current list rather than a fixed three.
+  await loadBrands();
+  const ALL_BRANDS = allBrands();
 
   const products = await Product.find(
     { msilCode: { $nin: [null, ''] } },

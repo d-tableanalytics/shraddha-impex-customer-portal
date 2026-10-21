@@ -217,6 +217,27 @@ export const inventoryApi = {
     return response.data;
   },
 
+  /** A SKU's four tier prices, for the Pricing side of Update Stock. Read on open. */
+  getSkuPricing: async (skuCode, brand) => {
+    const response = await api.get(
+      `/inventory/items/${encodeURIComponent(skuCode)}/pricing`,
+      { params: { brand } },
+    );
+    return response.data.data;
+  },
+
+  /**
+   * Update a SKU's prices. `prices` names only the tiers being changed; a null
+   * removes that tier's price. Stock is never touched.
+   */
+  updateSkuPricing: async (skuCode, { brand, prices }) => {
+    const response = await api.put(
+      `/inventory/items/${encodeURIComponent(skuCode)}/pricing`,
+      { brand, prices },
+    );
+    return response.data;
+  },
+
   /**
    * Every SKU code matching a filter — what select-all needs.
    *
@@ -272,6 +293,17 @@ export const inventoryApi = {
     const response = await api.get(`/inventory/locations${qs}`);
     return response.data.data || [];
   },
+
+  // ── Brands ─────────────────────────────────────────────────────────────
+  // The brand master. Every other screen reads brands from the signed-in
+  // user (utils/brandAccess.js); these are for Inventory Configuration only.
+  listBrands: async () => (await api.get("/inventory/brands")).data.data || [],
+  createBrand: async ({ name, hiddenFromMsil = false }) =>
+    (await api.post("/inventory/brands", { name, hiddenFromMsil })).data,
+  updateBrand: async (key, { hiddenFromMsil }) =>
+    (await api.patch(`/inventory/brands/${encodeURIComponent(key)}`, { hiddenFromMsil })).data.data,
+  deleteBrand: async (key) =>
+    (await api.delete(`/inventory/brands/${encodeURIComponent(key)}`)).data,
 
   createLocation: async (payload) => {
     const response = await api.post("/inventory/locations", payload);

@@ -24,6 +24,7 @@ import { picklistFromSalesBooking, allocationPicklistFromSalesBooking } from "..
 import { AllocationsSection } from "./AllocationsSection";
 import { BookingStatusControl, reportStatusChange } from "./BookingStatusControl";
 import { Modal } from "../ui/Modal";
+import { MsilSupplyDateBar, HeldIndentStatus, isMsilBooking } from "./MsilSupply";
 import { stageLabel, normalizeStatus } from "../../constants/bookingLifecycle";
 import { formatRupees, withGstParts, GST_LABEL, MANUAL_PRICE_TYPE, asPrice } from "../../constants/pricing";
 
@@ -78,6 +79,17 @@ export const SalesBookingDrawer = () => {
   const [showPicklist, setShowPicklist] = useState(false);
   // Booking status and cancellation, managed here (see the bar under the header).
   const mayManageOrders = hasPermission(user, PERMISSIONS.MANAGE_ORDERS);
+  // MSIL Supply Date: Sales / Admin set it, before or after the PO. Converting
+  // or cancelling an indent the supply check held back is the same authority
+  // as choosing where arriving stock goes (Indent Stock Assignment).
+  const maySetSupplyDate = hasPermission(user, PERMISSIONS.EDIT_BOOKING_PRE_PO)
+    || hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
+  const mayDecideIndent = hasPermission(user, PERMISSIONS.ASSIGN_INDENT_STOCK);
+  const fetchBookings = useSalesStore((s) => s.fetchBookings);
+  const refreshAfterSupplyChange = async () => {
+    await reloadSelected();
+    await fetchBookings?.();
+  };
   const [statusBusy, setStatusBusy] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -489,6 +501,16 @@ export const SalesBookingDrawer = () => {
               <X size={24} />
             </button>
           </div>
+
+          {/* MSIL bookings only: the date the customer needs the goods by, which
+              decides whether arriving indent stock converts by itself. */}
+          {isMsilBooking(selected) && (
+            <MsilSupplyDateBar
+              booking={selected}
+              canEdit={maySetSupplyDate}
+              onSaved={refreshAfterSupplyChange}
+            />
+          )}
 
           {/* Booking status — managed here on the Sales Desk (Booking History
               only shows it) — and cancellation, which is allowed at any stage. */}
@@ -1443,6 +1465,12 @@ export const SalesBookingDrawer = () => {
                                     expires {new Date(line.expiresOn).toLocaleDateString()}
                                   </div>
                                 )}
+                                {/* MSIL supply check: held lines get Convert / Cancel. */}
+                                <HeldIndentStatus
+                                  line={line}
+                                  canDecide={mayDecideIndent}
+                                  onDone={refreshAfterSupplyChange}
+                                />
                               </td>
                               {mayPrice && (
                                 <td className="px-5 py-3 text-right whitespace-nowrap">

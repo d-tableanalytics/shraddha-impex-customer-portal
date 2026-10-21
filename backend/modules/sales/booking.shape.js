@@ -194,6 +194,13 @@ export const shapeBooking = (
     poDate: first.poDate || null,
     paymentTerm: first.paymentTerm || null,
     promiseDate: first.promiseDate || first.supplyByDate || null,
+    // The MSIL customer's Supply Date (utils/msilSupply.js). Not the same as
+    // promiseDate above, which is the PO's "Supply By".
+    // Any row's, then the open indent's: a row created after the date was set
+    // (an inward allocation, a desk-added line) does not carry it.
+    msilSupplyDate: rows.find((r) => r.msilSupplyDate)?.msilSupplyDate
+      || indent?.lines?.find((l) => l.supplyDate)?.supplyDate
+      || null,
     ...lock,
     pricing: includePricing ? pricingSummary(rows) : null,
     // Confirmed units only. Left exactly as it was: several readers treat it

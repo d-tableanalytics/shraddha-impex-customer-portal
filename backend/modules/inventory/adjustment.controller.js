@@ -20,7 +20,7 @@ const asString = (value) => {
 };
 
 /** Resolve the brand to act on, refusing anything outside the user's access. */
-const resolveBrand = (req, raw) => {
+export const resolveBrand = (req, raw) => {
   const brands = allowedBrands(req.user);
   if (brands.length === 0) {
     const err = new Error('Your account has no brand access.');

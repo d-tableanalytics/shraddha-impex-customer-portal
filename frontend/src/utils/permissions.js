@@ -38,6 +38,8 @@ export const PERMISSIONS = {
   // MIRRORS backend/config/permissions.js — the server refuses the pricing
   // routes without it, so this only decides what the screen offers.
   VIEW_PRICING: "view_pricing",
+  // Change the price schedule (Update Stock -> Pricing, SKU Pricing import).
+  MANAGE_PRICING: "manage_pricing",
 
   // Inventory Management System. The full set is mirrored so the map does not
   // need reopening for each module; only the M1 four are used by any screen yet.
@@ -343,6 +345,13 @@ export const canRaisePo = (user, booking) =>
 export const canViewPricing = (user) => hasPermission(user, PERMISSIONS.VIEW_PRICING);
 
 /**
+ * May change a SKU's tier prices (and so see a SKU's current ones in the editor).
+ * Admin, Sales, Inventory Manager, Management and Import Team by default — never
+ * Warehouse User. Other roles through the matrix's Customer Pricing → Edit.
+ */
+export const canManagePricing = (user) => hasPermission(user, PERMISSIONS.MANAGE_PRICING);
+
+/**
  * Whether to offer the IMS master screens. Customers hold no inventory
  * permission at any level, so they never see them. Sales can read availability
  * through the ordering flow and does not need the master list.
@@ -497,4 +506,5 @@ export default {
   canViewLineItemBoxNo,
   canConfigureInventory,
   canAdjustStock,
+  canManagePricing,
 };

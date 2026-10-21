@@ -1,4 +1,5 @@
-import { Product, ProductKoken, ProductBIX, ProductIMADA } from '../../models/Product.js';
+import { Product, createProductModel } from '../../models/Product.js';
+import { canonicalBrand } from '../../utils/brandRegistry.js';
 import { canAccessBrand, allowedBrands, allowedBrandModels } from '../../utils/brandAccess.js';
 import { msilAppliesTo } from '../../utils/msilVisibility.js';
 import { withCatalogueBoxNoVisibility } from '../../utils/boxNoVisibility.js';
@@ -6,12 +7,10 @@ import { prefixMatch, containsMatch, escapedTerm } from '../../utils/searchQuery
 
 import { isSuperAdmin } from '../../middlewares/rbac.js';
 // Map brand param → correct Mongoose model
+// Any configured brand (utils/brandRegistry.js), by name or key in any case.
 const getModel = (brand) => {
-  const b = String(brand || '').toLowerCase();
-  if (b === 'koken')  return ProductKoken;
-  if (b === 'bix')    return ProductBIX;
-  if (b === 'imada')  return ProductIMADA;
-  return null;
+  const name = canonicalBrand(brand);
+  return name ? createProductModel(name) : null;
 };
 
 // Sort keys accepted by the inventory view, mapped to Mongo sort specs.
@@ -254,11 +253,9 @@ export const getProducts = async (req, res, next) => {
     const page = Math.max(Number(req.query.page) || 1, 1);
     const Model = getModel(brand);
 
-    if (!Model) {
-      return res.status(400).json({ success: false, message: `Unknown brand: ${brand}` });
-    }
-
-    if (!canAccessBrand(req.user, brand)) {
+    // One answer for "no such brand" and "not your brand", so a customer cannot
+    // probe which brand names exist.
+    if (!Model || !canAccessBrand(req.user, brand)) {
       return res.status(403).json({ success: false, message: 'Access to this brand is restricted for your account.' });
     }
 
@@ -298,11 +295,9 @@ export const getProductByCode = async (req, res, next) => {
     const { brand, skuCode } = req.params;
     const Model = getModel(brand);
 
-    if (!Model) {
-      return res.status(400).json({ success: false, message: `Unknown brand: ${brand}` });
-    }
-
-    if (!canAccessBrand(req.user, brand)) {
+    // One answer for "no such brand" and "not your brand", so a customer cannot
+    // probe which brand names exist.
+    if (!Model || !canAccessBrand(req.user, brand)) {
       return res.status(403).json({ success: false, message: 'Access to this brand is restricted for your account.' });
     }
 

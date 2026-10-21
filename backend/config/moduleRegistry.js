@@ -274,7 +274,10 @@ export const MODULES = [
         key: 'pricing',
         label: 'Customer Pricing',
         path: null,
-        actions: { view: ['view_pricing'] },
+        // Edit is CHANGING the schedule (Inventory Master -> Update Stock ->
+        // Pricing, and the SKU Pricing import) - a separate grant from reading
+        // it, since every booking priced afterwards picks up the new figure.
+        actions: { view: ['view_pricing'], edit: ['manage_pricing'] },
       },
     ],
   },
@@ -365,6 +368,24 @@ export const MODULES = [
           create: ['manage_inventory_master'],
           edit: ['manage_inventory_master'],
           delete: ['manage_inventory_master'],
+        },
+      },
+      {
+        /**
+         * The brand master. A brand added here reaches every brand list in
+         * both portals (models/Brand.js, utils/brandRegistry.js). One key for
+         * every action, and the same one Stock Locations use: adding a brand
+         * is configuration, Admin-only unless granted.
+         */
+        key: 'brands',
+        label: 'Brands',
+        path: '/inventory/brands',
+        icon: 'Tags',
+        actions: {
+          view: ['configure_inventory'],
+          create: ['configure_inventory'],
+          edit: ['configure_inventory'],
+          delete: ['configure_inventory'],
         },
       },
       {

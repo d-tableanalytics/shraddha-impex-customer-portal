@@ -10,6 +10,10 @@ import { runReservationExpiryChecks } from './modules/reservations/reservationEx
 import { runPoSettlement } from './modules/orders/poExpiryJob.js';
 import { seedDefaultRoles } from './config/seedRoles.js';
 import { loadRoles } from './utils/roleResolver.js';
+import { seedBrands, loadBrands } from './utils/brandRegistry.js';
+// Imported for its side effect: registers a product model per brand as the
+// brand list loads, before anything asks for one.
+import './utils/brandAccess.js';
 import { seedInventoryDefaults } from './config/seedInventory.js';
 import { seedAlertRules } from './config/seedAlertRules.js';
 import { subscribeAlerts } from './modules/inventory/alert.subscriber.js';
@@ -36,6 +40,11 @@ export const io = new Server(server, {
     credentials: true
   }
 });
+
+// Controllers reach the socket server through req.app.get('io') (stock
+// refreshes, the brand list). Nothing registered it, so every such broadcast
+// was silently skipped.
+app.set('io', io);
 
 // Authenticate the socket handshake (same JWT as the REST API) so notifications
 // can be delivered to the right person. A client without a valid token still
@@ -114,6 +123,15 @@ const startServer = async () => {
    */
   const ROLE_REFRESH_MS = Number(process.env.ROLE_CACHE_REFRESH_MS) || 60_000;
   setInterval(() => { loadRoles(); }, ROLE_REFRESH_MS).unref();
+
+  /*
+   * The brand list (utils/brandRegistry.js), on the same terms: the built-in
+   * brands are made sure of, the list is loaded before the first request, and
+   * it is re-read on the same cadence so a brand added through the Employee
+   * Portal reaches every brand dropdown here within a minute.
+   */
+  await seedBrands();
+  setInterval(() => { loadBrands(); }, ROLE_REFRESH_MS).unref();
 
   // Seed the IMS master data (default stock location, global inventory
   // configuration). Idempotent — only fires when the collections are empty.

@@ -65,6 +65,10 @@ const FILES = [
   'middlewares/portalGuard.js',
   'models/User.js',
   'models/Role.js',
+  // The brand list and how User.brandAccess is merged on save. A portal with
+  // an older copy would drop the flags for brands it did not know about.
+  'models/Brand.js',
+  'utils/brandRegistry.js',
 ];
 
 /*

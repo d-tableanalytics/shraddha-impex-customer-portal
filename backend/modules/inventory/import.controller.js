@@ -47,6 +47,21 @@ const mayImport = (user, importType) => {
   return template.permissions.some((p) => hasPermission(user, p));
 };
 
+/**
+ * May this user read a job's staged rows and error report?
+ *
+ * VIEW_INVENTORY (the route gate) for every sheet except one whose rows are
+ * themselves sensitive — the SKU Pricing sheet's staged rows are the price
+ * list. Those are readable only by someone who may run that import. Answers
+ * 404 rather than 403, so the job's existence is not confirmed either.
+ */
+const mayReadRows = async (user, jobId) => {
+  const job = await ImportJob.findOne({ jobId }, 'importType').lean();
+  if (!job) return false;
+  if (!IMPORT_TEMPLATES[job.importType]?.restrictReadback) return true;
+  return mayImport(user, job.importType);
+};
+
 /** Remove an uploaded file when the request is rejected before staging. */
 const discard = (file) => {
   if (file?.path) fs.promises.unlink(file.path).catch(() => {});
@@ -210,6 +225,9 @@ export const upload = async (req, res, next) => {
 
 export const preview = async (req, res, next) => {
   try {
+    if (!(await mayReadRows(req.user, asString(req.params.jobId)))) {
+      return res.status(404).json({ success: false, message: 'Import not found' });
+    }
     const result = await previewJob(asString(req.params.jobId), {
       page: asInt(req.query.page, 1, 1, 10_000),
       limit: asInt(req.query.limit, 50, 1, 200),
@@ -221,6 +239,9 @@ export const preview = async (req, res, next) => {
 
 export const errors = async (req, res, next) => {
   try {
+    if (!(await mayReadRows(req.user, asString(req.params.jobId)))) {
+      return res.status(404).json({ success: false, message: 'Import not found' });
+    }
     const result = await errorReport(asString(req.params.jobId), {
       page: asInt(req.query.page, 1, 1, 10_000),
       limit: asInt(req.query.limit, 100, 1, 500),

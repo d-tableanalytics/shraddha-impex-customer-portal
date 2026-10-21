@@ -41,6 +41,8 @@ import { isPlaceholderPo, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
+import { brandOfProduct } from '../../utils/brandAccess.js';
+import { supplyDecision } from '../../utils/msilSupply.js';
 import { sendAutoBookSupportMail, sendMaterialInwardMails } from '../../utils/indentMail.js';
 
 const OPEN_STATUSES = ['Pending', 'Partially Confirmed'];
@@ -60,14 +62,9 @@ const scheduledForLater = (date) => {
   return Date.now() < startOfDay.getTime();
 };
 
-// The brand is not a schema field — it is implied by which collection the
-// product lives in, so it is derived the same way the confirmation path does.
-const brandFromModel = (doc) => {
-  const name = (doc?.constructor?.modelName || '').toLowerCase();
-  if (name.includes('bix')) return 'BIX';
-  if (name.includes('imada')) return 'IMADA';
-  return 'Koken';
-};
+// The brand a product belongs to, read from the field the discriminator
+// stores — the same helper the confirmation path uses.
+const brandFromModel = brandOfProduct;
 
 const esc = (v) =>
   String(v ?? '')
@@ -825,6 +822,95 @@ const notifyMaterialInward = async ({ skus, inwardBySku, reference, exclude = []
  *                                   Stock Assignment screen's "Auto-assign".
  * @param {object}  [options.actor]  Who asked (force only), for the audit trail.
  */
+/**
+ * When the booking an indent belongs to was made: the earliest of its rows AND
+ * the indent itself, which is raised in the same moment as the booking. The
+ * indent counts because a booking that started with no rows gets them only
+ * when stock is first allocated — taking the rows alone would restart the
+ * 7-day window from that first allocation.
+ */
+const bookingDateOf = (indent, parentRows = []) => {
+  const times = [
+    ...parentRows.map((row) => new Date(row.orderTimestamp || row.createdAt || 0).getTime()),
+    new Date(indent.reservationDate || indent.createdAt || 0).getTime(),
+  ].filter((t) => t > 0);
+  return times.length ? new Date(Math.min(...times)) : null;
+};
+
+/** The booking's MSIL Supply Date, from the indent's mirror or any booking row. */
+const supplyDateOf = (indent, parentRows = []) =>
+  indent.supplyDate || parentRows.find((row) => row.msilSupplyDate)?.msilSupplyDate || null;
+
+/**
+ * Mark indents the MSIL supply check refused as "Awaiting decision".
+ *
+ * Only the FIRST refusal writes and notifies. Stock movements are frequent, and
+ * an indent already waiting for the desk must not raise a fresh alert on every
+ * one of them.
+ */
+const flagAwaitingDecision = async (held, arrivedAt) => {
+  let flagged = 0;
+  for (const { indent, reason } of held) {
+    const res = await Reservation.updateOne(
+      {
+        _id: indent._id,
+        status: { $in: OPEN_STATUSES },
+        'supplyCheck.status': { $ne: 'Awaiting decision' },
+      },
+      {
+        $set: {
+          'supplyCheck.status': 'Awaiting decision',
+          'supplyCheck.reason': reason,
+          'supplyCheck.arrivedAt': arrivedAt,
+          'supplyCheck.decidedBy': null,
+          'supplyCheck.decidedAt': null,
+        },
+      },
+    );
+    if (!res.modifiedCount) continue;
+    flagged += 1;
+    const who = indent.customerId?.company || indent.customerId?.user || indent.customerId?.email || 'MSIL customer';
+    const ref = indent.indentNumber || indent.reservationId;
+    notifyAdmins({
+      title: 'MSIL indent needs a decision',
+      message: `${indent.skuCode} x${indent.quantity} on ${ref} (${who}): ${reason}`,
+      type: 'reservation',
+    });
+    await logSystemEvent(
+      'MSIL Indent Held',
+      `${ref} ${indent.skuCode} x${indent.quantity} held for a decision. ${reason}`,
+      { indentId: String(indent._id), reservationId: indent.reservationId, skuCode: indent.skuCode },
+    );
+  }
+  return flagged;
+};
+
+/**
+ * The MSIL supply check for ONE indent, now — for manual paths that reopen or
+ * release an indent outside the conversion pass (Super Admin "restore
+ * backorder"), so they apply the same rule rather than bypassing it.
+ *
+ * Judged like the pass judges it: at the recorded arrival for an indent held
+ * (or released by a date change), otherwise at this moment; an indent the desk
+ * already converted is not checked again. `indent.customerId` must carry
+ * `customerCategory`.
+ */
+export const supplyCheckNow = async (indent) => {
+  const prior = indent?.supplyCheck?.status ?? null;
+  if (prior === 'Converted manually') return { applies: false };
+  const parentId = parentBookingIdOf(indent);
+  const parentRows = parentId ? await Order.find({ orderId: parentId }).lean() : [];
+  return supplyDecision({
+    customer: indent.customerId,
+    supplyDate: supplyDateOf(indent, parentRows),
+    bookingDate: bookingDateOf(indent, parentRows),
+    at: ((prior === 'Awaiting decision' || prior === null) && indent.supplyCheck?.arrivedAt) || new Date(),
+  });
+};
+
+/** Hold one indent for a Convert / Cancel decision (notifies once). */
+export const holdForDecision = (indent, reason) => flagAwaitingDecision([{ indent, reason }], new Date());
+
 export const processAvailableIndents = async (skuCodes, options = {}) => {
   const { event = 'stock-change', reference = null, inwardBySku = null, force = false } = options;
   const empty = { checked: 0, booked: 0, bookings: 0, emailed: 0 };
@@ -855,9 +941,12 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
     // MANUAL mode: arriving stock is held for someone to assign on the Indent
     // Stock Assignment screen, rather than going to the oldest indent by
     // itself. Customers are still told material came in.
-    if (!force && (await indentAssignmentMode()) === 'manual') {
-      return { ...empty, checked: indents.length, held: true, ...(await inwardNotice()) };
-    }
+    //
+    // The MSIL supply check still runs in manual mode: a late arrival is held
+    // for Convert / Cancel at the moment it ARRIVES, exactly as in auto mode,
+    // so the decision and its arrival time do not depend on when somebody next
+    // opens the assignment screen. Nothing is assigned here either way.
+    const manual = !force && (await indentAssignmentMode()) === 'manual';
 
     // Availability summed across locations, matching what every other screen
     // reports for a SKU.
@@ -892,6 +981,9 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
     // One without (its booking was cancelled) still needs its whole quantity,
     // because it becomes a booking of its own.
     const eligible = [];
+    // MSIL indents whose stock arrived too late - left unconverted, for the desk.
+    const held = [];
+    const arrivedAt = new Date();
     for (const r of byOldest) {
       const left = remaining.get(r.skuCode) ?? 0;
       if (left <= 0) continue;
@@ -909,12 +1001,53 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
         take = r.quantity;
       }
 
+      // MSIL SUPPLY CHECK (utils/msilSupply.js). Judged only once stock could
+      // actually convert this indent - that is what "the stock arrived" means
+      // here. A late arrival is NOT converted and does NOT consume the units,
+      // so the next indent in the queue may still take them.
+      //
+      // A held indent is judged at the time its stock FIRST arrived (recorded
+      // when it was held), not at the time of a later pass — moving the Supply
+      // Date re-judges that same arrival. An indent the desk already chose to
+      // Convert has had its lateness accepted: the rest of it follows the stock.
+      const parentRows = rowsByParent.get(parentBookingIdOf(r)) || [];
+      const prior = r.supplyCheck?.status ?? null;
+      const decision = prior === 'Converted manually'
+        ? { applies: false }
+        : supplyDecision({
+          customer: r.customerId,
+          supplyDate: supplyDateOf(r, parentRows),
+          bookingDate: bookingDateOf(r, parentRows),
+          at: ((prior === 'Awaiting decision' || prior === null) && r.supplyCheck?.arrivedAt) || arrivedAt,
+        });
+      if (decision.applies && !decision.onTime) {
+        held.push({ indent: r, reason: decision.reason });
+        continue;
+      }
+      // Manual mode: people assign. Nothing is shortlisted or consumed.
+      if (manual) continue;
+
       remaining.set(r.skuCode, left - take);
-      eligible.push({ indent: r, take, mode });
+      eligible.push({
+        indent: r, take, mode,
+        // Stamped after it converts: it passed the check, or it was held before
+        // and no longer is (the date moved, or the customer is no longer MSIL).
+        stampConverted: decision.applies || prior === 'Awaiting decision',
+      });
+    }
+
+    const awaitingDecision = held.length;
+    if (held.length) await flagAwaitingDecision(held, arrivedAt);
+    // A held line is waiting for the desk, not for stock: telling its customer
+    // "material arrived, your indent stays open" would be wrong either way.
+    allocatedIds.push(...held.map((h) => h.indent._id));
+
+    if (manual) {
+      return { ...empty, checked: indents.length, held: true, awaitingDecision, ...(await inwardNotice()) };
     }
 
     if (eligible.length === 0) {
-      return { ...empty, checked: indents.length, ...(await inwardNotice()) };
+      return { ...empty, checked: indents.length, awaitingDecision, ...(await inwardNotice()) };
     }
 
     const byCustomer = new Map();
@@ -941,17 +1074,21 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
         if (!byBooking.has(orderId)) byBooking.set(orderId, []);
         byBooking.get(orderId).push(e);
       }
+      const freshEntries = lines.filter((e) => !e.mode);
       const jobs = [
-        ...[...byBooking].map(([orderId, group]) => () => allocateToBooking(
-          customer, orderId, group, rowsByParent.get(orderId), { mode: group[0].mode },
-        )),
-        ...(fresh.length ? [() => bookForCustomer(customer, fresh)] : []),
+        ...[...byBooking].map(([orderId, group]) => ({
+          entries: group,
+          run: () => allocateToBooking(
+            customer, orderId, group, rowsByParent.get(orderId), { mode: group[0].mode },
+          ),
+        })),
+        ...(fresh.length ? [{ entries: freshEntries, run: () => bookForCustomer(customer, fresh) }] : []),
       ];
 
       for (const job of jobs) {
       let made;
       try {
-        made = await job();
+        made = await job.run();
       } catch (error) {
         // One customer's booking failing must not stop the rest.
         console.error(`[Indent] auto-book failed for ${customer.email || customer._id}:`, error.message);
@@ -959,6 +1096,26 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
       }
       if (!made) continue;
       if (made.allocation) allocatedIds.push(...made.indentIds);
+
+      // MSIL indents that passed the supply check: record that they converted
+      // by themselves, so the desk can see why no decision was asked of it.
+      const converted = new Set(
+        (made.indentIds || (made.lines || []).map((l) => l?._id)).filter(Boolean).map(String),
+      );
+      const checkedIds = job.entries
+        .filter((e) => e.stampConverted && converted.has(String(e.indent._id)))
+        .map((e) => e.indent._id);
+      if (checkedIds.length) {
+        await Reservation.updateMany({ _id: { $in: checkedIds } }, {
+          $set: {
+            'supplyCheck.status': 'Auto-converted',
+            'supplyCheck.reason': null,
+            'supplyCheck.arrivedAt': arrivedAt,
+            'supplyCheck.decidedBy': null,
+            'supplyCheck.decidedAt': arrivedAt,
+          },
+        });
+      }
 
       bookings += 1;
       booked += made.lines.length;
@@ -972,7 +1129,7 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
 
     // `emailed` counts messages the SMTP server accepted, not attempts.
     return {
-      checked: indents.length, booked, bookings, emailed, emailFailed, emailSkipped,
+      checked: indents.length, booked, bookings, emailed, emailFailed, emailSkipped, awaitingDecision,
       ...(await inwardNotice()),
     };
   } catch (error) {

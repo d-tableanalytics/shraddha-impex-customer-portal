@@ -1,7 +1,25 @@
 import { isTransientTransactionError } from '../utils/transaction.js';
 
+/**
+ * The HTTP status an error asks for, or 500.
+ *
+ * Both spellings are honoured. `statusCode` is what this handler always read;
+ * `status` is what the inventory services set (`err.status = 404`), and before
+ * it was read here every one of those refusals — an unknown SKU, a brand the
+ * caller cannot see, an over-deduction — reached the client as a 500 while
+ * still carrying the right message. Only an integer in the 4xx/5xx range is
+ * taken, so a stray non-HTTP `status` on some library error cannot turn a
+ * failure into a success code.
+ */
+const requestedStatus = (err) => {
+  for (const candidate of [err.statusCode, err.status]) {
+    if (Number.isInteger(candidate) && candidate >= 400 && candidate <= 599) return candidate;
+  }
+  return 500;
+};
+
 export const errorHandler = (err, req, res, next) => {
-  let statusCode = err.statusCode || 500;
+  let statusCode = requestedStatus(err);
   let message = err.message || 'Internal Server Error';
 
   // Mongoose Duplicate Key Error

@@ -18,6 +18,7 @@ import {
   NEW_SKU_FIELD_NAMES, parseNewSkuDetails, incompleteNewSkus,
 } from './newSku.rules.js';
 import { parseDescription, parseVideos } from './productDetail.rules.js';
+import { processSkuPricing } from './skuPricing.service.js';
 import { readerFor, MAX_ROWS } from './import.parser.js';
 import { postBatch } from './ledger.service.js';
 import { applyMovements, syncLegacyStock } from './balance.service.js';
@@ -28,7 +29,7 @@ import { resolveConfig } from './config.service.js';
 import { DEFAULT_REASON_CODE } from './adjustment.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { emitStockUpdated } from '../../utils/stockEvents.js';
-import { allowedBrands, ALL_BRANDS } from '../../utils/brandAccess.js';
+import { allowedBrands, allBrands } from '../../utils/brandAccess.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { normaliseSeason, normaliseStatus } from '../../utils/productFields.js';
 
@@ -109,7 +110,7 @@ const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const buildContext = async (importType, { user, jobBrand = null }) => {
   const template = IMPORT_TEMPLATES[importType];
   const context = {
-    brands: new Set(ALL_BRANDS),
+    brands: new Set(allBrands()),
     // Brand isolation: a file may only touch brands this user can see. Enforced
     // per row rather than per file, because one bad row must not fail the rest.
     allowedBrands: new Set(allowedBrands(user)),
@@ -159,23 +160,31 @@ const buildContext = async (importType, { user, jobBrand = null }) => {
       }
     }
 
+    // Keyed by SKU AND brand: the same code can exist under two brands with
+    // different MSIL codes, and a single SKU-keyed map let whichever brand was
+    // read last decide what the cross-check expected.
     if (needsMsil) {
-      context.skuToMsil = new Map();
-      for (const p of rows) if (p.skuCode && p.msilCode) context.skuToMsil.set(p.skuCode, p.msilCode);
+      context.skuToMsil = new Map();   // skuCode -> Map(brand lower-case -> MSIL code)
+      for (const p of rows) {
+        if (!p.skuCode || !p.msilCode) continue;
+        if (!context.skuToMsil.has(p.skuCode)) context.skuToMsil.set(p.skuCode, new Map());
+        context.skuToMsil.get(p.skuCode).set(String(p.brand || '').toLowerCase(), String(p.msilCode));
+      }
     }
 
     // The reverse lookup, for a sheet where the MSIL Code may be the only
     // identifier given. Uppercased so a code typed in either case still finds
-    // its part. AMBIGUOUS is recorded rather than resolved for the same reason
-    // skuToBrand does it: one MSIL code against two SKUs cannot be guessed, and
-    // guessing here would restate the stock of the wrong part in silence.
+    // its part. One MSIL code on two SKUs is never guessed between — guessing
+    // would restate the stock of the wrong part in silence — but every product
+    // carrying the code is kept, with its brand, so a row that also names its
+    // Brand can pick the right one. Only a row that still cannot is refused.
     if (template.resolveSkuFromMsil) {
-      context.msilToSku = new Map();
+      context.msilToSku = new Map();   // MSIL upper-case -> [{ skuCode, brand }]
       for (const p of rows) {
         if (!p.msilCode || !p.skuCode) continue;
         const key = String(p.msilCode).toUpperCase();
-        const known = context.msilToSku.get(key);
-        context.msilToSku.set(key, known && known !== p.skuCode ? AMBIGUOUS : p.skuCode);
+        if (!context.msilToSku.has(key)) context.msilToSku.set(key, []);
+        context.msilToSku.get(key).push({ skuCode: p.skuCode, brand: p.brand });
       }
     }
   }
@@ -211,6 +220,7 @@ const buildContext = async (importType, { user, jobBrand = null }) => {
  */
 const validateRow = (template, mapping, values, context, seenKeys) => {
   const errors = [];
+  let claimedKey = null;
   const data = {};
 
   // ── Coercion and per-column rules ────────────────────────────────────────
@@ -253,22 +263,38 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
   // never a second opinion about which part is meant — silently re-badging a row
   // onto a different SKU is how a quantity lands on the wrong part.
   if (template.resolveSkuFromMsil && !data.skuCode && data.msilCode) {
-    const resolved = context.msilToSku?.get(String(data.msilCode).toUpperCase());
-    if (!resolved) {
+    const all = context.msilToSku?.get(String(data.msilCode).toUpperCase()) || [];
+    // A Brand on the row narrows the match — two brands may share a code.
+    const wanted = data.brand ? String(data.brand).toLowerCase() : null;
+    const candidates = wanted ? all.filter((c) => String(c.brand).toLowerCase() === wanted) : all;
+    if (all.length === 0) {
       errors.push({
         category: 'reference', column: 'MSIL Code',
         message: `MSIL Code ${data.msilCode} is not in the catalogue.`,
         value: data.msilCode,
       });
-    } else if (resolved === AMBIGUOUS) {
+    } else if (candidates.length === 0) {
       errors.push({
         category: 'reference', column: 'MSIL Code',
-        message: `MSIL Code ${data.msilCode} belongs to more than one SKU, so this row cannot say `
-          + 'which is meant. Give the SKU Code instead.',
+        message: `MSIL Code ${data.msilCode} is not on any ${data.brand} SKU `
+          + `(it is on ${[...new Set(all.map((c) => c.brand))].join(', ')}).`,
+        value: data.msilCode,
+      });
+    } else if (candidates.length > 1) {
+      const brands = [...new Set(candidates.map((c) => c.brand))];
+      errors.push({
+        category: 'reference', column: 'MSIL Code',
+        message: `MSIL Code ${data.msilCode} belongs to more than one SKU, so this row cannot say which is meant. `
+          + (brands.length > 1 && !wanted && template.columns.some((c) => c.field === 'brand')
+            ? 'Fill in the Brand column, or give the SKU Code.'
+            : 'Give the SKU Code instead.'),
         value: data.msilCode,
       });
     } else {
-      data.skuCode = resolved;
+      data.skuCode = candidates[0].skuCode;
+      // The match settled the brand too; recording it stops the SKU-to-brand
+      // step below calling a code that exists under two brands ambiguous.
+      if (!data.brand) data.brand = candidates[0].brand;
       // Recorded so the summary can say the row was matched by its MSIL Code —
       // an operator checking a rejected file needs to know which code was used.
       data.matchedBy = 'msilCode';
@@ -319,7 +345,7 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
     } else if (resolved === AMBIGUOUS) {
       errors.push({
         category: 'reference', column: 'SKU Code',
-        message: `${data.skuCode} exists under more than one brand, so this sheet cannot say which one is meant. Use the Stock Movements template, which has a Brand column.`,
+        message: `${data.skuCode} exists under more than one brand, so this sheet cannot say which one is meant. ${template.columns.some((c) => c.field === 'brand') ? 'Fill in the Brand column for this row.' : 'Import it through a sheet that has a Brand column.'}`,
         value: data.skuCode,
       });
     } else {
@@ -339,11 +365,18 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
   // the uploader thought it did. A blank cell, or a product with no MSIL on
   // file, is not an error; only a stated code that contradicts the catalogue.
   if (template.verifyMsil && data.msilCode && data.skuCode) {
-    const onFile = context.skuToMsil?.get(data.skuCode);
-    if (onFile && String(onFile).toUpperCase() !== String(data.msilCode).toUpperCase()) {
+    const byBrand = context.skuToMsil?.get(data.skuCode);
+    const wanted = data.brand ? String(data.brand).toLowerCase() : null;
+    // The row's own brand when it has one; otherwise every brand's code for
+    // this SKU, and the row is fine if it matches any of them.
+    const onFile = byBrand
+      ? (wanted ? [byBrand.get(wanted)].filter(Boolean) : [...byBrand.values()])
+      : [];
+    const typed = String(data.msilCode).toUpperCase();
+    if (onFile.length && !onFile.some((code) => code.toUpperCase() === typed)) {
       errors.push({
         category: 'reference', column: 'MSIL Code',
-        message: `${data.skuCode} is MSIL ${onFile} in the catalogue, not ${data.msilCode}. Check the row is aligned.`,
+        message: `${data.skuCode} is MSIL ${onFile.join(' / ')} in the catalogue, not ${data.msilCode}. Check the row is aligned.`,
         value: data.msilCode,
       });
     }
@@ -353,9 +386,9 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
   if (data.brand !== undefined && data.brand !== null) {
     // Case-normalised against the canonical list, so "koken" is accepted and
     // "Kokken" is not.
-    const canonical = ALL_BRANDS.find((b) => b.toLowerCase() === String(data.brand).toLowerCase());
+    const canonical = allBrands().find((b) => b.toLowerCase() === String(data.brand).toLowerCase());
     if (!canonical) {
-      errors.push({ category: 'reference', column: 'Brand', message: `Unknown brand "${data.brand}". Expected ${ALL_BRANDS.join(', ')}.`, value: data.brand });
+      errors.push({ category: 'reference', column: 'Brand', message: `Unknown brand "${data.brand}". Expected ${allBrands().join(', ')}.`, value: data.brand });
     } else {
       data.brand = canonical;
       if (!context.allowedBrands.has(canonical)) {
@@ -429,7 +462,13 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
           value: key,
         });
       } else {
-        seenKeys.set(key, null); // row number filled in by the caller
+        // Claimed only by a row that is otherwise valid: a rejected row must
+        // not block the corrected copy of itself further down the sheet. (The
+        // type-specific rules below can still reject it — then it lets go.)
+        if (errors.length === 0) {
+          seenKeys.set(key, null); // row number filled in by the caller
+          claimedKey = key;
+        }
       }
     }
   }
@@ -440,6 +479,7 @@ const validateRow = (template, mapping, values, context, seenKeys) => {
   if (errors.length === 0 && typeof template.validate === 'function') {
     errors.push(...template.validate(data, context));
   }
+  if (claimedKey !== null && errors.length) seenKeys.delete(claimedKey);
 
   const valid = errors.length === 0;
   return {
@@ -561,6 +601,18 @@ export const createImportJob = async ({
             jobId, category: 'template',
             message: `Missing required column(s): ${match.missing.join(', ')}.`,
             value: row.values.join(' | '),
+          });
+          break;
+        }
+        if (match.unexpected.length && template.rejectUnknownColumns) {
+          fileErrors.push(
+            `Unrecognised column(s): ${match.unexpected.join(', ')}. This sheet only accepts `
+            + `${template.columns.map((c) => c.header).join(', ')} — check the spelling of each header.`,
+          );
+          errorDocs.push({
+            jobId, category: 'template',
+            message: `Unrecognised column(s): ${match.unexpected.join(', ')}.`,
+            value: match.unexpected.join(', '),
           });
           break;
         }
@@ -1490,6 +1542,8 @@ const PROCESSORS = {
   'fresh-inventory': processFreshInventory,
   planning: processPlanning,
   'product-details': processProductDetails,
+  // Prices only — see skuPricing.service.js. Never touches stock or creates a SKU.
+  'sku-pricing': processSkuPricing,
 };
 
 // ─── Confirm and process ─────────────────────────────────────────────────────
@@ -1661,11 +1715,11 @@ export const setNewSkuDetails = async ({ jobId, entries, actor, req }) => {
      * is what lets confirmJob() treat "brand is filled in" as sufficient: a bad
      * one can never have been stored.
      */
-    const canonical = ALL_BRANDS.find(
+    const canonical = allBrands().find(
       (b) => b.toLowerCase() === String(values.brand).toLowerCase(),
     );
     if (!canonical) {
-      errors.push(`${skuCode}: "${values.brand}" is not a brand. Expected ${ALL_BRANDS.join(', ')}.`);
+      errors.push(`${skuCode}: "${values.brand}" is not a brand. Expected ${allBrands().join(', ')}.`);
       continue;
     }
     if (!allowedBrands(actor).includes(canonical)) {

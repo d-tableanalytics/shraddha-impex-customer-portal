@@ -1,6 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import { ProductKoken, ProductBIX, ProductIMADA } from '../models/Product.js';
+import { createProductModel } from '../models/Product.js';
+import { canonicalBrand } from '../utils/brandRegistry.js';
 import User from '../models/User.js';
 import Order from '../models/Order.js';
 import MsilCode from '../models/MsilCode.js';
@@ -8,7 +9,7 @@ import Reservation from '../models/Reservation.js';
 import { protect } from '../middlewares/auth.js';
 import { login } from '../modules/auth/auth.controller.js';
 import { loginLimiter } from '../middlewares/rateLimiters.js';
-import { allowedBrandModels, brandFilter } from '../utils/brandAccess.js';
+import { allowedBrandModels, brandFilter, canAccessBrand } from '../utils/brandAccess.js';
 
 import { isSuperAdmin, authorize, hasPermission, PERMISSIONS } from '../middlewares/rbac.js';
 const router = express.Router();
@@ -28,12 +29,10 @@ const router = express.Router();
  */
 
 // Helper to match brand parameter to correct Mongoose model
+// Any configured brand (utils/brandRegistry.js), by name or key in any case.
 const getProductModel = (brand) => {
-  const b = String(brand).trim().toLowerCase();
-  if (b === 'koken') return ProductKoken;
-  if (b === 'bix') return ProductBIX;
-  if (b === 'imada') return ProductIMADA;
-  return null;
+  const name = canonicalBrand(brand);
+  return name ? createProductModel(name) : null;
 };
 
 // 1. GET /api/products/:brand - list products with category filter and search on skuCode
@@ -45,6 +44,12 @@ router.get('/products/:brand', protect, async (req, res, next) => {
 
     if (!Model) {
       return res.status(400).json({ success: false, message: `Invalid brand parameter: ${brand}` });
+    }
+
+    // The brand check every other catalogue path makes. Without it any signed-in
+    // account could list any brand here, including one hidden from it.
+    if (!canAccessBrand(req.user, brand)) {
+      return res.status(403).json({ success: false, message: 'Access to this brand is restricted for your account.' });
     }
 
     const query = {};
@@ -73,6 +78,12 @@ router.get('/products/:brand/:skuCode', protect, async (req, res, next) => {
 
     if (!Model) {
       return res.status(400).json({ success: false, message: `Invalid brand: ${brand}` });
+    }
+
+    // The brand check every other catalogue path makes. Without it any signed-in
+    // account could list any brand here, including one hidden from it.
+    if (!canAccessBrand(req.user, brand)) {
+      return res.status(403).json({ success: false, message: 'Access to this brand is restricted for your account.' });
     }
 
     const product = await Model.findOne({ skuCode });
@@ -152,10 +163,16 @@ router.post('/orders', protect, authorize(PERMISSIONS.CREATE_ORDER), async (req,
       userDoc = await User.findById(req.user._id).session(session);
     }
 
+    // The CUSTOMER the order is for must carry the brand — the desk may book
+    // on someone's behalf, but not a brand that customer cannot see.
+    if (!canAccessBrand(userDoc, brand)) {
+      throw new Error(`This account does not have access to ${brand}.`);
+    }
+
     const orderId = `SHR-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newOrder = await Order.create([{
-      brand: brand.toUpperCase() === 'BIX' ? 'BIX' : brand.toUpperCase() === 'IMADA' ? 'IMADA' : 'Koken',
+      brand: canonicalBrand(brand),
       user: userDoc._id,
       status: 'Booked',
       orderId,

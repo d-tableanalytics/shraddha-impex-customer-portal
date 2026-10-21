@@ -2,6 +2,7 @@ import { VALID_SEASONS, VALID_STATUSES } from '../../utils/productFields.js';
 import { PERMISSIONS } from '../../middlewares/rbac.js';
 import { suppliesBoxNo, boxRowKey } from './boxNumber.rules.js';
 import { parseYouTubeUrl } from './productDetail.rules.js';
+import { PRICE_TYPES, parsePriceInput } from '../../config/pricing.js';
 
 /**
  * Import template registry (IMS Module M9).
@@ -74,6 +75,28 @@ const asBool = (v) => {
   return { ok: false, error: `"${t.value}" is not yes/no` };
 };
 
+/**
+ * A selling price: INR per piece, to the paisa.
+ *
+ * Stricter than a plain number in one way that matters. config/pricing.js reads
+ * 0 as "no price on file" so a picklist never quotes a free line, which means a
+ * 0 in this column would be stored as something that looks like a figure and
+ * behaves like a blank. It is refused instead, with the way to leave a tier
+ * alone spelled out.
+ */
+const asPriceCell = (v) => {
+  // A numeric cell arrives as a number; a text cell as the typed string.
+  if (typeof v === 'number') {
+    const read = parsePriceInput(v);
+    return read.ok ? read : { ok: false, error: `${read.error}. Leave the cell blank to keep the current price` };
+  }
+  const t = asText(v);
+  if (t.value === null) return { ok: true, value: null };
+  // The same reading as the single-SKU update, so a cell and a form agree.
+  const read = parsePriceInput(t.value);
+  return read.ok ? read : { ok: false, error: `${read.error}. Leave the cell blank to keep the current price` };
+};
+
 const asList = (v) => {
   const t = asText(v);
   if (t.value === null) return { ok: true, value: [] };
@@ -88,6 +111,7 @@ export const coerce = (spec, value) => {
     case 'date': return asDate(value);
     case 'boolean': return asBool(value);
     case 'list': return asList(value);
+    case 'price': return asPriceCell(value);
     case 'upper': {
       const t = asText(value);
       return { ok: true, value: t.value ? t.value.toUpperCase() : null };
@@ -99,7 +123,7 @@ export const coerce = (spec, value) => {
 /* ── Shared column definitions ──────────────────────────────────────────── */
 
 const SKU = { header: 'SKU Code', field: 'skuCode', type: 'string', required: true, note: 'Must already exist unless this is a master import.' };
-const BRAND = { header: 'Brand', field: 'brand', type: 'string', required: true, note: 'Koken, BIX or IMADA.' };
+const BRAND = { header: 'Brand', field: 'brand', type: 'string', required: true, note: 'One of the brands set up in Inventory Configuration (e.g. Koken).' };
 const NOTE = { header: 'Note', field: 'note', type: 'string', required: false };
 
 /**
@@ -183,6 +207,19 @@ const validateBoxNo = (row, context) => {
     value: row.boxNo,
   }];
 };
+
+/**
+ * One column per price type, generated from config/pricing.js so a fifth tier
+ * added there appears in the sheet, its validator and its sample at once.
+ * `field` is the Product.prices key, which is what the processor writes.
+ */
+const PRICE_COLUMNS = PRICE_TYPES.map((t) => ({
+  header: `${t.label} Price`,
+  field: t.key,
+  type: 'price',
+  required: false,
+  note: `${t.description}, INR per piece. Blank LEAVES THE CURRENT ${t.label.toUpperCase()} PRICE ALONE.`,
+}));
 
 /* ── The registry ───────────────────────────────────────────────────────── */
 
@@ -410,6 +447,76 @@ export const IMPORT_TEMPLATES = {
       'Video 1': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
       'Video 2': '',
       'Video 3': '',
+    },
+  },
+
+  'sku-pricing': {
+    label: 'SKU Pricing',
+    description:
+      'Selling prices for existing SKUs, by SKU or MSIL Code — one column per price type. '
+      + 'Only prices change: stock, planning figures and box numbers are left exactly as they are, '
+      + 'and no SKU is ever created. A blank price cell LEAVES THAT PRICE ALONE.',
+    permissions: [PERMISSIONS.MANAGE_PRICING],
+    /**
+     * The staged rows ARE the price list, so the preview and error report are
+     * held to the import's own permission rather than the VIEW_INVENTORY that
+     * gates every other sheet's — otherwise anyone who can see inventory could
+     * read the schedule out of someone else's upload. See import.controller.js.
+     */
+    restrictReadback: true,
+    // Every column here is optional, so a misspelt price header would be read
+    // as "no price given" for every row and drop that tier silently. An
+    // unrecognised header is refused instead.
+    rejectUnknownColumns: true,
+    // SKU and brand together: the same code under two brands is two products
+    // with two prices, and a sheet may legitimately price both.
+    keyFields: ['skuCode', 'brand'],
+    // A price is an attribute of a SKU we already stock. A typo must be
+    // reported, not turned into a new part.
+    requireExistingSku: true,
+    resolveBrandFromSku: true,
+    resolveSkuFromMsil: true,
+    verifyMsil: true,
+    columns: [
+      {
+        header: 'SKU Code', field: 'skuCode', type: 'string', required: false,
+        note: 'Optional if MSIL Code is given. Must already exist.',
+      },
+      {
+        header: 'MSIL Code', field: 'msilCode', type: 'string', required: false,
+        note: 'Optional if SKU Code is given. Used to find the item when the SKU Code is blank, '
+          + 'and checked against the catalogue when both are given.',
+      },
+      {
+        header: 'Brand', field: 'brand', type: 'string', required: false,
+        note: 'Optional — taken from the SKU when blank. Needed only for a code that exists under two brands.',
+      },
+      ...PRICE_COLUMNS,
+    ],
+    validate: (row) => {
+      const problems = [];
+      if (!row.skuCode && !row.msilCode) {
+        problems.push({
+          category: 'required',
+          column: 'SKU Code',
+          message: 'Give either a SKU Code or an MSIL Code — this row identifies no item.',
+        });
+      }
+      // A row with no price at all changes nothing, and is almost always a
+      // price column pasted under the wrong header.
+      if (!PRICE_COLUMNS.some((c) => row[c.field] !== null && row[c.field] !== undefined)) {
+        problems.push({
+          category: 'required',
+          message: `No price given — fill in at least one of ${PRICE_COLUMNS.map((c) => c.header).join(', ')}.`,
+        });
+      }
+      return problems;
+    },
+    sample: {
+      // NOT a real SKU on purpose: left in an uploaded sheet it is reported as
+      // unknown, instead of quietly repricing a real part.
+      'SKU Code': 'EXAMPLE-SKU-DELETE-ME', 'MSIL Code': '', Brand: '',
+      'Venus Automation Price': 1180, 'Trader Price': 1250.5, 'End User Price': 1499, 'MSIL Price': '',
     },
   },
 

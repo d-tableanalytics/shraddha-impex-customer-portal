@@ -154,10 +154,20 @@ const userSchema = new mongoose.Schema({
   shopNumber: { type: String, default: null },
   vendorNumber: { type: String, default: null },
   gstNumber: { type: String, default: null },
+  /**
+   * Which brands this account may see, keyed by Brand.key:
+   * { koken: true, bix: false, imada: true, <newbrand>: true }.
+   *
+   * An open object rather than three fixed fields, because brands are now
+   * created at runtime (models/Brand.js) and a fixed sub-schema would silently
+   * strip every flag for a brand it did not name. Written ONLY through
+   * mergeBrandAccess() in utils/brandRegistry.js, which keeps it keyed by real
+   * brands and merges per brand rather than replacing the object. A missing
+   * key means no access.
+   */
   brandAccess: {
-    koken: { type: Boolean, default: false },
-    bix: { type: Boolean, default: false },
-    imada: { type: Boolean, default: false }
+    type: mongoose.Schema.Types.Mixed,
+    default: () => ({ koken: false, bix: false, imada: false }),
   },
   moq: { type: String, default: null }, // String type to support 'SKIP'
   showMsilCode: { type: Boolean, default: false }, // Maps to 'Show MSIL Code'

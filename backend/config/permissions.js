@@ -90,6 +90,18 @@ export const PERMISSIONS = {
    * copied onto their own order rows, which they may already read.
    */
   VIEW_PRICING: 'view_pricing',
+  /**
+   * Change the price schedule itself - the four tier prices on Product.prices,
+   * one SKU at a time from Inventory Master or in bulk through the SKU Pricing
+   * import. Seeing a SKU's current prices comes with it: the editor shows them.
+   *
+   * Separate from VIEW_PRICING because quoting from the schedule and rewriting
+   * it are different authorities. Held by Admin (wildcard), Sales, Inventory
+   * Manager, Management and Import Team (decided 2026-10-21); NOT by Warehouse
+   * User, which must not see pricing. Grantable to other roles through the
+   * Customer Pricing row's Edit cell.
+   */
+  MANAGE_PRICING: 'manage_pricing',
 
   // ── Inventory Management System ─────────────────────────────────────────
   // The full set is declared here in one pass rather than being reopened for
@@ -434,6 +446,8 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.CREATE_O2D_ORDER,
     PERMISSIONS.WORK_O2D_STAGE,
     ...WORK_QUEUE_DOER,
+    // Updates the SKU price schedule (decided 2026-10-21).
+    PERMISSIONS.MANAGE_PRICING,
   ],
 
   'Inventory Manager': [
@@ -449,6 +463,8 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.APPROVE_COUNT,
     PERMISSIONS.TRANSFER_STOCK,
     PERMISSIONS.VIEW_REPORTS,
+    // Updates the SKU price schedule (decided 2026-10-21).
+    PERMISSIONS.MANAGE_PRICING,
   ],
 
   'Warehouse User': [
@@ -485,6 +501,8 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.APPROVE_COUNT,
     PERMISSIONS.VIEW_REPORTS,
     ...WORK_QUEUE_DOER,
+    // Updates the SKU price schedule (decided 2026-10-21).
+    PERMISSIONS.MANAGE_PRICING,
   ],
 
   /**
@@ -529,6 +547,8 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.POST_STOCK_IN,
     // They receive the stock, so they may say which indent it goes to.
     PERMISSIONS.ASSIGN_INDENT_STOCK,
+    // Updates the SKU price schedule (decided 2026-10-21).
+    PERMISSIONS.MANAGE_PRICING,
   ],
 
   /**

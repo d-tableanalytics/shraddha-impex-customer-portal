@@ -15,6 +15,7 @@ import toast from 'react-hot-toast';
 import {
   canOpenUserManagement, canManageAllUsers, canManageAccount, assignableRolesFor, canManageRoles, canAction,
 } from '../../../utils/permissions';
+import { BrandAccessCheckboxes, BrandAccessBadges, allBrandsTicked } from '../../../components/common/BrandAccessFields';
 
 /**
  * Customer master details.
@@ -96,11 +97,8 @@ const emptyForm = {
   // category. It is turned back into { role, customerCategory } on submit.
   accessLevel: 'Customer', // overridden per audience when the Add modal opens
   status: 'Active',
-  brandAccess: {
-    koken: true,
-    bix: true,
-    imada: true,
-  },
+  // Every configured brand, ticked, is put here when the Add modal opens.
+  brandAccess: {},
 };
 
 /**
@@ -339,7 +337,8 @@ export const UserManagement = ({ audience = 'internal' }) => {
       email: u.email || '',
       status: u.status || 'Active',
       accessLevel: accessLevelOf(u),
-      brandAccess: u.brandAccess || { koken: true, bix: true, imada: true },
+      // What the account really has. Missing means no brand, not every brand.
+      brandAccess: u.brandAccess || {},
       customerName: u.customerName || '',
       phone: u.phone || '',
       location: u.location || '',
@@ -510,7 +509,8 @@ export const UserManagement = ({ audience = 'internal' }) => {
             onClick={() => {
               // Open at a level this audience can actually create, so the first
               // thing an admin sees is not a role they must immediately change.
-              setForm((f) => ({ ...f, accessLevel: addLevels[0] ?? f.accessLevel }));
+              // Every configured brand ticked by default, as the built-in three were.
+              setForm((f) => ({ ...f, accessLevel: addLevels[0] ?? f.accessLevel, brandAccess: allBrandsTicked() }));
               setShowAdd(true);
             }}
             className="shrink-0"
@@ -680,18 +680,7 @@ export const UserManagement = ({ audience = 'internal' }) => {
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex gap-1.5 flex-wrap max-w-[150px]">
-                            {u.brandAccess?.koken && (
-                              <span className="px-1.5 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 rounded">Koken</span>
-                            )}
-                            {u.brandAccess?.bix && (
-                              <span className="px-1.5 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 rounded">BIX</span>
-                            )}
-                            {u.brandAccess?.imada && (
-                              <span className="px-1.5 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 rounded text-nowrap">IMADA</span>
-                            )}
-                            {(!u.brandAccess || (!u.brandAccess.koken && !u.brandAccess.bix && !u.brandAccess.imada)) && (
-                              <span className="px-1.5 py-0.5 text-[10px] font-bold bg-red-50 text-red-700 border border-red-200 rounded">None</span>
-                            )}
+                            <BrandAccessBadges value={u.brandAccess} />
                           </div>
                         </td>
                           </>
@@ -873,35 +862,10 @@ export const UserManagement = ({ audience = 'internal' }) => {
            {isCustomerAudience && (
            <div className="flex flex-col gap-2 mt-1">
              <span className="text-xs font-bold text-slate-600">Brand Access</span>
-             <div className="flex gap-4">
-               <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                 <input
-                   type="checkbox"
-                   checked={form.brandAccess?.koken}
-                   onChange={(e) => setForm(f => ({ ...f, brandAccess: { ...f.brandAccess, koken: e.target.checked } }))}
-                   className="rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-                 />
-                 Koken
-               </label>
-               <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                 <input
-                   type="checkbox"
-                   checked={form.brandAccess?.bix}
-                   onChange={(e) => setForm(f => ({ ...f, brandAccess: { ...f.brandAccess, bix: e.target.checked } }))}
-                   className="rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-                 />
-                 BIX
-               </label>
-               <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                 <input
-                   type="checkbox"
-                   checked={form.brandAccess?.imada}
-                   onChange={(e) => setForm(f => ({ ...f, brandAccess: { ...f.brandAccess, imada: e.target.checked } }))}
-                   className="rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-                 />
-                 IMADA
-               </label>
-             </div>
+             <BrandAccessCheckboxes
+               value={form.brandAccess}
+               onChange={(brandAccess) => setForm((f) => ({ ...f, brandAccess }))}
+             />
            </div>
            )}
 
@@ -1022,35 +986,10 @@ export const UserManagement = ({ audience = 'internal' }) => {
              {isCustomerAudience && (
              <div className="flex flex-col gap-2 mt-1">
                <span className="text-xs font-bold text-slate-600">Brand Access</span>
-               <div className="flex gap-4">
-                 <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                   <input
-                     type="checkbox"
-                     checked={editForm.brandAccess?.koken}
-                     onChange={(e) => setEditForm(f => ({ ...f, brandAccess: { ...f.brandAccess, koken: e.target.checked } }))}
-                     className="rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-                   />
-                   Koken
-                 </label>
-                 <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                   <input
-                     type="checkbox"
-                     checked={editForm.brandAccess?.bix}
-                     onChange={(e) => setEditForm(f => ({ ...f, brandAccess: { ...f.brandAccess, bix: e.target.checked } }))}
-                     className="rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-                   />
-                   BIX
-                 </label>
-                 <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                   <input
-                     type="checkbox"
-                     checked={editForm.brandAccess?.imada}
-                     onChange={(e) => setEditForm(f => ({ ...f, brandAccess: { ...f.brandAccess, imada: e.target.checked } }))}
-                     className="rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-                   />
-                   IMADA
-                 </label>
-               </div>
+               <BrandAccessCheckboxes
+                 value={editForm.brandAccess}
+                 onChange={(brandAccess) => setEditForm((f) => ({ ...f, brandAccess }))}
+               />
              </div>
              )}
 

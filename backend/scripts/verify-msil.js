@@ -25,7 +25,8 @@ const { connectDatabase } = await import('../config/database.js');
 const { Product } = await import('../models/Product.js');
 const MsilCode = (await import('../models/MsilCode.js')).default;
 const { registerMsilCode, registerMsilCodes } = await import('../utils/msilRegistry.js');
-const { ALL_BRANDS } = await import('../utils/brandAccess.js');
+const { allBrands } = await import('../utils/brandAccess.js');
+const { loadBrands } = await import('../utils/brandRegistry.js');
 const { createSku } = await import('../modules/inventory/sku.service.js');
 const { msilAppliesTo } = await import('../utils/msilVisibility.js');
 const { moqError } = await import('../utils/moq.js');
@@ -71,6 +72,9 @@ check('the check is still confined to users MSIL applies to',
 
 /* ── 3. Registration behaviour ────────────────────────────────────────────── */
 await connectDatabase();
+// Brands are configurable; read the current list rather than a fixed three.
+await loadBrands();
+const ALL_BRANDS = allBrands();
 section('3. REGISTERING A CODE');
 
 const NEW = 'ZZ-VERIFY-NEW';

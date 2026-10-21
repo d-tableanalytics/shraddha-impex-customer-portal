@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Save, ArrowRight, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { inventoryApi } from '../../services/inventory';
+import { SkuPricingPanel } from './SkuPricingPanel';
 
 /**
  * Update Stock — the one hand-operated write into the ledger.
@@ -22,6 +23,11 @@ import { inventoryApi } from '../../services/inventory';
  *   2. The resulting figure and the delta are shown BEFORE the button is
  *      pressed. "Set to 60" reads harmlessly next to a row showing 355 until
  *      you see it spelled out as −295.
+ *
+ * The dialog also carries the SKU's PRICING, as a second tab. The two are
+ * separate writes with separate permissions — ADJUST_STOCK posts to the ledger,
+ * MANAGE_PRICING changes Product.prices — so each tab is offered only to a
+ * holder, and saving one never touches the other.
  */
 
 const inputCls =
@@ -35,7 +41,34 @@ const Stat = ({ label, value, tone = 'text-slate-900' }) => (
   </div>
 );
 
-export const UpdateStockModal = ({ open, skuCode, brand, onClose, onDone }) => {
+const TABS = [
+  ['stock', 'Stock'],
+  ['pricing', 'Pricing'],
+];
+
+export const UpdateStockModal = ({
+  open, skuCode, brand, onClose, onDone, canAdjust = true, canPrice = false,
+}) => {
+  const firstTab = canAdjust ? 'stock' : 'pricing';
+  const [tab, setTab] = useState(firstTab);
+  const [pricingBusy, setPricingBusy] = useState(false);
+  const onPricingBusy = useCallback((busy) => setPricingBusy(busy), []);
+  // Reset on close, not on open, so the next opening renders the right panel
+  // from its first frame instead of fetching for the previous one.
+  useEffect(() => { if (!open) setTab(firstTab); }, [open, firstTab]);
+
+  // Switching tabs must not throw away what was typed. A panel opened once
+  // stays mounted (hidden) until the dialog closes, and the stock position is
+  // read once per opening — re-reading it on every switch used to reset the
+  // figure being entered.
+  const [pricingVisited, setPricingVisited] = useState(false);
+  useEffect(() => {
+    if (!open) setPricingVisited(false);
+    else if (tab === 'pricing') setPricingVisited(true);
+  }, [open, tab]);
+  const stockLoadedFor = useRef(null);
+  useEffect(() => { if (!open) stockLoadedFor.current = null; }, [open]);
+
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -46,9 +79,13 @@ export const UpdateStockModal = ({ open, skuCode, brand, onClose, onDone }) => {
   const [note, setNote] = useState('');
 
   useEffect(() => {
-    if (!open || !skuCode || !brand) return undefined;
+    if (!open || !skuCode || !brand || tab !== 'stock') return undefined;
+    const key = `${skuCode}::${brand}`;
+    if (stockLoadedFor.current === key) return undefined;
+    stockLoadedFor.current = key;
 
     let cancelled = false;
+    let finished = false;
     setLoading(true);
     setLoadError(null);
     setPreview(null);
@@ -69,10 +106,16 @@ export const UpdateStockModal = ({ open, skuCode, brand, onClose, onDone }) => {
       .catch((err) => {
         if (!cancelled) setLoadError(err.response?.data?.message || 'Could not read the current stock position.');
       })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => { finished = true; if (!cancelled) setLoading(false); });
 
-    return () => { cancelled = true; };
-  }, [open, skuCode, brand]);
+    // Only a read cut off before it finished is retried. React also runs this
+    // on a plain tab switch, and a completed read must survive that — or the
+    // figure being typed would be reset on the way back.
+    return () => {
+      cancelled = true;
+      if (!finished && stockLoadedFor.current === key) stockLoadedFor.current = null;
+    };
+  }, [open, skuCode, brand, tab]);
 
   const before = preview?.balance.onHand ?? 0;
   const reserved = preview?.balance.reserved ?? 0;
@@ -142,7 +185,45 @@ export const UpdateStockModal = ({ open, skuCode, brand, onClose, onDone }) => {
   return (
     // Not closable while the stock write is in flight: closing would leave the
     // user unsure whether it landed.
-    <Modal isOpen={open} onClose={saving ? () => {} : onClose} title={`Update Stock — ${skuCode ?? ''}`} size="md">
+    <Modal
+      isOpen={open}
+      onClose={saving || pricingBusy ? () => {} : onClose}
+      title={`Update ${canAdjust ? 'Stock' : 'Pricing'} — ${skuCode ?? ''}`}
+      size="md"
+    >
+      {canAdjust && canPrice && (
+        <div className="flex gap-1 p-1 mb-4 rounded-lg bg-slate-100" role="tablist">
+          {TABS.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={tab === value}
+              disabled={saving || pricingBusy}
+              onClick={() => setTab(value)}
+              className={`flex-1 px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${
+                tab === value ? 'bg-white text-primary-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {pricingVisited && open && skuCode && brand && (
+        <div hidden={tab !== 'pricing'}>
+          <SkuPricingPanel
+            skuCode={skuCode}
+            brand={brand}
+            onClose={onClose}
+            onDone={onDone}
+            onBusyChange={onPricingBusy}
+          />
+        </div>
+      )}
+
+      <div hidden={tab !== 'stock'}>
       {loading ? (
         <div className="flex items-center justify-center py-12 text-slate-500">
           <Loader2 size={18} className="animate-spin mr-2" /> Reading current position…
@@ -248,6 +329,7 @@ export const UpdateStockModal = ({ open, skuCode, brand, onClose, onDone }) => {
           </div>
         </div>
       )}
+      </div>
     </Modal>
   );
 };

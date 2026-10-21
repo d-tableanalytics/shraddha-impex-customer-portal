@@ -17,7 +17,7 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { useImportStore } from '../../store/importStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
-import { hasPermission, canUseInventoryMaster, PERMISSIONS } from '../../utils/permissions';
+import { hasPermission, canUseInventoryMaster, canManagePricing, PERMISSIONS } from '../../utils/permissions';
 import { NewSkuMoqModal } from '../../components/inventory/NewSkuMoqModal';
 import { NewSkuDetailsModal, isNewSkuAnswered } from '../../components/inventory/NewSkuDetailsModal';
 
@@ -197,7 +197,10 @@ export const InventoryImport = () => {
   // server for a job nobody is watching.
   useEffect(() => stopPolling, [stopPolling]);
 
-  if (user && !(hasPermission(user, PERMISSIONS.VIEW_INVENTORY) && canUseInventoryMaster(user))) {
+  // A pricing holder (e.g. Sales) reaches this screen for the SKU Pricing sheet;
+  // the server marks every other import type as not allowed for them.
+  if (user && !(hasPermission(user, PERMISSIONS.VIEW_INVENTORY)
+    && (canUseInventoryMaster(user) || canManagePricing(user)))) {
     return <Navigate to="/" replace />;
   }
 
