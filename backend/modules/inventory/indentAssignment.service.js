@@ -10,7 +10,10 @@
  *   assign       put N units on one specific indent (partial allowed);
  *   reassign     move an allocation from one customer's indent to another's —
  *                before the first booking's PO only, while the stock is still
- *                merely reserved.
+ *                merely reserved;
+ *   cancel       undo one inward allocation: the units go back to stock and to
+ *                the indent they came from, and the allocation is kept,
+ *                marked Cancelled.
  *
  * NOTHING HERE ALLOCATES BY ITSELF. Every assignment goes through
  * allocateToBooking(), the code the FIFO pass uses, so the result is the same
@@ -25,7 +28,7 @@
 import Reservation from '../../models/Reservation.js';
 import Order from '../../models/Order.js';
 import AuditLog from '../../models/AuditLog.js';
-import { findProductBySku, releaseStock } from '../../utils/stockLedger.js';
+import { findProductBySku, releaseStock, adjustConsumedQty } from '../../utils/stockLedger.js';
 import { isPlaceholderPo } from '../../utils/bookingLock.js';
 import { runInTransaction } from '../../utils/transaction.js';
 import {
@@ -117,7 +120,7 @@ export const assignmentQueue = async ({ skuCodes = null } = {}) => {
         const bookingId = parentBookingIdOf(r);
         const line = bookingId ? lineOf.get(`${bookingId}::${sku}`) : null;
         const allocated = (line?.allocations || [])
-          .filter((a) => a.indentNumber === r.indentNumber)
+          .filter((a) => a.indentNumber === r.indentNumber && a.status !== 'Cancelled')
           .reduce((n, a) => n + a.quantity, 0);
         return {
           id: String(r._id),
@@ -382,4 +385,142 @@ export const reassignAllocation = async ({ orderId, lineId, seq, toIndentId, qua
   }
 };
 
-export default { assignmentQueue, autoAssign, assignToIndent, reassignAllocation };
+/**
+ * Cancel ONE inward allocation.
+ *
+ * The units go back where they came from, in one transaction:
+ *   - the booking line gives them up (confirmedQty / requestedQty down, the
+ *     indent remainder `pendingQty` up);
+ *   - the stock comes back: released if it was only reserved, returned to
+ *     inventory if the line's PO had already consumed it;
+ *   - the indent that supplied them is owed them again.
+ * The allocation is NOT deleted. It is marked 'Cancelled' with who, when and
+ * why, so the booking keeps a true history; the ledger rows written by the
+ * stock helpers are the transaction history of the units themselves, and the
+ * audit entry ties the three together.
+ *
+ * Refused for an allocation that is already cancelled (the flip below is one
+ * conditional write, so two people clicking at once cancel it once and the
+ * other gets a clear refusal rather than a second release) and for one that has
+ * moved past 'PO Received' (picked or dispatched: the goods are no longer
+ * simply sitting in stock).
+ *
+ * An indent the desk already cancelled stays cancelled: the units still return
+ * to stock, and the result says the indent was not reopened.
+ *
+ * Nothing here re-runs the FIFO pass. In auto mode the next arrival may offer
+ * these units to the same indent again; cancelling is the decision to undo THIS
+ * allocation, not to pick a different one (use Reassign for that).
+ */
+export const cancelInwardAllocation = async ({ orderId, lineId, seq, reason, actor, req }) => {
+  const note = String(reason || '').trim().slice(0, 300) || null;
+  const seqNo = Number(seq);
+  if (!orderId || !lineId || !Number.isInteger(seqNo)) throw fail(400, 'Say which allocation to cancel.');
+
+  const done = await runInTransaction(async (session) => {
+    const opts = session ? { session } : {};
+    const row = await Order.findOne({ _id: lineId, orderId }, null, opts).lean();
+    if (!row) throw fail(404, 'Booking line not found.');
+    if (row.status === 'Cancelled') throw fail(409, `${orderId} is cancelled; its stock was already released.`);
+
+    const allocation = (row.allocations || []).find((a) => a.seq === seqNo);
+    if (!allocation) throw fail(404, 'Allocation not found.');
+    if (allocation.status === 'Cancelled') throw fail(409, 'This allocation is already cancelled.');
+    const stage = allocation.status || 'PO Received';
+    if (stage !== 'PO Received') {
+      throw fail(409, `This allocation is already at "${stage}" and can no longer be cancelled.`);
+    }
+
+    const consumed = row.stockState === 'consumed';
+    if (!consumed && !['reserved', null, undefined].includes(row.stockState)) {
+      throw fail(409, `${row.skuCode} on ${orderId} no longer holds this stock (${row.stockState}).`);
+    }
+    const qty = allocation.quantity;
+    const now = new Date();
+
+    // The ONE write that decides who cancels it. Matches only while the
+    // allocation is still live at the stage just read and the line can give the
+    // units up; anything else changed underneath us and nothing has moved yet.
+    const flipped = await Order.updateOne(
+      {
+        _id: row._id,
+        status: { $ne: 'Cancelled' },
+        stockState: consumed ? 'consumed' : { $in: ['reserved', null] },
+        confirmedQty: { $gte: qty },
+        allocations: { $elemMatch: { seq: seqNo, status: allocation.status ?? null } },
+      },
+      {
+        $set: {
+          'allocations.$[a].status': 'Cancelled',
+          'allocations.$[a].statusAt': now,
+          'allocations.$[a].statusBy': actor?._id ?? null,
+          'allocations.$[a].cancelledAt': now,
+          'allocations.$[a].cancelledBy': actor?._id ?? null,
+          'allocations.$[a].cancellationReason': note,
+        },
+        $inc: { confirmedQty: -qty, requestedQty: -qty, pendingQty: qty },
+      },
+      { arrayFilters: [{ 'a.seq': seqNo, 'a.status': { $ne: 'Cancelled' } }], ...opts },
+    );
+    if (flipped.modifiedCount !== 1) throw fail(409, 'This allocation was just changed or cancelled. Refresh and check.');
+
+    // Stock back into inventory. Same helpers, same ledger, same transaction.
+    const product = await findProductBySku(row.skuCode, session);
+    const ctx = {
+      workflow: 'indent-allocation-cancel', referenceType: 'booking', referenceId: orderId,
+      reasonCode: 'REVERSAL', actor, req,
+    };
+    const restored = product && (consumed
+      ? (await adjustConsumedQty(product, qty, 0, session, ctx)).ok
+      : await releaseStock(product, qty, session, ctx));
+    if (!restored) throw fail(500, `Stock for ${row.skuCode} could not be restored.`);
+
+    // The indent that supplied the units waits for them again.
+    const source = allocation.reservationId
+      ? await Reservation.findOne({ reservationId: allocation.reservationId }, null, opts).lean()
+      : null;
+    let indentRestored = false;
+    if (source && OPEN.includes(source.status)) {
+      await Reservation.updateOne({ _id: source._id }, { $inc: { quantity: qty } }, opts);
+      indentRestored = true;
+    } else if (source && source.status === 'Confirmed') {
+      // Taken whole earlier, so it was closed; it waits for these units again.
+      await Reservation.updateOne(
+        { _id: source._id },
+        {
+          $set: {
+            status: (row.confirmedQty - qty) > 0 ? 'Partially Confirmed' : 'Pending',
+            quantity: qty,
+            autoBookedOrderId: null,
+            autoBookedAt: null,
+          },
+        },
+        opts,
+      );
+      indentRestored = true;
+    }
+
+    return {
+      skuCode: row.skuCode, quantity: qty, seq: seqNo, stockState: consumed ? 'consumed' : 'reserved',
+      indentNumber: allocation.indentNumber || allocation.reservationId || null,
+      indentRestored, at: now,
+    };
+  }, { label: 'cancelInwardAllocation' });
+
+  await audit(
+    actor,
+    'Inward Allocation Cancelled',
+    `Allocation ${done.seq} of ${done.quantity} unit(s) of ${done.skuCode} on ${orderId} cancelled`
+    + (done.indentNumber ? `, returned to ${done.indentNumber}` : '')
+    + (done.indentRestored ? '' : ' (indent not reopened)')
+    + (note ? `. Reason: ${note}` : '.'),
+    { orderId, ...done, reason: note },
+    req,
+  );
+
+  return { orderId, ...done };
+};
+
+export default {
+  assignmentQueue, autoAssign, assignToIndent, reassignAllocation, cancelInwardAllocation,
+};

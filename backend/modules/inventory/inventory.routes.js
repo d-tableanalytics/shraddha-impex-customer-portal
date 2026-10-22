@@ -9,7 +9,7 @@ import { recalculate as recalculateConsumption } from './consumption.controller.
 import { listLocations, createLocation, updateLocation, setDefaultLocation } from './location.controller.js';
 import { listBrandsHandler, createBrand, updateBrand, deleteBrand } from './brand.controller.js';
 import { getConfig, getConfigHistory, updateConfig } from './config.controller.js';
-import { getQueue, postAuto, postAssign, postReassign } from './indentAssignment.controller.js';
+import { getQueue, postAuto, postAssign, postReassign, postCancelAllocation } from './indentAssignment.controller.js';
 import {
   getUpcoming, postImportPreview, postImport, patchShipment, postCancelShipment,
   deleteUpcomingShipment, postDeleteSku,
@@ -342,6 +342,7 @@ router.get('/indent-assignment', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), get
 router.post('/indent-assignment/auto', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postAuto);
 router.post('/indent-assignment/assign', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postAssign);
 router.post('/indent-assignment/reassign', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postReassign);
+router.post('/indent-assignment/cancel', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postCancelAllocation);
 
 // ── Upcoming stock ────────────────────────────────────────────────────────
 // Ordered but not yet received, with a FIFO allocation to open indents worked

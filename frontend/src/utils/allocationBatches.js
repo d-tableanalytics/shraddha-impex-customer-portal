@@ -27,13 +27,18 @@ export const allocationBatches = (lines) => {
   return [...byAt.values()]
     .sort((a, b) => new Date(a.at) - new Date(b.at))
     .map((batch, i) => {
-      const statuses = new Set(batch.entries.map((e) => e.allocation.status || "PO Received"));
+      // An entry cancelled on its own is kept for the record, but it is no
+      // longer part of what this allocation holds, so the batch's quantity,
+      // SKU count and stage are read from the live entries. With none left the
+      // whole batch reads Cancelled.
+      const live = batch.entries.filter((e) => e.allocation.status !== "Cancelled");
+      const statuses = new Set(live.map((e) => e.allocation.status || "PO Received"));
       return {
         ...batch,
         number: i + 1,
-        quantity: batch.entries.reduce((n, e) => n + (e.allocation.quantity || 0), 0),
-        skuCount: new Set(batch.entries.map((e) => e.line.skuCode)).size,
-        status: statuses.size === 1 ? [...statuses][0] : "mixed",
+        quantity: live.reduce((n, e) => n + (e.allocation.quantity || 0), 0),
+        skuCount: new Set(live.map((e) => e.line.skuCode)).size,
+        status: live.length === 0 ? "Cancelled" : statuses.size === 1 ? [...statuses][0] : "mixed",
       };
     });
 };

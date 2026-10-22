@@ -509,7 +509,9 @@ const runUpdateItems = async (req, session) => {
   // they hold, change its SKU or drop it — that would leave allocations
   // describing units the line no longer has.
   for (const row of existing) {
-    const held = (row.allocations || []).reduce((n, a) => n + (a.quantity || 0), 0);
+    const held = (row.allocations || [])
+      .filter((a) => a.status !== 'Cancelled')
+      .reduce((n, a) => n + (a.quantity || 0), 0);
     if (!held) continue;
     const line = incoming.find((l) => l.id && String(l.id) === String(row._id));
     if (!line || String(line.skuCode).trim() !== row.skuCode || Number(line.quantity) < held) {

@@ -273,6 +273,8 @@ export const shapeBooking = (
         at: a.at,
         status: a.status || 'PO Received',
         statusAt: a.statusAt || null,
+        cancelledAt: a.cancelledAt || null,
+        cancellationReason: a.cancellationReason || null,
       })),
       // The rate this customer was given for this line and what it comes to.
       // Present only when the viewer may see pricing; absent, not zeroed, so a

@@ -63,7 +63,9 @@ const poRaised = (booking) =>
  */
 const withoutAllocations = (lines) => lines
   .map((l) => {
-    const allocated = (l.allocations || []).reduce((n, a) => n + (a.quantity || 0), 0);
+    const allocated = (l.allocations || [])
+      .filter((a) => a.status !== "Cancelled")
+      .reduce((n, a) => n + (a.quantity || 0), 0);
     const confirmed = l.confirmedQty ?? l.orderQuantity ?? l.quantity ?? 0;
     return { ...l, allocated, quantity: confirmed - allocated };
   })
@@ -333,6 +335,8 @@ export const picklistFromCustomerOrder = (order) => {
 const batchLines = (batch) => {
   const byLine = new Map();
   for (const { line, allocation } of batch.entries) {
+    // Cancelled on its own: the units went back to stock, nothing to pick.
+    if (allocation.status === "Cancelled") continue;
     const key = line.lineId ?? line.id ?? line.skuCode;
     if (!byLine.has(key)) byLine.set(key, { line, quantity: 0 });
     byLine.get(key).quantity += allocation.quantity || 0;

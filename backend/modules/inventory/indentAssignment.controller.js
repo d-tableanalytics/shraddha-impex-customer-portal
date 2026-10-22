@@ -1,5 +1,5 @@
 import {
-  assignmentQueue, autoAssign, assignToIndent, reassignAllocation,
+  assignmentQueue, autoAssign, assignToIndent, reassignAllocation, cancelInwardAllocation,
 } from './indentAssignment.service.js';
 
 /**
@@ -43,4 +43,14 @@ export const postReassign = async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
-export default { getQueue, postAuto, postAssign, postReassign };
+/** POST /inventory/indent-assignment/cancel — body { orderId, lineId, seq, reason? }. */
+export const postCancelAllocation = async (req, res, next) => {
+  try {
+    const { orderId, lineId, seq, reason } = req.body || {};
+    send(res, 200, await cancelInwardAllocation({
+      orderId, lineId, seq: Number(seq), reason, actor: req.user, req,
+    }));
+  } catch (error) { next(error); }
+};
+
+export default { getQueue, postAuto, postAssign, postReassign, postCancelAllocation };

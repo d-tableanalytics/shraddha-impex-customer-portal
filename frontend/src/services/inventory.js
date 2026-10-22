@@ -50,6 +50,9 @@ export const inventoryApi = {
   /** Move (part of) an allocation to another indent. */
   reassignAllocation: async ({ orderId, lineId, seq, toIndentId, quantity }) =>
     (await api.post("/inventory/indent-assignment/reassign", { orderId, lineId, seq, toIndentId, quantity })).data.data,
+  /** Cancel one inward allocation: its units go back to stock and to their indent. */
+  cancelAllocation: async ({ orderId, lineId, seq, reason }) =>
+    (await api.post("/inventory/indent-assignment/cancel", { orderId, lineId, seq, reason })).data.data,
   // ── Upcoming Stock ────────────────────────────────────────────────────
   /** Every SKU with stock on its way: shipments, reservations, indents, live on-hand. */
   upcomingStock: async () => (await api.get("/inventory/upcoming")).data.data,

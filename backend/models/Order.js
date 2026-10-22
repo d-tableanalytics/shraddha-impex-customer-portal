@@ -221,6 +221,12 @@ const orderSchema = new mongoose.Schema({
       status: { type: String, default: 'PO Received' },
       statusAt: { type: Date, default: null },
       statusBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      // Set when THIS allocation alone is cancelled (status 'Cancelled'): the
+      // units went back to stock and to their indent, and the record stays so
+      // the history is complete. A booking-wide release marks `status` only.
+      cancelledAt: { type: Date, default: null },
+      cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      cancellationReason: { type: String, default: null },
     }],
     default: undefined,
   },

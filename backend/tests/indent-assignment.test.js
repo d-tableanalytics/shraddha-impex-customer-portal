@@ -28,13 +28,14 @@ const { default: User } = await import('../models/User.js');
 const { default: Location } = await import('../models/Location.js');
 const { default: StockBalance } = await import('../models/StockBalance.js');
 const { default: AuditLog } = await import('../models/AuditLog.js');
+const { default: StockMovement } = await import('../models/StockMovement.js');
 const { default: InventoryConfig } = await import('../models/InventoryConfig.js');
 const { ProductKoken } = await import('../models/Product.js');
 const { createDirectBooking } = await import('../modules/reservations/reservation.controller.js');
 const { cancelBooking, updateOrderPO } = await import('../modules/orders/order.controller.js');
 const { processAvailableIndents } = await import('../modules/inventory/indentAvailability.service.js');
 const {
-  assignmentQueue, autoAssign, assignToIndent, reassignAllocation,
+  assignmentQueue, autoAssign, assignToIndent, reassignAllocation, cancelInwardAllocation,
 } = await import('../modules/inventory/indentAssignment.service.js');
 const { errorHandler } = await import('../middlewares/errorHandler.js');
 
@@ -249,6 +250,155 @@ describe('reassignment', () => {
     await call(updateOrderPO, { user: ADMIN, params: { orderId: A }, body: { poNumber: 'PO-A' } });
     row = (await assignmentQueue()).skus.find((s) => s.skuCode === 'SKU-1');
     assert.deepEqual(row.reassignable, []);
+  });
+});
+
+describe('cancelling an inward allocation', () => {
+  /** A booked 10 with 2 in stock; 5 more arrive and are assigned to A's indent. */
+  const allocatedToA = async () => {
+    const ctx = await twoWaiting();
+    await arrive(ctx.p, 5);
+    await assignToIndent({ indentId: (await indentOf(ctx.A))._id, quantity: 5, actor: SALES });
+    const line = await Order.findOne({ orderId: ctx.A }).lean();
+    return { ...ctx, line };
+  };
+  const cancel = (ctx, extra = {}) => cancelInwardAllocation({
+    orderId: ctx.A, lineId: ctx.line._id, seq: 1, actor: SALES, ...extra,
+  });
+
+  test('returns the units to stock and to the indent, and keeps the allocation as Cancelled', async () => {
+    const ctx = await allocatedToA();
+    assert.deepEqual(await stock(ctx.p), { available: 0, booked: 7, total: 7 });
+    assert.equal((await indentOf(ctx.A)).quantity, 3);
+
+    const res = await cancel(ctx, { reason: 'Booked by mistake' });
+    assert.equal(res.quantity, 5);
+    assert.equal(res.indentRestored, true);
+
+    const line = await Order.findOne({ orderId: ctx.A }).lean();
+    assert.equal(line.confirmedQty, 2, 'back to what A had at booking');
+    assert.equal(line.pendingQty, 8, 'the remainder is owed again');
+    assert.equal(line.allocations.length, 1, 'the record is kept, not deleted');
+    const [alloc] = line.allocations;
+    assert.equal(alloc.status, 'Cancelled');
+    assert.equal(alloc.quantity, 5);
+    assert.equal(alloc.cancellationReason, 'Booked by mistake');
+    assert.equal(String(alloc.cancelledBy), String(SALES._id));
+    assert.ok(alloc.cancelledAt);
+
+    assert.equal((await indentOf(ctx.A)).quantity, 8, 'A is owed the 5 again');
+    assert.deepEqual(await stock(ctx.p), { available: 5, booked: 2, total: 7 }, 'the 5 are free again');
+
+    // The transaction history of the units: one reversal row against the booking.
+    const moves = await StockMovement.find({ referenceId: ctx.A, reasonCode: 'REVERSAL' }).lean();
+    assert.equal(moves.length, 1, 'one ledger row for the units');
+    assert.equal(moves[0].movementType, 'RELEASE');
+    assert.equal(moves[0].quantity, -5);
+    assert.equal(moves[0].skuCode, 'SKU-1');
+
+    const audit = await AuditLog.findOne({ action: 'Inward Allocation Cancelled' }).lean();
+    assert.equal(String(audit.user), String(SALES._id));
+    assert.equal(audit.meta.quantity, 5);
+    assert.equal(audit.meta.reason, 'Booked by mistake');
+  });
+
+  test('a second cancel is refused and moves nothing', async () => {
+    const ctx = await allocatedToA();
+    await cancel(ctx);
+    const after = await stock(ctx.p);
+    await assert.rejects(cancel(ctx), /already cancelled/);
+    assert.deepEqual(await stock(ctx.p), after);
+    assert.equal((await indentOf(ctx.A)).quantity, 8, 'the indent was not credited twice');
+    assert.equal(await StockMovement.countDocuments({ referenceId: ctx.A, reasonCode: 'REVERSAL' }), 1, 'ledgered once');
+    assert.equal(await AuditLog.countDocuments({ action: 'Inward Allocation Cancelled' }), 1);
+  });
+
+  test('two people cancelling at once: it is cancelled once', async () => {
+    const ctx = await allocatedToA();
+    const results = await Promise.allSettled([cancel(ctx), cancel(ctx, { actor: ADMIN })]);
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+    assert.deepEqual(await stock(ctx.p), { available: 5, booked: 2, total: 7 });
+    assert.equal((await indentOf(ctx.A)).quantity, 8);
+  });
+
+  test('works after the PO is raised: the PO consumed the stock, so it is returned to inventory', async () => {
+    const ctx = await allocatedToA();
+    await call(updateOrderPO, { user: ADMIN, params: { orderId: ctx.A }, body: { poNumber: 'PO-A' } });
+    assert.equal((await Order.findOne({ orderId: ctx.A }).lean()).stockState, 'consumed');
+    assert.deepEqual(await stock(ctx.p), { available: 0, booked: 0, total: 0 }, 'all 7 issued');
+
+    await cancel(ctx);
+    assert.deepEqual(await stock(ctx.p), { available: 5, booked: 0, total: 5 }, 'the 5 are back on the shelf');
+    assert.equal((await indentOf(ctx.A)).quantity, 8);
+  });
+
+  test('when the PO already consumed the stock, it is returned to inventory', async () => {
+    const ctx = await allocatedToA();
+    // Settled by the PO: units issued, so booked drops and the total with it.
+    await Order.updateMany({ orderId: ctx.A }, { $set: { stockState: 'consumed' } });
+    await ProductKoken.updateOne({ _id: ctx.p._id }, { $inc: { bookedQuantity: -7, totalAvailableQuantity: -7 } });
+    assert.deepEqual(await stock(ctx.p), { available: 0, booked: 0, total: 0 });
+
+    await cancel(ctx);
+    assert.deepEqual(await stock(ctx.p), { available: 5, booked: 0, total: 5 }, 'the 5 are back on the shelf');
+    const move = await StockMovement.findOne({ referenceId: ctx.A, reasonCode: 'REVERSAL' }).lean();
+    assert.equal(move.movementType, 'ADJUSTMENT');
+    assert.equal(move.quantity, 5);
+  });
+
+  test('refused once the allocation is moving towards dispatch', async () => {
+    const ctx = await allocatedToA();
+    await Order.updateOne({ _id: ctx.line._id }, { $set: { 'allocations.0.status': 'Dispatched' } });
+    await assert.rejects(cancel(ctx), /already at "Dispatched"/);
+    assert.deepEqual(await stock(ctx.p), { available: 0, booked: 7, total: 7 });
+  });
+
+  test('an unknown allocation or line is a clear 404', async () => {
+    const ctx = await allocatedToA();
+    await assert.rejects(cancelInwardAllocation({ orderId: ctx.A, lineId: ctx.line._id, seq: 9, actor: SALES }), /not found/i);
+    await assert.rejects(
+      cancelInwardAllocation({ orderId: ctx.A, lineId: new mongoose.Types.ObjectId(), seq: 1, actor: SALES }),
+      /not found/i,
+    );
+  });
+
+  test('an indent that was taken whole is reopened', async () => {
+    const ctx = await twoWaiting();
+    await arrive(ctx.p, 8);
+    await assignToIndent({ indentId: (await indentOf(ctx.A))._id, quantity: 8, actor: SALES });
+    assert.equal((await indentOf(ctx.A)).status, 'Confirmed');
+    const line = await Order.findOne({ orderId: ctx.A }).lean();
+
+    const res = await cancelInwardAllocation({ orderId: ctx.A, lineId: line._id, seq: 1, actor: SALES });
+    assert.equal(res.indentRestored, true);
+    const indent = await indentOf(ctx.A);
+    assert.equal(indent.status, 'Partially Confirmed');
+    assert.equal(indent.quantity, 8);
+    assert.equal(indent.autoBookedOrderId ?? null, null);
+  });
+
+  test('an indent the desk cancelled stays cancelled, but the stock still returns', async () => {
+    const ctx = await allocatedToA();
+    await Reservation.updateOne({ indentNumber: ctx.A.replace(/^BO-/, 'PI-') }, { $set: { status: 'Cancelled' } });
+    const res = await cancel(ctx);
+    assert.equal(res.indentRestored, false);
+    const indent = await indentOf(ctx.A);
+    assert.equal(indent.status, 'Cancelled');
+    assert.equal(indent.quantity, 3, 'not credited');
+    assert.deepEqual(await stock(ctx.p), { available: 5, booked: 2, total: 7 });
+  });
+
+  test('cancelling the whole booking afterwards does not release the cancelled units again', async () => {
+    const ctx = await allocatedToA();
+    await cancel(ctx);
+    await call(cancelBooking, { user: ADMIN, params: { orderId: ctx.A }, body: {} });
+    // 2 booked at the start + 5 arrived = 7, every unit free exactly once.
+    assert.deepEqual(await stock(ctx.p), { available: 7, booked: 0, total: 7 });
+    const audit = await AuditLog.findOne({ action: 'Booking Cancelled' }).lean();
+    assert.deepEqual(audit.meta.indents, [], 'the cancelled allocation is not reported as released again');
+    const line = await Order.findOne({ orderId: ctx.A }).lean();
+    assert.equal(line.allocations[0].cancellationReason ?? null, null);
+    assert.ok(line.allocations[0].cancelledAt, 'its own cancellation date is kept');
   });
 });
 

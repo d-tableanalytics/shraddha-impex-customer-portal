@@ -99,3 +99,52 @@ describe("Indent-to-Booking Allocations", () => {
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 });
+
+describe("cancelling one inward allocation", () => {
+  const live = {
+    lineId: "row-9", skuCode: "S/A42", bookedQty: 10, confirmedQty: 5, pendingQty: 5,
+    allocations: [
+      { seq: 1, quantity: 5, indentNumber: "PI-2026-000072", at: T1, status: "Cancelled",
+        cancelledAt: "2026-10-22T06:00:00.000Z", cancellationReason: "Booked by mistake" },
+      { seq: 2, quantity: 3, indentNumber: "PI-2026-000072", at: T2, status: "PO Received" },
+    ],
+  };
+
+  test("a cancelled entry is history: it leaves the batch quantity and the summary", () => {
+    const [first, second] = allocationBatches([live]);
+    expect(first.status).toBe("Cancelled");
+    expect(first.quantity).toBe(0);
+    expect(second.quantity).toBe(3);
+
+    render(<AllocationsSection lines={[live]} />);
+    const summary = screen.getAllByText("Initially confirmed", { exact: false })[0].parentElement.textContent;
+    // 5 confirmed in all = 2 at booking time + the 3 still allocated; the 5
+    // that were cancelled are not counted anywhere.
+    expect(summary).toContain("Initially confirmed 2");
+    expect(summary).toContain("Allocated 3");
+  });
+
+  test("the cancelled row says so and keeps its reason", () => {
+    render(<AllocationsSection lines={[live]} />);
+    const tag = screen.getByText(/Cancelled .*returned to indent/);
+    expect(tag.getAttribute("title")).toBe("Booked by mistake");
+  });
+
+  test("Cancel is offered only for a live first-stage allocation, and only to those who may", () => {
+    const onCancel = vi.fn();
+    const { rerender } = render(<AllocationsSection lines={[live]} onCancelAllocation={onCancel} />);
+    const buttons = screen.getAllByRole("button", { name: "Cancel" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    expect(onCancel).toHaveBeenCalledWith(live, live.allocations[1]);
+
+    // Moving towards dispatch: no longer cancellable.
+    const picked = { ...live, allocations: [{ ...live.allocations[1], status: "Dispatched" }] };
+    rerender(<AllocationsSection lines={[picked]} onCancelAllocation={onCancel} />);
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+
+    // No handler (no permission): no button at all.
+    rerender(<AllocationsSection lines={[live]} />);
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  });
+});

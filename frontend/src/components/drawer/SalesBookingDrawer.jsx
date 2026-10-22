@@ -67,7 +67,7 @@ const toDraft = (booking) =>
 export const SalesBookingDrawer = () => {
   const {
     selected, close, saveItems, raisePo, setPricing, setManualPricing, reorderLines, saving, reloadSelected,
-    updateAllocationBatchStatus, updateBookingStatus, cancelBooking,
+    updateAllocationBatchStatus, updateBookingStatus, cancelBooking, cancelInwardAllocation,
   } = useSalesStore();
   const { user } = useUserStore();
 
@@ -94,6 +94,11 @@ export const SalesBookingDrawer = () => {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
+  // One inward allocation being cancelled: { line, allocation } while the
+  // confirmation is open.
+  const [allocationToCancel, setAllocationToCancel] = useState(null);
+  const [allocationReason, setAllocationReason] = useState("");
+  const [cancellingAllocation, setCancellingAllocation] = useState(false);
   // An inward allocation's own pick list, when one is open.
   const [allocationDoc, setAllocationDoc] = useState(null);
   // Whether the tier picker is open. Closed by default on both sides of the PO:
@@ -1360,6 +1365,11 @@ export const SalesBookingDrawer = () => {
               onViewPicklist={(batch) => setAllocationDoc(
                 allocationPicklistFromSalesBooking(selected, batch, { showBoxNo }),
               )}
+              // The same authority that assigns arriving stock to indents; the
+              // server enforces it on the endpoint regardless of this prop.
+              onCancelAllocation={mayDecideIndent
+                ? (line, allocation) => { setAllocationReason(""); setAllocationToCancel({ line, allocation }); }
+                : undefined}
             />
 
             {/*
@@ -1624,6 +1634,71 @@ export const SalesBookingDrawer = () => {
               </ERPButton>
             </div>
           </div>
+        </Modal>
+
+        <Modal
+          isOpen={Boolean(allocationToCancel)}
+          onClose={() => { if (!cancellingAllocation) setAllocationToCancel(null); }}
+          title="Cancel this inward allocation?"
+          size="sm"
+        >
+          {allocationToCancel && (
+            <div className="flex flex-col gap-3">
+              <p className="text-xs text-slate-600 leading-relaxed">
+                <b>{allocationToCancel.allocation.quantity}</b> unit(s) of{" "}
+                <b className="font-mono">{allocationToCancel.line.skuCode}</b> on {selected.orderId} go
+                back into stock
+                {allocationToCancel.allocation.indentNumber
+                  ? <> and back onto indent <b>{allocationToCancel.allocation.indentNumber}</b>, which waits for them again</>
+                  : null}.
+                {locked ? " Its PO has been raised, so the units it had taken out of inventory are put back." : ""}
+                {" "}The allocation stays on the booking, marked Cancelled. This cannot be undone.
+              </p>
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Reason (optional)</span>
+                <input
+                  type="text"
+                  value={allocationReason}
+                  maxLength={300}
+                  onChange={(e) => setAllocationReason(e.target.value)}
+                  placeholder="e.g. booked by mistake"
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-1 focus:ring-primary-500"
+                />
+              </label>
+              <div className="flex justify-end gap-2">
+                <ERPButton variant="outline" size="sm" onClick={() => setAllocationToCancel(null)} disabled={cancellingAllocation}>
+                  Keep allocation
+                </ERPButton>
+                <ERPButton
+                  variant="danger"
+                  size="sm"
+                  loading={cancellingAllocation}
+                  onClick={async () => {
+                    setCancellingAllocation(true);
+                    const res = await cancelInwardAllocation({
+                      orderId: selected.orderId,
+                      lineId: allocationToCancel.line.lineId,
+                      seq: allocationToCancel.allocation.seq,
+                      reason: allocationReason.trim(),
+                    });
+                    setCancellingAllocation(false);
+                    if (res.success) {
+                      toast.success(
+                        res.data?.indentRestored === false
+                          ? "Allocation cancelled and stock returned. Its indent was already cancelled, so it was not reopened."
+                          : "Allocation cancelled. The units are back in stock and on their indent.",
+                      );
+                      setAllocationToCancel(null);
+                    } else {
+                      toast.error(res.error || "The allocation could not be cancelled.");
+                    }
+                  }}
+                >
+                  Cancel allocation
+                </ERPButton>
+              </div>
+            </div>
+          )}
         </Modal>
 
         {allocationDoc && (

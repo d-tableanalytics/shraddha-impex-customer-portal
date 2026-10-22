@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { salesApi } from "../services/sales";
 import { ordersApi } from "../services/orders";
+import { inventoryApi } from "../services/inventory";
 import { registerSessionReset } from "./sessionReset";
 import { invalidateBookingData, registerStaleMarker } from "./invalidation";
 
@@ -184,6 +185,22 @@ export const useSalesStore = create((set, get) => ({
       await get().reloadSelected();
       await get().fetchBookings();
       return { success: true, message: res?.message };
+    } catch (err) {
+      return { success: false, error: err.response?.data?.message || err.message };
+    }
+  },
+
+  /**
+   * Cancel ONE inward allocation. Its units return to stock and to their
+   * indent; the allocation stays on the booking, marked Cancelled.
+   */
+  cancelInwardAllocation: async ({ orderId, lineId, seq, reason }) => {
+    try {
+      const res = await inventoryApi.cancelAllocation({ orderId, lineId, seq, reason });
+      invalidateBookingData();
+      await get().reloadSelected();
+      await get().fetchBookings();
+      return { success: true, data: res };
     } catch (err) {
       return { success: false, error: err.response?.data?.message || err.message };
     }

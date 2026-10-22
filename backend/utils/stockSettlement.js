@@ -39,7 +39,8 @@ export const RESERVED = { stockState: { $in: ['reserved', null] } };
  */
 export const releasedAllocations = (row, at) => (
   row.allocations?.length
-    ? { allocations: row.allocations.map((a) => ({ ...a, status: 'Cancelled', statusAt: at })) }
+    // One already cancelled on its own keeps the date and reason it has.
+    ? { allocations: row.allocations.map((a) => (a.status === 'Cancelled' ? a : { ...a, status: 'Cancelled', statusAt: at })) }
     : {}
 );
 
@@ -47,7 +48,10 @@ export const releasedAllocations = (row, at) => (
  * The indents a set of released lines' stock came from, for the audit trail:
  * [{ skuCode, indentNumber, quantity }] — one entry per inward allocation.
  */
-export const indentsReleased = (rows) => rows.flatMap((row) => (row.allocations || []).map((a) => ({
+export const indentsReleased = (rows) => rows.flatMap((row) => (row.allocations || [])
+  // An allocation cancelled earlier already went back to its indent.
+  .filter((a) => a.status !== 'Cancelled')
+  .map((a) => ({
   skuCode: row.skuCode,
   indentNumber: a.indentNumber || a.reservationId || null,
   allocation: a.seq,

@@ -29,8 +29,11 @@ const fmtDate = (d) => new Date(d).toLocaleDateString("en-IN", { day: "2-digit",
  *        Omitted for readers who may not move it; they see the stage as text.
  * @param {Function} [onViewPicklist] (batch). Omitted when there is no document
  *        to show yet (the customer's copy needs a raised PO).
+ * @param {Function} [onCancelAllocation] (line, allocation). Omitted for readers
+ *        who may not cancel; offered only on an allocation still at its first
+ *        stage, which is the only one the server will cancel.
  */
-export const AllocationsSection = ({ lines, onStatusChange, onViewPicklist }) => {
+export const AllocationsSection = ({ lines, onStatusChange, onViewPicklist, onCancelAllocation }) => {
   const [busy, setBusy] = useState(null);
   const withAllocations = (lines || []).filter((l) => l.allocations?.length);
   if (withAllocations.length === 0) return null;
@@ -56,7 +59,11 @@ export const AllocationsSection = ({ lines, onStatusChange, onViewPicklist }) =>
       {/* Per SKU: where its booked quantity stands. */}
       <div className="px-5 py-3 border-b border-slate-100 flex flex-col gap-1.5">
         {withAllocations.map((line) => {
-          const allocated = line.allocations.reduce((n, a) => n + (a.quantity || 0), 0);
+          // A cancelled allocation went back to stock and to its indent: it is
+          // history, not part of what this line holds.
+          const allocated = line.allocations
+            .filter((a) => a.status !== "Cancelled")
+            .reduce((n, a) => n + (a.quantity || 0), 0);
           const initial = (line.confirmedQty || 0) - allocated;
           return (
             <div key={line.lineId || line.skuCode} className="flex flex-wrap items-baseline justify-between gap-2">
@@ -131,16 +138,44 @@ export const AllocationsSection = ({ lines, onStatusChange, onViewPicklist }) =>
                     <th className="py-1.5 pr-4 text-left">SKU</th>
                     <th className="py-1.5 px-4 text-left">From indent</th>
                     <th className="py-1.5 pl-4 text-right">Qty allocated</th>
+                    {onCancelAllocation && <th className="py-1.5 pl-4"><span className="sr-only">Actions</span></th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {batch.entries.map(({ line, allocation }) => (
-                    <tr key={`${line.lineId || line.skuCode}:${allocation.seq}`}>
-                      <td className="py-2 pr-4 font-mono font-semibold text-slate-700">{line.skuCode}</td>
-                      <td className="py-2 px-4 text-slate-600">{allocation.indentNumber || "—"}</td>
-                      <td className="py-2 pl-4 text-right font-bold text-emerald-700">{allocation.quantity}</td>
-                    </tr>
-                  ))}
+                  {batch.entries.map(({ line, allocation }) => {
+                    const cancelled = allocation.status === "Cancelled";
+                    const cancellable = !cancelled && (allocation.status || "PO Received") === "PO Received";
+                    return (
+                      <tr key={`${line.lineId || line.skuCode}:${allocation.seq}`} className={cancelled ? "text-slate-400" : ""}>
+                        <td className={`py-2 pr-4 font-mono font-semibold ${cancelled ? "line-through" : "text-slate-700"}`}>{line.skuCode}</td>
+                        <td className="py-2 px-4 text-slate-600">
+                          <span className={cancelled ? "line-through text-slate-400" : ""}>{allocation.indentNumber || "—"}</span>
+                          {cancelled && (
+                            <span
+                              className="ml-2 text-[11px] font-semibold text-red-600 no-underline"
+                              title={allocation.cancellationReason || undefined}
+                            >
+                              Cancelled{allocation.cancelledAt ? ` ${fmtDate(allocation.cancelledAt)}` : ""} · returned to indent
+                            </span>
+                          )}
+                        </td>
+                        <td className={`py-2 pl-4 text-right font-bold ${cancelled ? "line-through text-slate-400" : "text-emerald-700"}`}>{allocation.quantity}</td>
+                        {onCancelAllocation && (
+                          <td className="py-2 pl-4 text-right">
+                            {cancellable && (
+                              <button
+                                type="button"
+                                onClick={() => onCancelAllocation(line, allocation)}
+                                className="text-xs font-bold text-red-600 hover:underline"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
