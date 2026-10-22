@@ -107,123 +107,125 @@ export const OrderTable = ({ items, onUpdateQty, onRemoveItem, onBulkRemove, onR
           </button>
         </div>
       )}
-      <table className="w-full text-left border-collapse">
-        <thead>
-          <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-bold uppercase select-none">
-            <th className="px-4 py-4 w-[5%] text-center">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={toggleAll}
-                className="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 cursor-pointer"
-                title="Select all"
-              />
-            </th>
-            <th className="px-4 py-4 w-[24%]">SKU & Product</th>
-            <th className="px-4 py-4 w-[23%]">Reservation Dates</th>
-            <th className="px-4 py-4 w-[13%] text-center">AVL Qty</th>
-            <th className="px-4 py-4 w-[12%] text-center">Qty</th>
-            <th className="px-4 py-4 w-[13%] text-center">Status</th>
-            <th className="px-4 py-4 w-[10%] text-center">Action</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 text-[13px]">
-          <AnimatePresence initial={false}>
-            {items.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-5 py-12 text-center text-slate-400 font-medium italic">
-                  No active reservations in your selection list.
-                </td>
-              </tr>
-            )}
-            {pageItems.map((item) => {
-              return (
-                <motion.tr
-                  key={item._id}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  transition={{ duration: 0.15 }}
-                  className="bg-white hover:bg-slate-50 transition-colors"
-                >
-                  {/* Select */}
-                  <td className="px-4 py-4 text-center">
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(item._id)}
-                      onChange={() => toggleOne(item._id)}
-                      className="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 cursor-pointer"
-                    />
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-bold uppercase select-none">
+              <th className="px-4 py-4 w-[5%] text-center">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  className="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 cursor-pointer"
+                  title="Select all"
+                />
+              </th>
+              <th className="px-4 py-4 w-[24%]">SKU & Product</th>
+              <th className="px-4 py-4 w-[23%]">Reservation Dates</th>
+              <th className="px-4 py-4 w-[13%] text-center">AVL Qty</th>
+              <th className="px-4 py-4 w-[12%] text-center">Qty</th>
+              <th className="px-4 py-4 w-[13%] text-center">Status</th>
+              <th className="px-4 py-4 w-[10%] text-center">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-[13px]">
+            <AnimatePresence initial={false}>
+              {items.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-5 py-12 text-center text-slate-400 font-medium italic">
+                    No active reservations in your selection list.
                   </td>
+                </tr>
+              )}
+              {pageItems.map((item) => {
+                return (
+                  <motion.tr
+                    key={item._id}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.15 }}
+                    className="bg-white hover:bg-slate-50 transition-colors"
+                  >
+                    {/* Select */}
+                    <td className="px-4 py-4 text-center">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(item._id)}
+                        onChange={() => toggleOne(item._id)}
+                        className="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 cursor-pointer"
+                      />
+                    </td>
 
-                  {/* SKU & Name */}
-                  <td className="px-4 py-4">
-                    <div className="flex flex-col">
-                      <CodeValue value={item.product.code} className="select-all" />
-                      <span className="text-slate-500 text-[11px] font-medium line-clamp-1">{item.product.name}</span>
-                    </div>
-                  </td>
-
-                  {/* Dates */}
-                  <td className="px-4 py-4">
-                    <div className="flex flex-col gap-0.5 text-slate-600 text-[11px] font-medium">
-                      <div className="flex items-center gap-1">
-                        <span className="text-slate-400 font-semibold">Res:</span>
-                        <span>{formatDate(item.reservationDate)}</span>
+                    {/* SKU & Name */}
+                    <td className="px-4 py-4">
+                      <div className="flex flex-col">
+                        <CodeValue value={item.product.code} className="select-all" />
+                        <span className="text-slate-500 text-[11px] font-medium line-clamp-1">{item.product.name}</span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <span className="text-slate-400 font-semibold">Exp:</span>
-                        <span className="text-slate-800 font-bold">{formatDate(item.expiryDate)}</span>
+                    </td>
+
+                    {/* Dates */}
+                    <td className="px-4 py-4">
+                      <div className="flex flex-col gap-0.5 text-slate-600 text-[11px] font-medium">
+                        <div className="flex items-center gap-1">
+                          <span className="text-slate-400 font-semibold">Res:</span>
+                          <span>{formatDate(item.reservationDate)}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-slate-400 font-semibold">Exp:</span>
+                          <span className="text-slate-800 font-bold">{formatDate(item.expiryDate)}</span>
+                        </div>
                       </div>
-                    </div>
-                  </td>
+                    </td>
 
-                  {/* Available Quantity (AVL) */}
-                  <td className="px-4 py-4 text-center">
-                    <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-bold bg-slate-50 text-slate-700 border border-slate-200">
-                      AVL: {item.product.availableStock ?? 0}
-                    </span>
-                  </td>
+                    {/* Available Quantity (AVL) */}
+                    <td className="px-4 py-4 text-center">
+                      <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-bold bg-slate-50 text-slate-700 border border-slate-200">
+                        AVL: {item.product.availableStock ?? 0}
+                      </span>
+                    </td>
 
-                  {/* Qty Input — editable directly from the Selection List */}
-                  <td className="px-4 py-4">
-                    <QtyCell item={item} enforceMoq={enforceMoq} onUpdateQty={onUpdateQty} />
-                  </td>
+                    {/* Qty Input — editable directly from the Selection List */}
+                    <td className="px-4 py-4">
+                      <QtyCell item={item} enforceMoq={enforceMoq} onUpdateQty={onUpdateQty} />
+                    </td>
 
-                  {/* Status */}
-                  <td className="px-4 py-4 text-center">
-                    <span className="inline-flex px-2 py-0.5 rounded text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200">
-                      {item.status}
-                    </span>
-                  </td>
+                    {/* Status */}
+                    <td className="px-4 py-4 text-center">
+                      <span className="inline-flex px-2 py-0.5 rounded text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200">
+                        {item.status}
+                      </span>
+                    </td>
 
-                  {/* Action */}
-                  <td className="px-4 py-4">
-                    <div className="flex items-center justify-center gap-1">
-                      {onRaiseIndent && (item.orderQuantity - (item.product.availableStock ?? 0)) > 0 && (
+                    {/* Action */}
+                    <td className="px-4 py-4">
+                      <div className="flex items-center justify-center gap-1">
+                        {onRaiseIndent && (item.orderQuantity - (item.product.availableStock ?? 0)) > 0 && (
+                          <button
+                            onClick={() => onRaiseIndent(item)}
+                            className="p-1.5 rounded-lg text-amber-500 hover:text-amber-700 hover:bg-amber-50 transition-all focus:outline-none"
+                            title="Raise indent for the out-of-stock quantity"
+                          >
+                            <PackagePlus size={15} />
+                          </button>
+                        )}
                         <button
-                          onClick={() => onRaiseIndent(item)}
-                          className="p-1.5 rounded-lg text-amber-500 hover:text-amber-700 hover:bg-amber-50 transition-all focus:outline-none"
-                          title="Raise indent for the out-of-stock quantity"
+                          onClick={() => onRemoveItem(item.product.code)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all focus:outline-none"
+                          title="Remove Item"
                         >
-                          <PackagePlus size={15} />
+                          <Trash2 size={15} />
                         </button>
-                      )}
-                      <button
-                        onClick={() => onRemoveItem(item.product.code)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all focus:outline-none"
-                        title="Remove Item"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  </td>
-                </motion.tr>
-              );
-            })}
-          </AnimatePresence>
-        </tbody>
-      </table>
+                      </div>
+                    </td>
+                  </motion.tr>
+                );
+              })}
+            </AnimatePresence>
+          </tbody>
+        </table>
+      </div>
 
       {total > 0 && (
         <div className="px-4 py-3 border-t border-slate-200 bg-slate-50/50">

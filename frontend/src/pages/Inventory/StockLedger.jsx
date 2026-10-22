@@ -138,26 +138,28 @@ const BatchPanel = ({ batch, onClose }) => (
       <div>
         <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Movements</h4>
         <div className="border border-slate-200 rounded-lg overflow-hidden">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="px-3 py-2 font-bold text-slate-600 uppercase text-[10px]">Txn</th>
-                <th className="px-3 py-2 font-bold text-slate-600 uppercase text-[10px]">SKU</th>
-                <th className="px-3 py-2 font-bold text-slate-600 uppercase text-[10px]">Type</th>
-                <th className="px-3 py-2 font-bold text-slate-600 uppercase text-[10px] text-right">Qty</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {batch.movements.map((m) => (
-                <tr key={m.transactionId}>
-                  <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{m.transactionId}</td>
-                  <td className="px-3 py-2 font-bold text-slate-800">{m.skuCode}</td>
-                  <td className="px-3 py-2 text-slate-600 text-xs">{m.movementType}</td>
-                  <td className="px-3 py-2 text-right"><Quantity value={m.quantity} /></td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-3 py-2 font-bold text-slate-600 uppercase text-[10px]">Txn</th>
+                  <th className="px-3 py-2 font-bold text-slate-600 uppercase text-[10px]">SKU</th>
+                  <th className="px-3 py-2 font-bold text-slate-600 uppercase text-[10px]">Type</th>
+                  <th className="px-3 py-2 font-bold text-slate-600 uppercase text-[10px] text-right">Qty</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {batch.movements.map((m) => (
+                  <tr key={m.transactionId}>
+                    <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{m.transactionId}</td>
+                    <td className="px-3 py-2 font-bold text-slate-800">{m.skuCode}</td>
+                    <td className="px-3 py-2 text-slate-600 text-xs">{m.movementType}</td>
+                    <td className="px-3 py-2 text-right"><Quantity value={m.quantity} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

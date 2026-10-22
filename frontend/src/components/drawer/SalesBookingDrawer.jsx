@@ -1420,96 +1420,98 @@ export const SalesBookingDrawer = () => {
 
                 {selected.indent.lines.length > 0 && (
                   <div>
-                    <table className="w-full text-left">
-                      <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                        <tr>
-                          <th className="px-5 py-3 w-[38%] min-w-[180px]">SKU / Product</th>
-                          <th className="px-5 py-3 w-[26%] min-w-[140px]">MSIL Code</th>
-                          <th className="px-5 py-3 text-center w-[110px]">Quantity</th>
-                          <th className="px-5 py-3">Status</th>
-                          {mayPrice && <th className="px-5 py-3 text-right w-[130px]">Price</th>}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-sm">
-                        {selected.indent.lines.map((line) => {
-                          /*
-                            THE WHOLE POINT OF THE SECTION.
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                        <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                          <tr>
+                            <th className="px-5 py-3 w-[38%] min-w-[180px]">SKU / Product</th>
+                            <th className="px-5 py-3 w-[26%] min-w-[140px]">MSIL Code</th>
+                            <th className="px-5 py-3 text-center w-[110px]">Quantity</th>
+                            <th className="px-5 py-3">Status</th>
+                            {mayPrice && <th className="px-5 py-3 text-right w-[130px]">Price</th>}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-sm">
+                          {selected.indent.lines.map((line) => {
+                            /*
+                              THE WHOLE POINT OF THE SECTION.
 
-                            A SKU on the indent that has no line in the table
-                            above is one stock could not cover at all. It is on
-                            the customer's PO, it is reserved, and it is invisible
-                            everywhere else on this screen — so it is called out
-                            rather than left to be spotted by comparing two lists
-                            by eye.
-                          */
-                          const inBooking = draft.some((l) => l.skuCode === line.skuCode);
-                          return (
-                            <tr key={line.reservationId || line.skuCode} className="align-top">
-                              <td className="px-5 py-3">
-                                <CodeValue value={line.skuCode} />
-                                {!inBooking && (
-                                  <div
-                                    className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
-                                    title="Stock could not cover any of this line, so it never became a booking item. It exists only as a reservation."
-                                  >
-                                    <AlertTriangle size={10} />
-                                    Not in booking items
-                                  </div>
-                                )}
-                              </td>
-                              <td className="px-5 py-3">
-                                <CodeValue value={line.msilCode} tone="muted" />
-                              </td>
-                              <td className="px-5 py-3 text-center font-bold text-slate-700 tabular-nums">
-                                {line.quantity}
-                              </td>
-                              <td className="px-5 py-3">
-                                <span className="text-[11px] font-semibold text-slate-600">
-                                  {line.status}
-                                </span>
-                                {line.expiresOn && (
-                                  <div
-                                    className="text-[10px] text-slate-400"
-                                    title="The reservation lapses on this date unless it is filled first."
-                                  >
-                                    expires {new Date(line.expiresOn).toLocaleDateString()}
-                                  </div>
-                                )}
-                                {/* MSIL supply check: held lines get Convert / Cancel. */}
-                                <HeldIndentStatus
-                                  line={line}
-                                  canDecide={mayDecideIndent}
-                                  onDone={refreshAfterSupplyChange}
-                                />
-                              </td>
-                              {mayPrice && (
-                                <td className="px-5 py-3 text-right whitespace-nowrap">
-                                  {line.unitPrice == null ? (
-                                    <span
-                                      className="text-[11px] font-semibold text-amber-600"
-                                      title="No rate for this SKU on the booking or in the product master."
+                              A SKU on the indent that has no line in the table
+                              above is one stock could not cover at all. It is on
+                              the customer's PO, it is reserved, and it is invisible
+                              everywhere else on this screen — so it is called out
+                              rather than left to be spotted by comparing two lists
+                              by eye.
+                            */
+                            const inBooking = draft.some((l) => l.skuCode === line.skuCode);
+                            return (
+                              <tr key={line.reservationId || line.skuCode} className="align-top">
+                                <td className="px-5 py-3">
+                                  <CodeValue value={line.skuCode} />
+                                  {!inBooking && (
+                                    <div
+                                      className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
+                                      title="Stock could not cover any of this line, so it never became a booking item. It exists only as a reservation."
                                     >
-                                      Not rated
-                                    </span>
-                                  ) : (
-                                    <>
-                                      <div className="font-bold text-slate-800 tabular-nums">
-                                        {formatRupees(line.unitPrice)}
-                                      </div>
-                                      {line.amount != null && (
-                                        <div className="text-[11px] text-slate-500 tabular-nums">
-                                          {formatRupees(line.amount)}
-                                        </div>
-                                      )}
-                                    </>
+                                      <AlertTriangle size={10} />
+                                      Not in booking items
+                                    </div>
                                   )}
                                 </td>
-                              )}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                                <td className="px-5 py-3">
+                                  <CodeValue value={line.msilCode} tone="muted" />
+                                </td>
+                                <td className="px-5 py-3 text-center font-bold text-slate-700 tabular-nums">
+                                  {line.quantity}
+                                </td>
+                                <td className="px-5 py-3">
+                                  <span className="text-[11px] font-semibold text-slate-600">
+                                    {line.status}
+                                  </span>
+                                  {line.expiresOn && (
+                                    <div
+                                      className="text-[10px] text-slate-400"
+                                      title="The reservation lapses on this date unless it is filled first."
+                                    >
+                                      expires {new Date(line.expiresOn).toLocaleDateString()}
+                                    </div>
+                                  )}
+                                  {/* MSIL supply check: held lines get Convert / Cancel. */}
+                                  <HeldIndentStatus
+                                    line={line}
+                                    canDecide={mayDecideIndent}
+                                    onDone={refreshAfterSupplyChange}
+                                  />
+                                </td>
+                                {mayPrice && (
+                                  <td className="px-5 py-3 text-right whitespace-nowrap">
+                                    {line.unitPrice == null ? (
+                                      <span
+                                        className="text-[11px] font-semibold text-amber-600"
+                                        title="No rate for this SKU on the booking or in the product master."
+                                      >
+                                        Not rated
+                                      </span>
+                                    ) : (
+                                      <>
+                                        <div className="font-bold text-slate-800 tabular-nums">
+                                          {formatRupees(line.unitPrice)}
+                                        </div>
+                                        {line.amount != null && (
+                                          <div className="text-[11px] text-slate-500 tabular-nums">
+                                            {formatRupees(line.amount)}
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
 
                     <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 rounded-b-xl text-xs text-slate-500">
                       These are the LIVE reservations, not the quantity frozen onto the booking at

@@ -201,40 +201,42 @@ export const BackordersTable = ({
         {selectedGroup && (
           <div className="flex flex-col gap-4">
             <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  <tr>
-                    <th className="px-4 py-2.5">SKU Code</th>
-                    {showCustomer && <th className="px-4 py-2.5">Customer</th>}
-                    <th className="px-4 py-2.5">Date</th>
-                    <th className="px-4 py-2.5 text-center">Pending Qty</th>
-                    <th className="px-4 py-2.5 text-center">Current Stock</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {detailPaging.pageItems.map((line) => {
-                    return (
-                      <tr key={line._id}>
-                        <td className="px-4 py-2.5 font-bold text-slate-800">{line.product.code}</td>
-                        {showCustomer && (
-                          <td className="px-4 py-2.5 text-slate-600 font-semibold">
-                            {line.customer?.name || "—"}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    <tr>
+                      <th className="px-4 py-2.5">SKU Code</th>
+                      {showCustomer && <th className="px-4 py-2.5">Customer</th>}
+                      <th className="px-4 py-2.5">Date</th>
+                      <th className="px-4 py-2.5 text-center">Pending Qty</th>
+                      <th className="px-4 py-2.5 text-center">Current Stock</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {detailPaging.pageItems.map((line) => {
+                      return (
+                        <tr key={line._id}>
+                          <td className="px-4 py-2.5 font-bold text-slate-800">{line.product.code}</td>
+                          {showCustomer && (
+                            <td className="px-4 py-2.5 text-slate-600 font-semibold">
+                              {line.customer?.name || "—"}
+                            </td>
+                          )}
+                          <td className="px-4 py-2.5 text-slate-500">
+                            {line.updatedAt ? new Date(line.updatedAt).toLocaleDateString() : "—"}
                           </td>
-                        )}
-                        <td className="px-4 py-2.5 text-slate-500">
-                          {line.updatedAt ? new Date(line.updatedAt).toLocaleDateString() : "—"}
-                        </td>
-                        <td className="px-4 py-2.5 text-center font-black text-amber-600">
-                          {line.pendingQuantity}
-                        </td>
-                        <td className="px-4 py-2.5 text-center font-semibold text-slate-600">
-                          {line.product.availableStock}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          <td className="px-4 py-2.5 text-center font-black text-amber-600">
+                            {line.pendingQuantity}
+                          </td>
+                          <td className="px-4 py-2.5 text-center font-semibold text-slate-600">
+                            {line.product.availableStock}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <Pagination

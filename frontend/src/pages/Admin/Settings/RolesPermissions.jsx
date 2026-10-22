@@ -543,9 +543,13 @@ export const RolesPermissions = () => {
                     )}
                   </div>
 
-                  <div className="overflow-x-auto">
+                  {/* A bounded scroll container, so the sticky header below has something
+                      to stick WITHIN. With `overflow-x-auto` alone the box never scrolls
+                      vertically, the header scrolls away with the page, and `sticky`
+                      does nothing. */}
+                  <div className="overflow-auto max-h-[70vh]">
                     <table className="w-full text-left text-sm">
-                      <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200">
+                      <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 shadow-sm">
                         <tr>
                           <th className="px-5 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Module / Sub-module</th>
                           {actions.map((action) => (
