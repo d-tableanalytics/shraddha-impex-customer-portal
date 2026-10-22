@@ -168,11 +168,13 @@ const withRolesItem = (groups, user) => {
 };
 
 /**
- * Upcoming Stock, added on the client — DEMO screen on mock data.
+ * Upcoming Stock, added on the client.
  *
- * It has no registry entry (it has no API to guard), so the server's menu never
- * carries it. It is placed directly after Inventory Health and only where Health
- * is offered, which is also the cell its route checks.
+ * It has no registry entry — its API is guarded by existing permission keys
+ * (view_inventory / manage_inventory_master / assign_indent_stock) rather than
+ * a cell of its own — so the server's menu never carries it. It is placed
+ * directly after Inventory Health and only where Health is offered, which is
+ * also the cell its route checks.
  */
 const UPCOMING_ITEM = {
   id: "inventory.upcoming",

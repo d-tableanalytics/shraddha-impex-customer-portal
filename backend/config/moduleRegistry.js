@@ -801,7 +801,7 @@ export const MODULES = [
         path: '/wq/activities',
         icon: 'BarChart3',
         actions: {
-          view: ['view_work_queue'],
+          view: ['view_work_queue_activity'],
         },
       },
       {

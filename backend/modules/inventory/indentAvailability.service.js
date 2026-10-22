@@ -918,6 +918,18 @@ export const processAvailableIndents = async (skuCodes, options = {}) => {
     const skus = [...new Set((skuCodes || []).filter(Boolean))];
     if (skus.length === 0) return empty;
 
+    // UPCOMING STOCK. Stock that just came in is taken off the SKU's upcoming
+    // shipments and its reservations, so that screen's figures stay right. It
+    // only updates Upcoming Stock's own records — it does not decide where the
+    // stock goes (the pass below does) and sends nothing. Loaded on demand; its
+    // own failure must not stop this pass.
+    try {
+      const { syncUpcoming } = await import('./upcomingStock.service.js');
+      await syncUpcoming({ skuCodes: skus });
+    } catch (error) {
+      console.error('[Indent] upcoming stock sync failed:', error.message);
+    }
+
     const indents = await Reservation.find({
       skuCode: { $in: skus },
       status: { $in: OPEN_STATUSES },

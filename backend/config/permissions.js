@@ -228,6 +228,18 @@ export const PERMISSIONS = {
    */
   MANAGE_WORK_QUEUE_TRASH: 'manage_work_queue_trash',
 
+  /**
+   * The Activities log: who changed what, across the Work Queue.
+   *
+   * Split from VIEW_WORK_QUEUE for the same reason the Trash Bin was split from
+   * MANAGE_WORK_QUEUE. The cell used to ride on `view_work_queue`, which every
+   * task-doer holds - so a Billing or Warehouse account got an "Activities" link
+   * in the rail, passed the route and the API, and was then turned away by the
+   * page itself. An audit trail of everybody's changes is oversight, not a thing
+   * a doer needs in order to do tasks.
+   */
+  VIEW_WORK_QUEUE_ACTIVITY: 'view_work_queue_activity',
+
   ACCESS_HRMS: 'access_hrms',                       // employee self-service
   MANAGE_HRMS_TEAM: 'manage_hrms_team',             // reporting manager
   MANAGE_HRMS_PEOPLE: 'manage_hrms_people',         // HR admin
@@ -489,6 +501,8 @@ export const BASELINE_ROLE_PERMISSIONS = {
     // Oversight over O2D: sees everything, approves exceptions, owns no stage.
     // Consistent with the role's existing shape — it approves adjustments and
     // counts without being able to create them.
+    // Oversight reads the audit trail of who changed what; task-doers do not.
+    PERMISSIONS.VIEW_WORK_QUEUE_ACTIVITY,
     PERMISSIONS.VIEW_O2D,
     PERMISSIONS.VIEW_O2D_ANALYTICS,
     PERMISSIONS.HOLD_O2D,

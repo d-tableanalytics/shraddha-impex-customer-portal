@@ -50,6 +50,32 @@ export const inventoryApi = {
   /** Move (part of) an allocation to another indent. */
   reassignAllocation: async ({ orderId, lineId, seq, toIndentId, quantity }) =>
     (await api.post("/inventory/indent-assignment/reassign", { orderId, lineId, seq, toIndentId, quantity })).data.data,
+  // ── Upcoming Stock ────────────────────────────────────────────────────
+  /** Every SKU with stock on its way: shipments, reservations, indents, live on-hand. */
+  upcomingStock: async () => (await api.get("/inventory/upcoming")).data.data,
+  /** Check rows read from an upcoming-stock file. Writes nothing. */
+  previewUpcomingImport: async (rows) => (await api.post("/inventory/upcoming/import/preview", { rows })).data.data,
+  /** Record the file's valid rows. `importId` makes a resubmission a replay. */
+  importUpcoming: async ({ importId, fileName, rows }) =>
+    (await api.post("/inventory/upcoming/import", { importId, fileName, rows })).data.data,
+  /**
+   * Edit an entry after import: any of { orderedQty, eta ('YYYY-MM-DD'), ref,
+   * supplier, product }. A blank optional field clears it.
+   */
+  updateUpcomingShipment: async (id, changes) =>
+    (await api.patch(`/inventory/upcoming/shipments/${id}`, changes)).data.data,
+  /** Stop expecting what is left of a shipment line. */
+  cancelUpcomingShipment: async (id, note) =>
+    (await api.post(`/inventory/upcoming/shipments/${id}/cancel`, { note })).data.data,
+  /** Delete an upcoming stock entry that is no longer required. Inventory is not touched. */
+  deleteUpcomingShipment: async (id, note) =>
+    (await api.delete(`/inventory/upcoming/shipments/${id}`, { data: { note } })).data.data,
+  /** Delete every upcoming entry of one SKU (the table row's Delete). Inventory is not touched. */
+  deleteUpcomingSku: async ({ brand, skuCode, note }) =>
+    (await api.post("/inventory/upcoming/items/delete", { brand, skuCode, note })).data.data,
+  // No reservation calls: what each indent would get is a FIFO calculation
+  // returned with the list (upcomingStock above).
+
   /** Switch arrivals between automatic FIFO and holding for assignment (global setting). */
   setIndentAssignmentMode: async (mode) =>
     (await api.put("/inventory/config", { scope: "global", indentAssignmentMode: mode })).data,

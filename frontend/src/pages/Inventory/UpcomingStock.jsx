@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
-  Search, X, RotateCcw, Upload, Download, BookmarkPlus, Warehouse, Ship, Lock, PackageCheck,
-  CalendarClock, Info, Undo2, ClipboardList, BarChart3, AlertTriangle, PauseCircle,
+  Search, X, RotateCcw, Upload, Download, Warehouse, Ship, Lock, PackageCheck,
+  CalendarClock, Info, ClipboardList, BarChart3, AlertTriangle, RefreshCw, Trash2, Pencil,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -9,30 +10,41 @@ import toast from 'react-hot-toast';
 import { Card, CardContent } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Pagination } from '../../components/ui/Pagination';
+import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
+import { ProgressBar } from '../../components/ui/ProgressBar';
+import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { PageHeader } from '../../components/common/PageHeader';
 import { ImportUpcomingModal } from '../../components/inventory/ImportUpcomingModal';
-import { ReserveUpcomingModal } from '../../components/inventory/ReserveUpcomingModal';
 import { IndentReservationSection } from '../../components/inventory/IndentReservationSection';
-import { reservationsApi } from '../../services/reservations';
-import { useUpcomingStockStore } from '../../store/upcomingStockStore';
+import { inventoryApi } from '../../services/inventory';
+import { onStockUpdated, onUpcomingUpdated } from '../../services/socketService';
+import { queryKeys, STALE } from '../../lib/queryKeys';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
+import { hasPermission, PERMISSIONS } from '../../utils/permissions';
 import { exportToExcel } from '../../utils/exportUtils';
 import {
-  derive, STATUS, STATUS_ORDER, STATUS_HELP, formatDate, formatDateTime, relativeArrival, daysUntil,
-  fromLiveIndent, indentLinesFor, indentSummary, OPEN_INDENT_STATUSES,
-} from '../../utils/upcomingStockMock';
+  STATUS, STATUS_ORDER, STATUS_HELP, formatDate, formatDateTime, relativeArrival, daysUntil,
+  indentLinesFor, indentSummary, toYmd,
+} from '../../utils/upcomingStock';
+
+const errorOf = (err, fallback) => err?.response?.data?.message || err?.message || fallback;
 
 /**
- * Upcoming Stock — DEMO SCREEN, mock data only.
- *
- * Stock that has been ordered but not received, and how much of it has already
- * been promised. Follows the Inventory Master / Health layout so it reads as
- * part of the same module, but holds its data in the browser
- * (store/upcomingStockStore.js) — no API, no database, and no effect on the
- * live Inventory Master or Inventory Health screens.
+ * Upcoming Stock — stock that has been ordered but not received, and how much
+ * of it has already been promised.
  *
  *   Remaining Upcoming = Upcoming Stock − Reserved Stock
+ *
+ * Served by GET /inventory/upcoming (backend upcomingStock.service.js), which
+ * links it to the live inventory: Actual Stock is the on-hand balance, and stock
+ * received into the inventory takes quantity off the upcoming shipments by
+ * itself. Follows the Inventory Master / Health layout so it reads as part of
+ * the same module.
+ *
+ * Who can do what: anyone with view_inventory reads; import / correct shipment
+ * lines needs manage_inventory_master; reserving (for an indent or directly)
+ * needs assign_indent_stock. The server enforces all of it.
  */
 
 const PAGE_SIZE = 10;
@@ -132,47 +144,58 @@ const SummaryCard = ({ icon: Icon, tone, label, value, hint, meter, meterTone })
 /** Indent coverage filter options for the table. */
 const INDENT_FILTERS = [
   { value: '', label: 'Any indent status' },
-  { value: 'open', label: 'Indents to reserve' },
-  { value: 'held', label: 'Indents kept pending' },
+  { value: 'open', label: 'Indents left short' },
   { value: 'covered', label: 'All indents covered' },
   { value: 'none', label: 'No open indents' },
 ];
 
 const matchesIndentFilter = (stats, key) => {
   if (!key) return true;
-  const s = stats || { count: 0, covered: 0, held: 0 };
+  const s = stats || { count: 0, covered: 0 };
   if (key === 'none') return s.count === 0;
   if (key === 'covered') return s.count > 0 && s.covered === s.count;
-  if (key === 'held') return s.held > 0;
-  return s.count > s.covered; // 'open'
+  return s.count > s.covered; // 'open': some indent the upcoming stock does not fully cover
 };
 
-/** Arrival windows the shipments card groups by. */
+/** Arrival windows the shipments card groups by. `d` is null for "no date set". */
 const ARRIVAL_BUCKETS = [
-  { key: 'overdue', label: 'Overdue', test: (d) => d < 0, tone: 'text-error-600' },
-  { key: 'week', label: 'Next 7 days', test: (d) => d >= 0 && d <= 7, tone: 'text-primary-600' },
-  { key: 'month', label: 'Next 30 days', test: (d) => d > 7 && d <= 30, tone: 'text-slate-500' },
-  { key: 'later', label: 'Later', test: (d) => d > 30, tone: 'text-slate-400' },
+  { key: 'overdue', label: 'Overdue', test: (d) => d !== null && d < 0, tone: 'text-error-600' },
+  { key: 'week', label: 'Next 7 days', test: (d) => d !== null && d >= 0 && d <= 7, tone: 'text-primary-600' },
+  { key: 'month', label: 'Next 30 days', test: (d) => d !== null && d > 7 && d <= 30, tone: 'text-slate-500' },
+  { key: 'later', label: 'Later', test: (d) => d !== null && d > 30, tone: 'text-slate-400' },
+  { key: 'nodate', label: 'Date not set', test: (d) => d === null, tone: 'text-slate-400' },
 ];
 
-/** The Indents cell: how much of this SKU's indent demand is covered. */
+/** Only SKU and quantity are required on import, so a reference may be blank. */
+const refLabel = (ref) => ref || 'No reference';
+
+/** The Edit form's starting values for one entry — what it compares against on save. */
+const editableOf = (s, item) => ({
+  orderedQty: String(s.orderedQty),
+  eta: s.eta ? toYmd(s.eta) : '',
+  ref: s.ref || '',
+  supplier: s.supplier && s.supplier !== '—' ? s.supplier : '',
+  // The server sends the SKU code as the product when it has no description.
+  product: item.product && item.product !== item.skuCode ? item.product : '',
+});
+
+/** The Indents cell: how many of this SKU's indents the FIFO allocation fully covers. */
 const IndentCoverage = ({ stats }) => {
   if (!stats || stats.count === 0) return <span className="text-[11px] font-medium text-slate-300">No indents</span>;
-  const toReserve = stats.count - stats.covered;
+  const short = stats.count - stats.covered;
   return (
     <span className="inline-flex flex-col items-start gap-0.5">
-      {toReserve === 0 ? (
+      {short === 0 ? (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-success-50 text-success-700 whitespace-nowrap">
           <span aria-hidden="true">●</span>All covered
         </span>
       ) : (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-primary-50 text-primary-700 whitespace-nowrap">
-          <ClipboardList size={11} />{toReserve} to reserve
+          <ClipboardList size={11} />{short} left short
         </span>
       )}
       <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">
-        {stats.covered}/{stats.count} covered
-        {stats.held > 0 && <span className="text-warning-700"> · {stats.held} on hold</span>}
+        {stats.covered}/{stats.count} covered (FIFO)
       </span>
     </span>
   );
@@ -182,7 +205,6 @@ const PANEL_TABS = [
   { key: 'indents', label: 'Indents', icon: ClipboardList },
   { key: 'overview', label: 'Overview', icon: BarChart3 },
   { key: 'shipments', label: 'Shipments', icon: Ship },
-  { key: 'reservations', label: 'Reservations', icon: Lock },
 ];
 
 /** Section heading used inside the panel's tabs. */
@@ -196,13 +218,49 @@ const PanelHeading = ({ children }) => (
  * everything else. The four position figures stay pinned above the tabs, so
  * every tab is read against the same numbers.
  */
-const UpcomingPanel = ({ item, indentLines, live, userName, initialTab, onClose, onDirectReserve, onRelease }) => {
+const UpcomingPanel = ({
+  item, indentLines, refreshing, canManage, initialTab, onClose, onChanged,
+}) => {
   const [tab, setTab] = useState(initialTab || 'indents');
-  const [confirming, setConfirming] = useState(null);
+  // An open shipment-line action: { id, mode: 'edit', form, original } or
+  // { id, mode: 'cancel' | 'delete', value }.
+  const [editing, setEditing] = useState(null);
+  const [savingLine, setSavingLine] = useState(false);
+
+  const saveLine = async () => {
+    if (!editing || savingLine) return;
+    setSavingLine(true);
+    try {
+      if (editing.mode === 'edit') {
+        // Send only what was changed; a blank optional field clears it.
+        const changes = Object.fromEntries(
+          Object.entries(editing.form).filter(([k, v]) => String(v).trim() !== String(editing.original[k]).trim()),
+        );
+        if (Object.keys(changes).length === 0) { setEditing(null); return; }
+        if ('orderedQty' in changes && String(changes.orderedQty).trim() === '') {
+          toast.error('Quantity is required.');
+          return;
+        }
+        await inventoryApi.updateUpcomingShipment(editing.id, changes);
+        toast.success('Upcoming stock entry updated.');
+      } else if (editing.mode === 'delete') {
+        await inventoryApi.deleteUpcomingShipment(editing.id, editing.value);
+        toast.success(`Upcoming stock entry ${editing.ref} deleted. Actual stock is unchanged.`);
+      } else {
+        const out = await inventoryApi.cancelUpcomingShipment(editing.id, editing.value);
+        toast.success(`${out.cancelledQty.toLocaleString()} ${item.uom} no longer expected on this line.`);
+      }
+      setEditing(null);
+      await onChanged();
+    } catch (err) {
+      toast.error(errorOf(err, 'The shipment line could not be changed.'));
+    } finally {
+      setSavingLine(false);
+    }
+  };
   const total = item.actual + item.upcoming;
   const pct = (v) => (total ? `${(v / total) * 100}%` : '0%');
-  const againstIndents = item.reservations.filter((r) => r.indentRef).length;
-  const openIndents = indentLines.filter((l) => l.outstanding > 0).length;
+  const shortIndents = indentLines.filter((l) => l.outstanding > 0).length;
 
   // Escape closes the panel, as it does a modal.
   useEffect(() => {
@@ -213,9 +271,8 @@ const UpcomingPanel = ({ item, indentLines, live, userName, initialTab, onClose,
   }, [onClose]);
 
   const counts = {
-    indents: openIndents || null,
+    indents: indentLines.length || null,
     shipments: item.shipmentCount || null,
-    reservations: item.reservations.length || null,
   };
 
   return (
@@ -286,7 +343,9 @@ const UpcomingPanel = ({ item, indentLines, live, userName, initialTab, onClose,
 
       <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6" role="tabpanel">
         {tab === 'indents' && (
-          <IndentReservationSection item={item} lines={indentLines} live={live} userName={userName} />
+          <IndentReservationSection
+            item={item} lines={indentLines} refreshing={refreshing}
+          />
         )}
 
         {tab === 'overview' && (
@@ -331,9 +390,13 @@ const UpcomingPanel = ({ item, indentLines, live, userName, initialTab, onClose,
                   <span className="text-slate-400"> ({item.shipmentCount} shipment{item.shipmentCount === 1 ? '' : 's'})</span>
                 </div>
                 <div>
-                  Reserved  = {item.reservations.map((r) => r.qty.toLocaleString()).join(' + ') || '0'} = {item.reserved.toLocaleString()}
+                  Demand    = {indentLines.map((l) => l.requiredQty.toLocaleString()).join(' + ') || '0'} = {(item.demand ?? 0).toLocaleString()}
+                  <span className="text-slate-400"> ({indentLines.length} open indent{indentLines.length === 1 ? '' : 's'})</span>
+                </div>
+                <div>
+                  Reserved  = FIFO, oldest indent first = <strong>{item.reserved.toLocaleString()}</strong>
                   <span className="text-slate-400">
-                    {' '}({item.reservations.length} reservation{item.reservations.length === 1 ? '' : 's'}, {againstIndents} against indents)
+                    {' '}(the smaller of upcoming and demand{shortIndents > 0 ? `; ${shortIndents} indent${shortIndents === 1 ? '' : 's'} left short` : ''})
                   </span>
                 </div>
                 <div className="mt-2 pt-2 border-t border-slate-200">
@@ -354,24 +417,114 @@ const UpcomingPanel = ({ item, indentLines, live, userName, initialTab, onClose,
             {item.shipments.length === 0 && <p className="text-xs text-slate-500">No shipment recorded.</p>}
             {/* A timeline: soonest first, overdue called out. */}
             <ol className="relative ml-2 border-l-2 border-slate-100 flex flex-col gap-4">
-              {[...item.shipments].sort((a, b) => a.eta.localeCompare(b.eta)).map((s) => {
-                const d = daysUntil(s.eta);
-                const tone = d < 0 ? 'bg-error-500' : d <= 7 ? 'bg-primary-500' : 'bg-slate-300';
+              {/* Already earliest-first from the server, entries with no date last. */}
+              {item.shipments.map((s) => {
+                const d = s.eta ? daysUntil(s.eta) : null;
+                const tone = d === null ? 'bg-slate-200' : d < 0 ? 'bg-error-500' : d <= 7 ? 'bg-primary-500' : 'bg-slate-300';
                 return (
                   <li key={s.id} className="pl-5 relative">
                     <span aria-hidden="true" className={`absolute -left-[7px] top-1.5 w-3 h-3 rounded-full ring-4 ring-white ${tone}`} />
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-sm font-bold text-slate-800 font-mono">{s.ref}</p>
+                        <p className={`text-sm font-bold font-mono ${s.ref ? 'text-slate-800' : 'text-slate-400'}`}>{refLabel(s.ref)}</p>
                         <p className="text-[11px] text-slate-500 truncate">{s.supplier}</p>
                         <p className="text-[11px] text-slate-400 truncate">Source: {s.source}</p>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-sm font-black text-slate-900 tabular-nums">{s.qty.toLocaleString()} {item.uom}</p>
-                        <p className="text-[11px] font-semibold text-slate-600">{formatDate(s.eta)}</p>
-                        <p className={`text-[11px] font-bold ${d < 0 ? 'text-error-600' : 'text-slate-400'}`}>{relativeArrival(s.eta)}</p>
+                        {s.receivedQty > 0 && (
+                          <p className="text-[11px] font-semibold text-success-700 tabular-nums">
+                            {s.receivedQty.toLocaleString()} of {s.orderedQty.toLocaleString()} received
+                          </p>
+                        )}
+                        <p className={`text-[11px] font-semibold ${s.eta ? 'text-slate-600' : 'text-slate-400'}`}>
+                          {s.eta ? formatDate(s.eta) : 'Arrival date not set'}
+                          {s.etaRevised && <span className="text-slate-400 font-medium"> · revised</span>}
+                        </p>
+                        <p className={`text-[11px] font-bold ${d !== null && d < 0 ? 'text-error-600' : 'text-slate-400'}`}>{relativeArrival(s.eta)}</p>
                       </div>
                     </div>
+                    {canManage && (editing?.id === s.id ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 p-2 rounded-lg border border-slate-200 bg-slate-50/60">
+                        {editing.mode === 'edit' ? (
+                          <div className="w-full grid grid-cols-2 gap-2">
+                            {[
+                              ['orderedQty', `Quantity (${item.uom})`, 'number', s.receivedQty > 0 ? `At least ${s.receivedQty} (already arrived)` : 'Required'],
+                              ['eta', 'Expected arrival', 'date', 'Optional'],
+                              ['ref', 'PO / shipment ref', 'text', 'Optional'],
+                              ['supplier', 'Supplier', 'text', 'Optional'],
+                            ].map(([field, label, type, hint]) => (
+                              <label key={field} className="flex flex-col gap-0.5 text-[11px] font-semibold text-slate-600">
+                                {label}
+                                <input
+                                  type={type}
+                                  min={type === 'number' ? Math.max(1, s.receivedQty) : undefined}
+                                  value={editing.form[field]}
+                                  onChange={(e) => setEditing({ ...editing, form: { ...editing.form, [field]: e.target.value } })}
+                                  placeholder={hint}
+                                  className="px-2 py-1 text-xs font-normal bg-white border border-slate-300 rounded-md outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+                                />
+                              </label>
+                            ))}
+                            <label className="col-span-2 flex flex-col gap-0.5 text-[11px] font-semibold text-slate-600">
+                              Product description <span className="font-normal text-slate-400">(saved to Inventory Master for {item.skuCode})</span>
+                              <input
+                                value={editing.form.product}
+                                onChange={(e) => setEditing({ ...editing, form: { ...editing.form, product: e.target.value } })}
+                                placeholder="Optional"
+                                maxLength={200}
+                                className="px-2 py-1 text-xs font-normal bg-white border border-slate-300 rounded-md outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+                              />
+                            </label>
+                          </div>
+                        ) : (
+                          <input
+                            aria-label={`Reason for ${editing.mode === 'delete' ? 'deleting' : 'cancelling'} ${refLabel(s.ref)}`}
+                            value={editing.value}
+                            onChange={(e) => setEditing({ ...editing, value: e.target.value })}
+                            placeholder={editing.mode === 'delete'
+                              ? `Delete this entry (${s.qty.toLocaleString()} ${item.uom}) — reason (optional)`
+                              : `Cancel the ${s.qty.toLocaleString()} still expected — reason (optional)`}
+                            className="flex-1 min-w-40 px-2 py-1 text-xs bg-white border border-slate-300 rounded-md outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+                          />
+                        )}
+                        <Button size="xs" variant={editing.mode === 'edit' ? 'primary' : 'danger'} onClick={saveLine} loading={savingLine}>
+                          {{ edit: 'Save changes', cancel: 'Cancel remaining', delete: 'Delete entry' }[editing.mode]}
+                        </Button>
+                        {editing.mode === 'delete' && (
+                          <p className="w-full text-[11px] text-slate-500">
+                            Removes this entry from upcoming stock. Actual stock is not changed.
+                          </p>
+                        )}
+                        <Button size="xs" variant="ghost" onClick={() => setEditing(null)}>Keep</Button>
+                      </div>
+                    ) : (
+                      <div className="mt-1 flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setEditing({ id: s.id, mode: 'edit', original: editableOf(s, item), form: editableOf(s, item) })}
+                          aria-label={`Edit upcoming stock entry ${refLabel(s.ref)}`}
+                          className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-primary-700"
+                        >
+                          <Pencil size={11} />Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditing({ id: s.id, mode: 'cancel', value: '' })}
+                          className="text-[11px] font-bold text-slate-500 hover:text-error-600"
+                        >
+                          Cancel remaining
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditing({ id: s.id, ref: refLabel(s.ref), mode: 'delete', value: '' })}
+                          aria-label={`Delete upcoming stock entry ${refLabel(s.ref)}`}
+                          className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-error-600"
+                        >
+                          <Trash2 size={11} />Delete
+                        </button>
+                      </div>
+                    ))}
                   </li>
                 );
               })}
@@ -379,81 +532,14 @@ const UpcomingPanel = ({ item, indentLines, live, userName, initialTab, onClose,
           </div>
         )}
 
-        {tab === 'reservations' && (
-          <div>
-            <PanelHeading>Reservations · {item.reserved.toLocaleString()} {item.uom}</PanelHeading>
-            <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
-              {item.reservations.length === 0 && (
-                <p className="px-4 py-3 text-xs text-slate-500">Nothing reserved yet — all upcoming stock is free.</p>
-              )}
-              {item.reservations.map((r) => (
-                <div key={r.id} className="px-4 py-3 flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-800 truncate">{r.customer}</p>
-                    <p className="text-[11px] text-slate-500">
-                      {r.indentRef ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 mr-1 rounded bg-primary-50 text-primary-700 font-bold">
-                          <ClipboardList size={10} />Indent <span className="font-mono">{r.indentNo}</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-1.5 py-0.5 mr-1 rounded bg-slate-100 text-slate-600 font-bold">
-                          Direct · <span className="font-mono ml-1">{r.indentNo}</span>
-                        </span>
-                      )}
-                      {formatDateTime(r.reservedAt)} · {r.by}
-                    </p>
-                    {r.indentRef && (
-                      <p className="text-[11px] text-slate-400">
-                        {r.qty.toLocaleString()} of {r.indentRef.requiredQty.toLocaleString()} required
-                        {r.indentRef.source === 'live' && ' · live indent'}
-                      </p>
-                    )}
-                    {r.note && <p className="text-[11px] text-slate-400 truncate">{r.note}</p>}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-sm font-black text-slate-900 tabular-nums">{r.qty.toLocaleString()}</span>
-                    {confirming === r.id ? (
-                      <>
-                        <Button size="xs" variant="danger" onClick={() => { onRelease(r); setConfirming(null); }}>Release</Button>
-                        <Button size="xs" variant="ghost" onClick={() => setConfirming(null)}>Keep</Button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => setConfirming(r.id)}
-                        className="p-1.5 rounded-lg text-slate-300 hover:text-error-600 hover:bg-error-50 transition-colors"
-                        title="Release this reservation"
-                        aria-label={`Release ${r.qty} reserved for ${r.customer}`}
-                      >
-                        <Undo2 size={15} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex items-center gap-2">
         <span className="text-xs text-slate-500">
-          <strong className="text-primary-700 tabular-nums">{item.remaining.toLocaleString()}</strong> free to reserve
+          <strong className="text-primary-700 tabular-nums">{item.remaining.toLocaleString()}</strong> remaining after FIFO
         </span>
         <div className="ml-auto flex gap-2">
           <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
-          {tab !== 'indents' && openIndents > 0 ? (
-            <Button size="sm" onClick={() => setTab('indents')}>
-              <ClipboardList size={15} className="mr-2" />Reserve for an indent
-            </Button>
-          ) : (
-            <Button
-              size="sm" variant={openIndents > 0 ? 'outline' : 'primary'}
-              onClick={() => onDirectReserve(item.key)} disabled={item.remaining === 0}
-              title="Reserve for a customer without an indent"
-            >
-              <BookmarkPlus size={15} className="mr-2" />Direct reservation
-            </Button>
-          )}
         </div>
       </div>
     </motion.aside>
@@ -462,10 +548,27 @@ const UpcomingPanel = ({ item, indentLines, live, userName, initialTab, onClose,
 
 export const UpcomingStock = () => {
   const { user } = useUserStore();
-  const rawItems = useUpcomingStockStore((s) => s.items);
-  const imports = useUpcomingStockStore((s) => s.imports);
-  const release = useUpcomingStockStore((s) => s.release);
-  const resetDemo = useUpcomingStockStore((s) => s.reset);
+  const canManage = hasPermission(user, PERMISSIONS.MANAGE_INVENTORY_MASTER);
+
+  /**
+   * The list. Re-read from the server on every visit (it is reserved from),
+   * with the last copy shown under the "Refreshing…" bar meanwhile; and again
+   * whenever stock moves or upcoming stock changes anywhere, so a receipt
+   * posted on another screen shows up here without a reload.
+   */
+  const query = useQuery({
+    queryKey: queryKeys.upcomingStock.list(),
+    queryFn: inventoryApi.upcomingStock,
+    staleTime: STALE.upcomingStock,
+  });
+  const reload = () => query.refetch();
+  useEffect(() => onStockUpdated(() => query.refetch()), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => onUpcomingUpdated(() => query.refetch()), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const items = useMemo(() => query.data?.items ?? [], [query.data]);
+  const lastImport = query.data?.lastImport ?? null;
+  const initialLoading = query.isPending;
+  const loadError = query.isError ? errorOf(query.error, 'Upcoming stock could not be loaded.') : null;
 
   const [search, setSearch] = useState('');
   const [brand, setBrand] = useState('');
@@ -481,15 +584,9 @@ export const UpcomingStock = () => {
   const [selectedKey, setSelectedKey] = useState(null);
   const [panelTab, setPanelTab] = useState('indents');
   const [importOpen, setImportOpen] = useState(false);
-  const [reserveFor, setReserveFor] = useState(undefined); // undefined = closed, '' = no SKU pre-selected
 
+  // The server already scopes the list to these brands; this is the filter's option list.
   const brands = allowedBrands(user);
-
-  // Scoped to the brands this user may see, the same rule as the live screens.
-  const items = useMemo(() => {
-    const scoped = brands.length ? rawItems.filter((i) => brands.includes(i.brand)) : rawItems;
-    return scoped.map(derive);
-  }, [rawItems, brands.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totals = useMemo(() => items.reduce((t, i) => ({
     actual: t.actual + i.actual,
@@ -498,34 +595,12 @@ export const UpcomingStock = () => {
     remaining: t.remaining + i.remaining,
   }), { actual: 0, upcoming: 0, reserved: 0, remaining: 0 }), [items]);
 
-  /*
-   * Open indents from Indent History, READ-ONLY. The same endpoint and the same
-   * scoping Indent History uses (GET /reservations/pending): the desk roles see
-   * every customer's, a customer only their own. Nothing is written back — a
-   * reservation made against one of these is held in the demo store. If the
-   * read fails the panel falls back to the demo indents alone.
-   */
-  const [liveIndents, setLiveIndents] = useState([]);
-  const [live, setLive] = useState({ state: 'loading', count: 0 });
-  useEffect(() => {
-    let cancelled = false;
-    reservationsApi.getPending()
-      .then((rows) => {
-        if (cancelled) return;
-        const open = (Array.isArray(rows) ? rows : [])
-          .filter((r) => OPEN_INDENT_STATUSES.includes(r.status))
-          .map(fromLiveIndent);
-        setLiveIndents(open);
-        setLive({ state: 'ready', count: open.length });
-      })
-      .catch(() => { if (!cancelled) setLive({ state: 'error', count: 0 }); });
-    return () => { cancelled = true; };
-  }, []);
-
-  // Per-SKU indent coverage: how many open indents each SKU has, how many are covered.
+  // Per-SKU indent coverage: how many open indents each SKU has, how many are
+  // covered. The indents come with the list — every SKU's open ones, the same
+  // records Indent History shows.
   const indentStats = useMemo(
-    () => new Map(items.map((i) => [i.key, indentSummary(indentLinesFor(i, liveIndents))])),
-    [items, liveIndents],
+    () => new Map(items.map((i) => [i.key, indentSummary(indentLinesFor(i))])),
+    [items],
   );
 
   // Everything except the status filter, so the chips count what the other filters leave.
@@ -539,10 +614,9 @@ export const UpcomingStock = () => {
 
   // What needs a decision today, across everything (not just the filtered view).
   const attention = useMemo(() => {
-    let toReserve = 0;
-    let held = 0;
-    indentStats.forEach((s) => { toReserve += s.count - s.covered; held += s.held; });
-    return { delayed: items.filter((i) => i.status === 'Delayed').length, toReserve, held };
+    let short = 0;
+    indentStats.forEach((s) => { short += s.count - s.covered; });
+    return { delayed: items.filter((i) => i.status === 'Delayed').length, short };
   }, [items, indentStats]);
 
   const statusCounts = useMemo(
@@ -573,25 +647,24 @@ export const UpcomingStock = () => {
   const brandScale = Math.max(0, ...byBrand.map((b) => b.actual + b.reserved + b.remaining));
 
   const pipeline = useMemo(() => {
+    // Grouped by reference AND date: entries without a reference are not one
+    // shipment just because they share a blank, and a blank date stays blank.
     const byRef = new Map();
     items.forEach((i) => i.shipments.forEach((s) => {
-      const g = byRef.get(s.ref) || { ref: s.ref, eta: s.eta, supplier: s.supplier, qty: 0, skus: 0 };
+      const key = s.ref ? `ref:${s.ref}` : `none:${s.eta ? toYmd(s.eta) : ''}`;
+      const g = byRef.get(key) || { key, ref: s.ref, eta: s.eta, supplier: s.supplier, qty: 0, skus: 0 };
       g.qty += s.qty;
       g.skus += 1;
-      if (s.eta < g.eta) g.eta = s.eta;
-      byRef.set(s.ref, g);
+      if (s.eta && (!g.eta || new Date(s.eta) < new Date(g.eta))) g.eta = s.eta;
+      byRef.set(key, g);
     }));
-    return [...byRef.values()].sort((a, b) => a.eta.localeCompare(b.eta));
+    const at = (g) => (g.eta ? new Date(g.eta).getTime() : Infinity);
+    return [...byRef.values()].sort((a, b) => at(a) - at(b) || 0);
   }, [items]);
 
-  const selected = selectedKey ? items.find((i) => i.key === selectedKey) : null;
-  const selectedIndents = useMemo(
-    () => (selected ? indentLinesFor(selected, liveIndents) : []),
-    [selected, liveIndents],
-  );
-  const liveForSelected = selected
-    ? { ...live, count: liveIndents.filter((l) => l.skuCode?.toLowerCase() === selected.skuCode.toLowerCase()).length }
-    : live;
+  // A SKU that leaves the list (all of it arrived) closes its panel.
+  const selected = selectedKey ? items.find((i) => i.key === selectedKey) ?? null : null;
+  const selectedIndents = useMemo(() => (selected ? indentLinesFor(selected) : []), [selected]);
 
   const openPanel = (key, tab) => {
     setPanelTab(tab || ((indentStats.get(key)?.count || 0) > 0 ? 'indents' : 'overview'));
@@ -612,9 +685,25 @@ export const UpcomingStock = () => {
     indentFilter && { key: 'indents', label: INDENT_FILTERS.find((o) => o.value === indentFilter)?.label, clear: () => withFilter(setIndentFilter)('') },
   ].filter(Boolean);
 
-  const handleRelease = (item) => (r) => {
-    release(item.key, r.id);
-    toast.success(`Released ${r.qty.toLocaleString()} × ${item.skuCode} (${r.indentNo}).`);
+  // The SKU whose upcoming entries the row's Delete is about to remove.
+  const [deleteFor, setDeleteFor] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const confirmDelete = async () => {
+    if (!deleteFor || deleting) return;
+    setDeleting(true);
+    try {
+      const out = await inventoryApi.deleteUpcomingSku({ brand: deleteFor.brand, skuCode: deleteFor.skuCode });
+      toast.success(
+        `Deleted ${out.entries} upcoming entr${out.entries === 1 ? 'y' : 'ies'} for ${out.skuCode}. Actual stock is unchanged.`,
+      );
+      if (selectedKey === deleteFor.key) setSelectedKey(null);
+      setDeleteFor(null);
+    } catch (err) {
+      toast.error(errorOf(err, 'The upcoming stock could not be deleted.'));
+    } finally {
+      setDeleting(false);
+    }
+    await reload();
   };
 
   const handleExport = () => {
@@ -637,7 +726,6 @@ export const UpcomingStock = () => {
   const reservedPct = totals.upcoming ? Math.round((totals.reserved / totals.upcoming) * 100) : 0;
   const positionTotal = totals.actual + totals.upcoming;
   const seg = (v) => (positionTotal ? `${(v / positionTotal) * 100}%` : '0%');
-  const lastImport = imports[0];
   const colCount = 10;
 
   return (
@@ -647,18 +735,19 @@ export const UpcomingStock = () => {
         subtitle="Stock that is ordered but not yet received. Reserve it for customers before it lands, and see what is still free."
         actions={(
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-              <Upload size={15} className="mr-2" />Import Upcoming Stock
-            </Button>
+            {canManage && (
+              <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+                <Upload size={15} className="mr-2" />Import Upcoming Stock
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={handleExport} disabled={filtered.length === 0}>
               <Download size={15} className="mr-2" />Export
-            </Button>
-            <Button size="sm" onClick={() => setReserveFor('')}>
-              <BookmarkPlus size={15} className="mr-2" />Reserve Stock
             </Button>
           </div>
         )}
       />
+
+      {query.isFetching && query.data && <ProgressBar label="Refreshing…" />}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
         <SummaryCard icon={Warehouse} tone="bg-slate-100 text-slate-600" label="Actual Stock" value={totals.actual} hint={`On hand across ${items.length} SKUs`} />
@@ -676,7 +765,7 @@ export const UpcomingStock = () => {
       </div>
 
       {/* What needs a decision — each one a shortcut to the filtered list. */}
-      {(attention.delayed > 0 || attention.toReserve > 0 || attention.held > 0) && (
+      {(attention.delayed > 0 || attention.short > 0) && (
         <div className="flex flex-wrap items-center gap-2 -mt-2">
           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Needs attention</span>
           {[
@@ -686,17 +775,11 @@ export const UpcomingStock = () => {
               active: status === 'Delayed',
               apply: () => { withFilter(setStatus)(status === 'Delayed' ? '' : 'Delayed'); },
             },
-            attention.toReserve > 0 && {
-              key: 'reserve', icon: ClipboardList, tone: 'text-primary-700 border-primary-200 bg-primary-50 hover:bg-primary-100',
-              text: `${attention.toReserve} indent${attention.toReserve === 1 ? '' : 's'} waiting for a reservation`,
+            attention.short > 0 && {
+              key: 'short', icon: ClipboardList, tone: 'text-primary-700 border-primary-200 bg-primary-50 hover:bg-primary-100',
+              text: `${attention.short} indent${attention.short === 1 ? '' : 's'} not fully covered by upcoming stock`,
               active: indentFilter === 'open',
               apply: () => { withFilter(setIndentFilter)(indentFilter === 'open' ? '' : 'open'); },
-            },
-            attention.held > 0 && {
-              key: 'held', icon: PauseCircle, tone: 'text-warning-700 border-warning-200 bg-warning-50 hover:bg-warning-100',
-              text: `${attention.held} indent${attention.held === 1 ? '' : 's'} kept pending`,
-              active: indentFilter === 'held',
-              apply: () => { withFilter(setIndentFilter)(indentFilter === 'held' ? '' : 'held'); },
             },
           ].filter(Boolean).map(({ key, icon: Icon, tone, text, active, apply }) => (
             <button
@@ -820,7 +903,7 @@ export const UpcomingStock = () => {
               {pipeline.length === 0 && <p className="text-xs text-slate-500 py-2 px-1">No shipments recorded.</p>}
               {/* Grouped by arrival window, each with its unit total. */}
               {ARRIVAL_BUCKETS.map((b) => {
-                const group = pipeline.filter((g) => b.test(daysUntil(g.eta)));
+                const group = pipeline.filter((g) => b.test(g.eta ? daysUntil(g.eta) : null));
                 if (group.length === 0) return null;
                 const units = group.reduce((s, g) => s + g.qty, 0);
                 return (
@@ -831,9 +914,9 @@ export const UpcomingStock = () => {
                     </div>
                     <div className="flex flex-col divide-y divide-slate-50">
                       {group.map((g) => (
-                        <div key={g.ref} className="flex items-center justify-between gap-3 py-1.5 px-1">
+                        <div key={g.key} className="flex items-center justify-between gap-3 py-1.5 px-1">
                           <div className="min-w-0">
-                            <p className="text-xs font-bold text-slate-800 font-mono truncate">{g.ref}</p>
+                            <p className={`text-xs font-bold font-mono truncate ${g.ref ? 'text-slate-800' : 'text-slate-400'}`}>{refLabel(g.ref)}</p>
                             <p className="text-[11px] text-slate-400 truncate">{g.skus} SKU{g.skus === 1 ? '' : 's'} · {g.qty.toLocaleString()} units</p>
                           </div>
                           <div className="text-right shrink-0">
@@ -984,31 +1067,52 @@ export const UpcomingStock = () => {
                       </td>
                       <td className="px-5 py-4"><StatusChip status={i.status} /></td>
                       <td className="px-5 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        {/* Opens the SKU on its indents — reserving against an indent is the
-                            main path; a reservation with no indent is the panel's secondary action. */}
-                        <button
-                          type="button"
-                          onClick={() => ((indentStats.get(i.key)?.count || 0) > 0 ? openPanel(i.key, 'indents') : setReserveFor(i.key))}
-                          disabled={i.remaining === 0 && !(indentStats.get(i.key)?.count > 0)}
-                          title={(indentStats.get(i.key)?.count || 0) > 0 ? 'Reserve against one of this SKU’s indents' : 'Reserve for a customer (no open indent)'}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold
-                                     text-slate-600 border border-slate-200 bg-white hover:bg-primary-50
-                                     hover:text-primary-700 hover:border-primary-300 transition-colors
-                                     disabled:opacity-40 disabled:pointer-events-none"
-                        >
-                          <BookmarkPlus size={13} />
-                          Reserve
-                        </button>
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteFor(i)}
+                            title="Delete this SKU's upcoming stock entries (actual stock is not changed)"
+                            aria-label={`Delete upcoming stock for ${i.skuCode}`}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 ml-1.5 rounded-lg text-[11px] font-bold
+                                       text-error-600 border border-error-200 bg-white hover:bg-error-50
+                                       hover:border-error-300 transition-colors"
+                          >
+                            <Trash2 size={13} />
+                            Delete
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
 
-                {pageRows.length === 0 && (
+                {initialLoading && <TableSkeleton rows={6} columns={colCount} cellClass="px-5 py-4" />}
+
+                {!initialLoading && loadError && !query.data && (
                   <tr>
                     <td colSpan={colCount} className="px-6 py-12 text-center">
-                      <p className="text-slate-600 font-semibold">No SKUs match these filters</p>
-                      <p className="text-slate-500 text-xs mt-1">Clear a filter, or import an upcoming stock file to add shipments.</p>
+                      <p className="text-error-600 font-semibold">{loadError}</p>
+                      <Button size="sm" variant="outline" className="mt-3" onClick={reload}>
+                        <RefreshCw size={14} className="mr-2" />Try again
+                      </Button>
+                    </td>
+                  </tr>
+                )}
+
+                {!initialLoading && !(loadError && !query.data) && pageRows.length === 0 && (
+                  <tr>
+                    <td colSpan={colCount} className="px-6 py-12 text-center">
+                      {items.length === 0 ? (
+                        <>
+                          <p className="text-slate-600 font-semibold">No upcoming stock recorded</p>
+                          <p className="text-slate-500 text-xs mt-1">Import an upcoming stock file to add shipments.</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-slate-600 font-semibold">No SKUs match these filters</p>
+                          <p className="text-slate-500 text-xs mt-1">Clear a filter, or import an upcoming stock file to add shipments.</p>
+                        </>
+                      )}
                     </td>
                   </tr>
                 )}
@@ -1027,18 +1131,17 @@ export const UpcomingStock = () => {
       <div className="flex flex-wrap items-start gap-2 px-4 py-3 rounded-lg bg-slate-50 border border-slate-200">
         <Info size={16} className="text-slate-500 shrink-0 mt-0.5" />
         <p className="text-xs text-slate-600 leading-relaxed flex-1 min-w-60">
-          <strong>Demo data.</strong> Upcoming stock, reservations and imports on this screen are held in this browser
-          tab only. They do not change Inventory Master, Inventory Health or the stock ledger. Open indents from
-          Indent History are read so they can be reserved against, but the indents themselves are never changed.
+          <strong>Internal analysis only.</strong> Reserved is worked out automatically: each SKU&apos;s upcoming stock
+          is shared out over its open indents oldest first (FIFO), earliest arrival first, and Remaining is what is left.
+          It is a simulation — no stock is reserved, no booking or indent is changed, and no email or notification is
+          sent. Actual stock is the live on-hand figure; when goods are received into inventory the upcoming quantity
+          falls by itself, and the allocation is recalculated.
           {lastImport && (
             <> Last import: <span className="font-semibold">{lastImport.fileName}</span> · {formatDateTime(lastImport.importedAt)}.</>
           )}
         </p>
-        <Button
-          size="xs" variant="secondary"
-          onClick={() => { resetDemo(); resetFilters(); setSelectedKey(null); toast.success('Demo data restored.'); }}
-        >
-          <RotateCcw size={12} className="mr-1.5" />Reset demo data
+        <Button size="xs" variant="secondary" onClick={reload} disabled={query.isFetching}>
+          <RefreshCw size={12} className={`mr-1.5 ${query.isFetching ? 'animate-spin' : ''}`} />Refresh
         </Button>
       </div>
 
@@ -1054,27 +1157,37 @@ export const UpcomingStock = () => {
               key={selected.key}
               item={selected}
               indentLines={selectedIndents}
-              live={liveForSelected}
-              userName={user?.user || user?.name}
+              refreshing={query.isFetching}
+              canManage={canManage}
               initialTab={panelTab}
               onClose={() => setSelectedKey(null)}
-              onDirectReserve={(key) => setReserveFor(key)}
-              onRelease={handleRelease(selected)}
+              onChanged={reload}
             />
           </>
         )}
       </AnimatePresence>
 
-      <ImportUpcomingModal open={importOpen} onClose={() => setImportOpen(false)} />
+      <ImportUpcomingModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={reload}
+        templateBrand={brands[0] || ''}
+      />
 
-      <ReserveUpcomingModal
-        open={reserveFor !== undefined}
-        items={items}
-        initialKey={reserveFor || ''}
-        userName={user?.user || user?.name}
-        indentStats={indentStats}
-        onUseIndents={(key) => { setReserveFor(undefined); openPanel(key, 'indents'); }}
-        onClose={() => setReserveFor(undefined)}
+      <ConfirmationDialog
+        isOpen={Boolean(deleteFor)}
+        onClose={() => setDeleteFor(null)}
+        onConfirm={confirmDelete}
+        loading={deleting}
+        variant="danger"
+        title="Delete upcoming stock"
+        confirmText="Delete"
+        description={deleteFor
+          ? `Delete all ${deleteFor.shipmentCount} upcoming entr${deleteFor.shipmentCount === 1 ? 'y' : 'ies'} for `
+            + `${deleteFor.skuCode} (${deleteFor.upcoming.toLocaleString()} ${deleteFor.uom}: `
+            + `${deleteFor.shipments.map((s) => refLabel(s.ref)).join(', ')})? The SKU leaves this list. `
+            + 'Actual stock in the inventory is not changed. To remove just one entry, open the SKU\'s Shipments tab.'
+          : ''}
       />
     </div>
   );

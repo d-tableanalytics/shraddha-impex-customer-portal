@@ -1,21 +1,24 @@
 import { useRef, useState } from 'react';
-import { Upload, Download, X, Loader2, FileSpreadsheet, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
+import { Upload, Download, X, Loader2, FileSpreadsheet, CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import { useUpcomingStockStore } from '../../store/upcomingStockStore';
+import { inventoryApi } from '../../services/inventory';
 import {
-  readImportFile, validateImportRows, sampleImportRows, downloadTemplate,
-  formatDate, TEMPLATE_HEADERS,
-} from '../../utils/upcomingStockMock';
+  readImportFile, downloadTemplate, formatDate, TEMPLATE_HEADERS, newRequestId,
+} from '../../utils/upcomingStock';
+
+const errorOf = (err, fallback) => err?.response?.data?.message || err?.message || fallback;
 
 /**
- * Import a temporary upcoming-stock file — DEMO ONLY.
+ * Import an upcoming-stock file.
  *
- * The file is read in the browser and validated against the current upcoming
- * list. Valid lines are added as inbound shipments; nothing is sent to the
- * server and Inventory Master is not touched.
+ * The sheet is read in the browser and its columns mapped; the server checks
+ * every row (preview) and records the valid ones as inbound shipment lines
+ * (confirm), checking them again. A SKU not in Inventory Master is created with
+ * zero stock. Stock itself never moves here: the upcoming quantity falls by
+ * itself as the goods are received into the inventory.
  */
 
 const OUTCOME = {
@@ -24,56 +27,58 @@ const OUTCOME = {
   error: { label: 'Error', chip: 'bg-error-50 text-error-700' },
 };
 
-export const ImportUpcomingModal = ({ open, onClose }) => {
-  const items = useUpcomingStockStore((s) => s.items);
-  const importShipments = useUpcomingStockStore((s) => s.importShipments);
-
+export const ImportUpcomingModal = ({ open, onClose, onImported, templateBrand = '' }) => {
   const fileInput = useRef(null);
   const [fileName, setFileName] = useState('');
+  const [rows, setRows] = useState(null);
   const [lines, setLines] = useState(null);
   const [reading, setReading] = useState(false);
   const [importing, setImporting] = useState(false);
+  // One id per file read: confirming twice (or a retried request) records it once.
+  const importId = useRef(newRequestId());
 
   const reset = () => {
     setLines(null);
+    setRows(null);
     setFileName('');
     if (fileInput.current) fileInput.current.value = '';
   };
   const close = () => { reset(); onClose(); };
-
-  const accept = (result, name) => {
-    if (result.error) { toast.error(result.error); reset(); return; }
-    if (result.lines.length === 0) { toast.error('The file has no data rows.'); reset(); return; }
-    setFileName(name);
-    setLines(result.lines);
-  };
 
   const handleFile = async (file) => {
     if (!file) return;
     setReading(true);
     setFileName(file.name);
     try {
-      accept(await readImportFile(file, items), file.name);
-    } catch {
-      toast.error('That file could not be read. Use .xlsx, .xls or .csv.');
+      let parsed;
+      try {
+        parsed = await readImportFile(file);
+      } catch {
+        toast.error('That file could not be read. Use .xlsx, .xls or .csv.');
+        reset();
+        return;
+      }
+      if (parsed.error) { toast.error(parsed.error); reset(); return; }
+      if (parsed.rows.length === 0) { toast.error('The file has no data rows.'); reset(); return; }
+      const preview = await inventoryApi.previewUpcomingImport(parsed.rows);
+      importId.current = newRequestId();
+      setRows(parsed.rows);
+      setLines(preview.lines);
+    } catch (err) {
+      toast.error(errorOf(err, 'The file could not be checked. Try again.'));
       reset();
     } finally {
       setReading(false);
     }
   };
 
-  const loadSample = async () => {
-    setReading(true);
-    setFileName('upcoming-stock-oct.xlsx');
-    await new Promise((r) => setTimeout(r, 500));
-    accept(validateImportRows(sampleImportRows(), items), 'upcoming-stock-oct.xlsx');
-    setReading(false);
-  };
-
   const valid = (lines || []).filter((l) => l.outcome !== 'error');
   const errors = (lines || []).filter((l) => l.outcome === 'error');
+  // Rows of the file folded into another row (same SKU + reference).
+  const mergedAway = (lines || []).reduce((n, l) => n + Math.max(0, (l.mergedRows?.length || 1) - 1), 0);
   const summary = lines && [
-    ['Rows in file', lines.length, 'text-slate-900'],
+    // Counted from the file: duplicate rows come back from the server as one line.
+    ['Rows in file', rows?.length ?? lines.length, 'text-slate-900'],
     ['Ready to import', valid.length, 'text-success-700'],
     ['New SKUs', valid.filter((l) => l.outcome === 'new').length, 'text-primary-700'],
     ['Errors', errors.length, errors.length ? 'text-error-700' : 'text-slate-400'],
@@ -81,15 +86,22 @@ export const ImportUpcomingModal = ({ open, onClose }) => {
   const totalQty = valid.reduce((s, l) => s + l.qty, 0);
 
   const confirm = async () => {
+    if (importing) return;
     setImporting(true);
-    await new Promise((r) => setTimeout(r, 700));
-    const entry = importShipments(valid, fileName);
-    setImporting(false);
-    toast.success(
-      `Imported ${entry.lines} line${entry.lines === 1 ? '' : 's'} · ${entry.qty.toLocaleString()} units of upcoming stock`
-      + (entry.created ? ` · ${entry.created} new SKU${entry.created === 1 ? '' : 's'}` : ''),
-    );
-    close();
+    try {
+      const entry = await inventoryApi.importUpcoming({ importId: importId.current, fileName, rows });
+      toast.success(
+        `Imported ${entry.lines} line${entry.lines === 1 ? '' : 's'} · ${entry.qty.toLocaleString()} units of upcoming stock`
+        + (entry.created ? ` · ${entry.created} new SKU${entry.created === 1 ? '' : 's'}` : '')
+        + (entry.merged ? ` · ${entry.merged} duplicate row${entry.merged === 1 ? '' : 's'} merged` : ''),
+      );
+      await onImported?.();
+      close();
+    } catch (err) {
+      toast.error(errorOf(err, 'The import could not be saved.'));
+    } finally {
+      setImporting(false);
+    }
   };
 
   return (
@@ -98,7 +110,7 @@ export const ImportUpcomingModal = ({ open, onClose }) => {
         <p className="text-xs text-slate-500 leading-relaxed">
           Upload a shipment file listing stock that has been ordered but not yet received. Each row is added
           as an upcoming shipment for its SKU; existing reservations are kept. Actual stock is not changed —
-          it moves only when the goods are received.
+          when the goods are received into inventory, the upcoming quantity falls by itself.
         </p>
 
         {!lines && !reading && (
@@ -122,14 +134,12 @@ export const ImportUpcomingModal = ({ open, onClose }) => {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-[11px] text-slate-500">
                 Columns: <span className="font-semibold text-slate-600">{TEMPLATE_HEADERS.join(' · ')}</span>.
-                Only SKU Code, Upcoming Qty and Expected Arrival are required.
+                Only SKU Code and Upcoming Qty are required. Every other column can be left blank and filled in
+                later with Edit on the entry (Brand is needed only for a SKU not yet in Inventory Master).
               </p>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={downloadTemplate}>
+                <Button variant="outline" size="sm" onClick={() => downloadTemplate(templateBrand)}>
                   <Download size={14} className="mr-2" />Template
-                </Button>
-                <Button variant="secondary" size="sm" onClick={loadSample}>
-                  <Sparkles size={14} className="mr-2" />Use sample file
                 </Button>
               </div>
             </div>
@@ -138,7 +148,7 @@ export const ImportUpcomingModal = ({ open, onClose }) => {
 
         {reading && (
           <div className="flex items-center gap-2 py-12 justify-center text-slate-500 text-sm">
-            <Loader2 size={16} className="animate-spin" /> Reading {fileName}…
+            <Loader2 size={16} className="animate-spin" /> Reading and checking {fileName}…
           </div>
         )}
 
@@ -175,7 +185,7 @@ export const ImportUpcomingModal = ({ open, onClose }) => {
                   <tbody className="divide-y divide-slate-100">
                     {lines.map((l) => (
                       <tr key={l.row} className={l.outcome === 'error' ? 'bg-error-50/50' : ''}>
-                        <td className="px-4 py-2.5 text-slate-400 tabular-nums">{l.row}</td>
+                        <td className="px-4 py-2.5 text-slate-400 tabular-nums">{l.mergedRows ? l.mergedRows.join(', ') : l.row}</td>
                         <td className="px-4 py-2.5">
                           <span className="font-bold text-slate-900">{l.skuCode || '—'}</span>
                           <span className="block text-[11px] text-slate-400 font-medium">{l.brand}</span>
@@ -185,13 +195,17 @@ export const ImportUpcomingModal = ({ open, onClose }) => {
                           {l.outcome === 'error' && !l.qty ? '—' : l.qty.toLocaleString()}
                         </td>
                         <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{formatDate(l.eta)}</td>
-                        <td className="px-4 py-2.5 text-slate-600 font-mono text-xs">{l.ref}</td>
+                        <td className="px-4 py-2.5 text-slate-600 font-mono text-xs">{l.ref || '—'}</td>
                         <td className="px-4 py-2.5">
                           <span className={`inline-flex px-2 py-1 rounded-md text-[11px] font-bold ${OUTCOME[l.outcome].chip}`}>
                             {OUTCOME[l.outcome].label}
                           </span>
                           {l.problems.map((p) => (
                             <span key={p} className="block text-[11px] text-error-700 mt-1">{p}</span>
+                          ))}
+                          {/* Duplicate rows of the file folded into this one. */}
+                          {(l.notes || []).map((n) => (
+                            <span key={n} className="block text-[11px] text-primary-700 mt-1">{n}</span>
                           ))}
                         </td>
                       </tr>
@@ -213,6 +227,16 @@ export const ImportUpcomingModal = ({ open, onClose }) => {
               <div className="flex items-start gap-2 p-3 rounded-lg bg-success-50 border border-success-100">
                 <CheckCircle2 size={16} className="text-success-600 shrink-0 mt-0.5" />
                 <p className="text-xs text-success-700">Every row is valid.</p>
+              </div>
+            )}
+
+            {mergedAway > 0 && (
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-primary-50 border border-primary-100">
+                <Info size={16} className="text-primary-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-primary-900 leading-relaxed">
+                  {mergedAway} duplicate row{mergedAway === 1 ? ' was' : 's were'} merged: rows with the same SKU and
+                  PO / shipment reference become one entry with their quantities added. See the notes in the Result column.
+                </p>
               </div>
             )}
           </>

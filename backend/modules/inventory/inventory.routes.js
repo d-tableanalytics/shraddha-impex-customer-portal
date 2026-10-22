@@ -11,6 +11,10 @@ import { listBrandsHandler, createBrand, updateBrand, deleteBrand } from './bran
 import { getConfig, getConfigHistory, updateConfig } from './config.controller.js';
 import { getQueue, postAuto, postAssign, postReassign } from './indentAssignment.controller.js';
 import {
+  getUpcoming, postImportPreview, postImport, patchShipment, postCancelShipment,
+  deleteUpcomingShipment, postDeleteSku,
+} from './upcomingStock.controller.js';
+import {
   searchLedger, searchLedgerGrouped, getSkuMovements, getMovement, getBatch, listMovementTypes,
 } from './ledger.controller.js';
 import {
@@ -338,6 +342,19 @@ router.get('/indent-assignment', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), get
 router.post('/indent-assignment/auto', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postAuto);
 router.post('/indent-assignment/assign', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postAssign);
 router.post('/indent-assignment/reassign', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postReassign);
+
+// ── Upcoming stock ────────────────────────────────────────────────────────
+// Ordered but not yet received, with a FIFO allocation to open indents worked
+// out on read (analysis only — nothing is reserved for real). Existing keys:
+// reading it is reading inventory; loading or correcting shipments is master
+// data (Admin, Inventory Manager, Import Team). See upcomingStock.service.js.
+router.get('/upcoming', authorize(PERMISSIONS.VIEW_INVENTORY), getUpcoming);
+router.post('/upcoming/import/preview', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), postImportPreview);
+router.post('/upcoming/import', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), postImport);
+router.patch('/upcoming/shipments/:id', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), patchShipment);
+router.post('/upcoming/shipments/:id/cancel', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), postCancelShipment);
+router.delete('/upcoming/shipments/:id', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), deleteUpcomingShipment);
+router.post('/upcoming/items/delete', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), postDeleteSku);
 
 // ── Configuration ─────────────────────────────────────────────────────────
 router.get('/config/history', authorize(PERMISSIONS.CONFIGURE_INVENTORY), getConfigHistory);

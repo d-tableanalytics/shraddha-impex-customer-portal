@@ -18,6 +18,9 @@ export const STALE = {
   // The assignment queue drives stock decisions: always re-validated with the
   // server, but the last queue is shown at once while that happens.
   indentAssignment: 0,
+  // Upcoming stock is reserved from: re-read on every visit, the last copy
+  // shown meanwhile. The server re-checks every reservation anyway.
+  upcomingStock: 0,
 };
 
 export const queryKeys = {
@@ -29,5 +32,9 @@ export const queryKeys = {
   indentAssignment: {
     all: ["indent-assignment"],
     queue: () => ["indent-assignment", "queue"],
+  },
+  upcomingStock: {
+    all: ["upcoming-stock"],
+    list: () => ["upcoming-stock", "list"],
   },
 };

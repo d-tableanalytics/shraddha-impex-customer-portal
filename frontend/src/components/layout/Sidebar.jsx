@@ -63,7 +63,7 @@ const ICONS = {
   Shuffle,
   // FMS (src/fms/navigation.js).
   ListChecks, Truck, Ban,
-  // Upcoming Stock demo (utils/navigation.js).
+  // Upcoming Stock (utils/navigation.js).
   CalendarClock,
 };
 

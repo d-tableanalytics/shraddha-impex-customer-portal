@@ -38,5 +38,7 @@ export const invalidateBookingData = () => {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all }),
     queryClient.invalidateQueries({ queryKey: queryKeys.indentAssignment.all }),
+    // Upcoming Stock lists each SKU's open indents.
+    queryClient.invalidateQueries({ queryKey: queryKeys.upcomingStock.all }),
   ]);
 };

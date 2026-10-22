@@ -28,8 +28,8 @@ const Inventory = lazy(lazyPage("Inventory"));
 const InventoryMaster = lazy(lazyPage("InventoryMaster"));
 const StockLedger = lazy(lazyPage("StockLedger"));
 const InventoryHealth = lazy(lazyPage("InventoryHealth"));
-// Upcoming Stock — DEMO screen on mock data (no API). Opens for anyone who
-// can open Inventory Health, the screen it sits beside in the menu.
+// Upcoming Stock (GET /inventory/upcoming). Opens for anyone who can open
+// Inventory Health (view_inventory), the screen it sits beside in the menu.
 const UpcomingStock = lazy(lazyPage("UpcomingStock"));
 const InventoryDashboard = lazy(lazyPage("InventoryDashboard"));
 const InventoryImport = lazy(lazyPage("InventoryImport"));
@@ -160,8 +160,8 @@ export const router = createBrowserRouter([
             element: <ModuleRoute module="inventory" submodule="health"><InventoryHealth /></ModuleRoute>,
           },
           {
-            // Upcoming stock (demo). Mock data held in the browser; gated on
-            // the Health screen's cell because it has no registry entry.
+            // Upcoming stock. Gated on the Health screen's cell (view_inventory)
+            // because it has no registry entry; its API re-checks every action.
             path: "inventory/upcoming",
             element: <ModuleRoute module="inventory" submodule="health"><UpcomingStock /></ModuleRoute>,
           },

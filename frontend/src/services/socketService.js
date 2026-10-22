@@ -75,6 +75,21 @@ export const onBrandsUpdated = (handler) => {
   return () => s.off('brands:updated', handler);
 };
 
+/**
+ * Upcoming stock changed somewhere — a file imported, a reservation made or
+ * released, a shipment line corrected. Throttled like stock updates, for the
+ * same reason. Returns an unsubscribe function.
+ */
+export const onUpcomingUpdated = (handler, { throttleMs = STOCK_REFRESH_THROTTLE_MS } = {}) => {
+  const s = socket || initSocket();
+  const listener = throttleMs > 0 ? throttleTrailing(handler, throttleMs) : handler;
+  s.on('inventory:upcoming-updated', listener);
+  return () => {
+    s.off('inventory:upcoming-updated', listener);
+    listener.cancel?.();
+  };
+};
+
 export const onStockUpdated = (handler, { throttleMs = STOCK_REFRESH_THROTTLE_MS } = {}) => {
   const s = socket || initSocket();
   const listener = throttleMs > 0 ? throttleTrailing(handler, throttleMs) : handler;
