@@ -599,11 +599,11 @@ export const updateOrderPO = async (req, res, next) => {
  *
  * Cancel a booking, at any stage, and put its units back into stock.
  *
- * This is the customer's own escape hatch for a booking they no longer want —
- * including one the system raised for them automatically when their indent came
- * back in stock. Without it, an auto-booking could only be undone by waiting out
- * the 7-day PO deadline, which leaves stock sitting reserved against a customer
- * who has already said they do not want it.
+ * How staff undo a booking a customer no longer wants — including one the
+ * system raised for them automatically when their indent came back in stock.
+ * Without it, an auto-booking could only be undone by waiting out the 7-day PO
+ * deadline, which leaves stock sitting reserved against a customer who has
+ * already said they do not want it.
  *
  * The release is deliberately identical to what the settlement job does when
  * the deadline expires — `releaseStock`, then `stockState: 'released'`. Two
@@ -611,10 +611,14 @@ export const updateOrderPO = async (req, res, next) => {
  * is what makes both idempotent: a line already consumed or released is skipped,
  * so this can never double-release.
  *
- * CANCELLABLE AT ANY STAGE, PO OR NOT (decided 2026-10-19), by the customer
- * who owns it or by staff. Lines still only reserved are released; lines whose
- * PO already consumed their stock are taken back into inventory (available and
- * total both rise). The booking's open indent is closed with it.
+ * CANCELLABLE AT ANY STAGE, PO OR NOT (decided 2026-10-19), by staff only.
+ * Lines still only reserved are released; lines whose PO already consumed
+ * their stock are taken back into inventory (available and total both rise).
+ * The booking's open indent is closed with it.
+ *
+ * NOT BY THE CUSTOMER (decided 2026-10-27). Customers used to cancel their own
+ * bookings from the portal; that option was withdrawn, and a customer who wants
+ * one cancelled asks support, who cancel it here on their behalf.
  */
 export const cancelBooking = async (req, res, next) => {
   try {
@@ -624,15 +628,20 @@ export const cancelBooking = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
 
-    // A customer may cancel only their own booking. Admins and anyone holding
-    // manage_orders may cancel on a customer's behalf, which is how a phone
-    // request gets actioned.
+    // Staff only: admins and anyone holding manage_orders cancel on a
+    // customer's behalf, which is how a phone or email request gets actioned.
+    // Owning the booking is no longer enough — see the note above.
     const owner = String(rows[0].user);
     const isOwner = owner === String(req.user._id);
     const canActForOthers = isSuperAdmin(req.user)
       || hasPermission(req.user, PERMISSIONS.MANAGE_ORDERS);
-    if (!isOwner && !canActForOthers) {
-      return res.status(403).json({ success: false, message: 'This booking belongs to another customer.' });
+    if (!canActForOthers) {
+      return res.status(403).json({
+        success: false,
+        message: isOwner
+          ? 'Bookings cannot be cancelled from the portal. Please contact support@shraddhaimpex.net with your Booking ID.'
+          : 'This booking belongs to another customer.',
+      });
     }
 
     if (rows.every((r) => r.status === 'Cancelled')) {

@@ -29,7 +29,7 @@ import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
-import { canViewLineItemBoxNo, canEditBookingQuantity, hasPermission, PERMISSIONS, isSuperAdmin} from "../../utils/permissions";
+import { canViewLineItemBoxNo, canEditBookingQuantity, canCancelBookings, hasPermission, PERMISSIONS, isSuperAdmin} from "../../utils/permissions";
 import { BookingScheduleSection } from "./BookingScheduleSection";
 import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
@@ -149,8 +149,11 @@ export const OrderDrawer = () => {
   );
 
   // Cancellable at any stage, PO or not (decided 2026-10-19): the server puts
-  // every unit back into stock and closes the booking's open indent.
-  const canCancel = Boolean(selectedOrder && selectedOrder.status !== "Cancelled");
+  // every unit back into stock and closes the booking's open indent. Staff
+  // only — a customer is never offered it (2026-10-27).
+  const canCancel = Boolean(
+    selectedOrder && selectedOrder.status !== "Cancelled" && canCancelBookings(user),
+  );
 
   // Who may amend quantities here, and when. Staff follow the desk rules;
   // the customer may revise their own booking until the PO is raised. The

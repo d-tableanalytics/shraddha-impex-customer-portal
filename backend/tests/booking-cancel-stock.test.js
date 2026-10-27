@@ -5,10 +5,15 @@
  * List, confirms the booking (stock moves available → booked), then cancels it
  * (booked → available). Checked against the product's three counters, which
  * must keep `availableForSale + bookedQuantity === totalAvailableQuantity`.
+ *
+ * The cancel is made by the desk: customers lost the option on 2026-10-27, and
+ * the last block checks that a customer is refused and nothing moves.
  */
 
 import test, { before, after, beforeEach, describe, mock } from 'node:test';
 import assert from 'node:assert/strict';
+
+import mongoose from 'mongoose';
 
 import { startTestMongo, stopTestMongo, clearCollections } from './helpers/mongo.js';
 
@@ -23,7 +28,7 @@ const { default: Order } = await import('../models/Order.js');
 const { default: Reservation } = await import('../models/Reservation.js');
 const { default: User } = await import('../models/User.js');
 const { ProductKoken } = await import('../models/Product.js');
-const { createReservation, confirmBooking } = await import('../modules/reservations/reservation.controller.js');
+const { createReservation, confirmBooking, cancelReservation } = await import('../modules/reservations/reservation.controller.js');
 const { cancelBooking, updateOrderPO } = await import('../modules/orders/order.controller.js');
 
 before(async () => { await startTestMongo(); });
@@ -50,6 +55,9 @@ const customer = async () => (await User.create({
   moq: 'SKIP',
 })).toObject();
 
+// Sales holds manage_orders, which is what lets the desk cancel for a customer.
+const DESK = { _id: new mongoose.Types.ObjectId(), role: 'Sales', name: 'Sales Desk', email: 'desk@example.com' };
+
 const stockOf = async (id) => {
   const p = await ProductKoken.findById(id).lean();
   return { available: p.availableForSale, booked: p.bookedQuantity, total: p.totalAvailableQuantity };
@@ -71,7 +79,7 @@ describe('cancelling a confirmed booking', () => {
     const orderId = await book(user, p, 4);
     assert.deepEqual(await stockOf(p._id), { available: 6, booked: 4, total: 10 }, 'confirmed: 4 held');
 
-    const res = await call(cancelBooking, { user, params: { orderId } });
+    const res = await call(cancelBooking, { user: DESK, params: { orderId } });
     assert.equal(res.statusCode, 200);
     assert.deepEqual(await stockOf(p._id), { available: 10, booked: 0, total: 10 }, 'cancelled: all back');
 
@@ -85,8 +93,8 @@ describe('cancelling a confirmed booking', () => {
     const p = await ProductKoken.create({ skuCode: 'SKU-2', availableForSale: 10, totalAvailableQuantity: 10, bookedQuantity: 0 });
     const orderId = await book(user, p, 4);
 
-    await call(cancelBooking, { user, params: { orderId } });
-    const again = await call(cancelBooking, { user, params: { orderId } });
+    await call(cancelBooking, { user: DESK, params: { orderId } });
+    const again = await call(cancelBooking, { user: DESK, params: { orderId } });
     assert.equal(again.statusCode, 409);
     assert.deepEqual(await stockOf(p._id), { available: 10, booked: 0, total: 10 });
   });
@@ -98,7 +106,7 @@ describe('cancelling a confirmed booking', () => {
     const orderId = await book(user, p, 5);
     assert.deepEqual(await stockOf(p._id), { available: 0, booked: 3, total: 3 }, '3 confirmed, 2 on indent');
 
-    await call(cancelBooking, { user, params: { orderId } });
+    await call(cancelBooking, { user: DESK, params: { orderId } });
     assert.deepEqual(await stockOf(p._id), { available: 3, booked: 0, total: 3 }, 'the 3 are back');
 
     // The 2 still on indent are closed with the booking, so they are never
@@ -106,7 +114,7 @@ describe('cancelling a confirmed booking', () => {
     const indent = await Reservation.findOne({ indentNumber: orderId.replace(/^BO-/, 'PI-') }).lean();
     assert.equal(indent.status, 'Cancelled');
     assert.ok(indent.cancelledAt);
-    assert.match(indent.cancellationReason, /cancelled by the customer/);
+    assert.match(indent.cancellationReason, /cancelled by Sales Desk/);
     assert.deepEqual(await stockOf(p._id), { available: 3, booked: 0, total: 3 }, 'closing it moved no stock');
   });
 
@@ -118,8 +126,51 @@ describe('cancelling a confirmed booking', () => {
     await call(updateOrderPO, { user: { ...user, role: 'Super Admin', permissions: ['*'] }, params: { orderId }, body: { poNumber: 'PO-77' } });
     assert.deepEqual(await stockOf(p._id), { available: 6, booked: 0, total: 6 }, 'PO raised: 4 consumed');
 
-    const res = await call(cancelBooking, { user, params: { orderId } });
+    const res = await call(cancelBooking, { user: DESK, params: { orderId } });
     assert.equal(res.statusCode, 200);
     assert.deepEqual(await stockOf(p._id), { available: 10, booked: 0, total: 10 }, 'the 4 are back in inventory');
+  });
+});
+
+describe('a customer cannot cancel from the portal', () => {
+  test('their own booking is refused, and its stock and indent stay put', async () => {
+    const user = await customer();
+    const p = await ProductKoken.create({ skuCode: 'SKU-C1', availableForSale: 3, totalAvailableQuantity: 3, bookedQuantity: 0 });
+    const orderId = await book(user, p, 5); // 3 booked, 2 on indent
+
+    const res = await call(cancelBooking, { user, params: { orderId } });
+    assert.equal(res.statusCode, 403);
+    assert.match(res.payload.message, /contact support/);
+    assert.deepEqual(await stockOf(p._id), { available: 0, booked: 3, total: 3 }, 'nothing released');
+    assert.notEqual((await Order.findOne({ orderId }).lean()).status, 'Cancelled');
+    const indent = await Reservation.findOne({ indentNumber: orderId.replace(/^BO-/, 'PI-') }).lean();
+    assert.equal(indent.status, 'Partially Confirmed', 'the indent is still open');
+  });
+
+  test('their own indent line is refused, but the desk can cancel it', async () => {
+    const user = await customer();
+    const p = await ProductKoken.create({ skuCode: 'SKU-C2', availableForSale: 3, totalAvailableQuantity: 3, bookedQuantity: 0 });
+    const orderId = await book(user, p, 5);
+    const indent = await Reservation.findOne({ indentNumber: orderId.replace(/^BO-/, 'PI-') }).lean();
+
+    const refused = await call(cancelReservation, { user, params: { id: String(indent._id) } });
+    assert.equal(refused.statusCode, 403);
+    assert.match(refused.payload.message, /contact support/);
+    assert.equal((await Reservation.findById(indent._id).lean()).status, 'Partially Confirmed');
+
+    const ok = await call(cancelReservation, { user: DESK, params: { id: String(indent._id) } });
+    assert.equal(ok.statusCode, 200);
+    assert.equal((await Reservation.findById(indent._id).lean()).status, 'Cancelled');
+  });
+
+  test('they can still remove a line from their own selection list', async () => {
+    const user = await customer();
+    const p = await ProductKoken.create({ skuCode: 'SKU-C3', availableForSale: 10, totalAvailableQuantity: 10, bookedQuantity: 0 });
+    await call(createReservation, { user, body: { productId: String(p._id), quantity: 2 } });
+    const line = await Reservation.findOne({ status: 'Reserved' }).lean();
+
+    const res = await call(cancelReservation, { user, params: { id: String(line._id) } });
+    assert.equal(res.statusCode, 200);
+    assert.equal((await Reservation.findById(line._id).lean()).status, 'Cancelled');
   });
 });

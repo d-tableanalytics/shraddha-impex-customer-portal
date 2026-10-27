@@ -109,9 +109,9 @@ router.post(
 
 router.get('/:id', protect, getOrderById);
 
-// Cancellation is NOT behind manage_orders: a customer cancelling their own
-// booking is the main case. The handler checks ownership itself and lets
-// manage_orders holders act for someone else.
+// Cancellation is staff-only (customers lost it 2026-10-27). The handler
+// checks for manage_orders itself, so a customer is told to contact support
+// rather than refused with a bare 403.
 router.post('/:orderId/cancel', protect, auditLogger('Cancel Booking'), cancelBooking);
 
 router.put('/:id/status', protect, authorize('manage_orders'), updateOrderStatus);

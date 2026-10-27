@@ -684,8 +684,8 @@ export const updateReservationQuantity = async (req, res, next) => {
   }
 };
 
-// Cancels a selection-list line ('Reserved') or an open indent line
-// ('Pending' / 'Partially Confirmed'). Neither holds allocated stock — stock
+// Cancels a selection-list line ('Reserved', owner or staff) or an open indent
+// line ('Pending' / 'Partially Confirmed', staff only). Neither holds allocated stock — stock
 // is deducted only at confirmation, and an indent is by definition the part
 // stock could NOT cover — so cancelling is a status change, never a release.
 export const cancelReservation = async (req, res, next) => {
@@ -711,6 +711,14 @@ export const cancelReservation = async (req, res, next) => {
     }
 
     const isIndent = reservation.status !== 'Reserved';
+    // A customer still removes lines from their own selection list, but an
+    // indent is staff-only since 2026-10-27 — the same rule as cancelBooking.
+    if (isIndent && !canActForOthers) {
+      return res.status(403).json({
+        success: false,
+        message: 'Indents cannot be cancelled from the portal. Please contact support@shraddhaimpex.net with your Indent number.',
+      });
+    }
     const label = isIndent
       ? `indent ${reservation.indentNumber || reservation.reservationId}`
       : `reservation ${reservation.reservationId}`;

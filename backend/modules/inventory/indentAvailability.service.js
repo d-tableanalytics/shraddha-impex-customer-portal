@@ -139,8 +139,8 @@ const bookingEmail = ({ customerName, orderNumber, lines, dueAt, allocation = fa
       and the stock returns to general availability.
     </p>
 
-    <p>If you no longer need this, you can cancel the booking from
-       <strong>Booking History</strong> in your portal and the stock will be released straight away.</p>
+    <p>If you no longer need this, please contact us at
+       <strong>support@shraddhaimpex.net</strong> with your Booking ID and we will cancel it for you.</p>
     ` : ''}
 
     <p>Thank you for your business.</p>

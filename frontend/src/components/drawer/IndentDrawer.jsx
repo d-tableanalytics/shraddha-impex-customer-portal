@@ -22,7 +22,7 @@ import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
 import { IndentScheduleSection } from "./IndentScheduleSection";
 
-import { isSuperAdmin } from "../../utils/permissions";
+import { isSuperAdmin, canCancelBookings } from "../../utils/permissions";
 const PAGE_SIZE = 10;
 
 export const IndentDrawer = () => {
@@ -43,6 +43,9 @@ export const IndentDrawer = () => {
   const openLines = lines.filter(
     (l) => l.status === "Pending" || l.status === "Partially Confirmed",
   );
+  // Staff only — a customer is never offered it (2026-10-27), and the server
+  // refuses a customer's indent cancel either way.
+  const canCancel = openLines.length > 0 && canCancelBookings(user);
 
   if (!selectedIndent) return null;
 
@@ -132,7 +135,7 @@ export const IndentDrawer = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              {openLines.length > 0 && (
+              {canCancel && (
                 <ERPButton
                   variant="outline"
                   size="sm"

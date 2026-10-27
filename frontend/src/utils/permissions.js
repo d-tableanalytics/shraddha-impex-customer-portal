@@ -122,6 +122,9 @@ const FALLBACK_ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_CUSTOMER_USERS,
     PERMISSIONS.EDIT_BOOKING_PRE_PO,
     PERMISSIONS.RAISE_PO,
+    // Mirrors the server (2026-10-19): Sales moves booking status and cancels
+    // on a customer's behalf.
+    PERMISSIONS.MANAGE_ORDERS,
     PERMISSIONS.VIEW_REPORTS,
     PERMISSIONS.VIEW_INVENTORY,
   ],
@@ -331,6 +334,19 @@ export const canRaisePo = (user, booking) =>
   Boolean(booking) && !booking.locked && hasPermission(user, PERMISSIONS.RAISE_PO);
 
 /**
+ * Who may cancel a booking or an open indent.
+ *
+ * STAFF ONLY - Admin, and anyone holding manage_orders (Sales). Customers could
+ * once cancel their own from Booking History and Indent History; that was
+ * withdrawn (2026-10-27) and they now ask support. Mirrors `canActForOthers` in
+ * cancelBooking and cancelReservation on the server, which refuse a customer
+ * either way. A customer still removes lines from their own selection list -
+ * that is not an indent, and is not gated by this.
+ */
+export const canCancelBookings = (user) =>
+  isSuperAdmin(user) || hasPermission(user, PERMISSIONS.MANAGE_ORDERS);
+
+/**
  * Who may see what we charge, and pick the rate a customer is quoted.
  *
  * Admin and Sales by baseline; anyone else only if a Super Admin ticks
@@ -493,6 +509,7 @@ export default {
   canEditBooking,
   canEditBookingQuantity,
   canRaisePo,
+  canCancelBookings,
   canViewPricing,
   canUseInventoryMaster,
   canOpenUserManagement,
