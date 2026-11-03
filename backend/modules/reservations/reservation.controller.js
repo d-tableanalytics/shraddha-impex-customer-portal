@@ -857,6 +857,77 @@ const reserveDirectBookingLines = async (req, session, items) => {
   return Reservation.insertMany(docs, session ? { session } : {});
 };
 
+/** A 409 the confirmation popup can act on: what changed, line by line. */
+const reviewConflict = (code, message, details) => {
+  const err = new Error(message);
+  err.statusCode = 409;
+  err.code = code;
+  err.details = details;
+  return err;
+};
+
+/**
+ * The lines the customer approved in the confirmation popup, or null when the
+ * caller sent none (older clients, and every caller other than the popup).
+ *
+ * Body: reviewed: [{ id: reservation _id, quantity, bookable }]
+ * `bookable` is the part of `quantity` the popup said would come from stock.
+ */
+const parseReviewedLines = (body) => {
+  if (body?.reviewed === undefined) return null;
+  const lines = body.reviewed;
+  const valid = Array.isArray(lines) && lines.every((l) => (
+    l && typeof l.id === 'string'
+    && Number.isInteger(l.quantity) && l.quantity > 0
+    && Number.isInteger(l.bookable) && l.bookable >= 0
+  ));
+  if (!valid) {
+    const err = new Error('The reviewed booking lines are malformed.');
+    err.statusCode = 400;
+    throw err;
+  }
+  return new Map(lines.map((l) => [l.id, l]));
+};
+
+/**
+ * Refuse a confirmation whose Selection List is no longer what the customer
+ * reviewed — a line added, removed or re-quantified from another tab, or
+ * released by expiry, between opening the popup and pressing Confirm. What is
+ * booked must be what was on screen.
+ */
+const assertSelectionMatchesReview = (reservations, reviewed) => {
+  const changes = [];
+  const seen = new Set();
+  for (const r of reservations) {
+    const id = String(r._id);
+    seen.add(id);
+    const line = reviewed.get(id);
+    if (!line) changes.push({ skuCode: r.skuCode, change: 'added', quantity: r.quantity });
+    else if (line.quantity !== r.quantity) {
+      changes.push({ skuCode: r.skuCode, change: 'quantity', reviewed: line.quantity, quantity: r.quantity });
+    }
+  }
+  for (const id of reviewed.keys()) {
+    if (!seen.has(id)) changes.push({ id, change: 'removed' });
+  }
+  if (changes.length) {
+    throw reviewConflict(
+      'SELECTION_CHANGED',
+      'Your Selection List changed after you opened the review. Check the updated lines and confirm again.',
+      changes,
+    );
+  }
+};
+
+/** Lines whose bookable-from-stock quantity fell below what was reviewed. */
+const stockConflict = (shortLines) => reviewConflict(
+  'STOCK_CHANGED',
+  `Stock changed while you were reviewing: ${shortLines
+    .map((l) => `${l.skuCode} now has ${l.available} available (you reviewed ${l.reviewed})`)
+    .join('; ')}. Adjust the quantities or confirm the updated split.`,
+  shortLines,
+);
+
 // Core confirmation logic. All DB writes accept an optional `session` so the
 // whole read-modify-write cycle (stock deduction + order creation + reservation
 // updates) is atomic when transactions are available.
@@ -868,6 +939,7 @@ const reserveDirectBookingLines = async (req, session, items) => {
 // Everything after the line set is identical for both, so a booking made from a
 // sheet and one made from the list cannot diverge in what they produce.
 const runConfirmBooking = async (req, session, { items = null } = {}) => {
+  const reviewed = items ? null : parseReviewedLines(req.body);
   const reservations = items
     ? await reserveDirectBookingLines(req, session, items)
     : await Reservation.find(
@@ -880,8 +952,35 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
       // would be shown one order and printed another.
       ).sort({ createdAt: 1, _id: 1 });
   if (reservations.length === 0) {
-    throw new Error('No active reservations to confirm.');
+    // Also what a second click on Confirm meets once the first has committed.
+    const err = new Error('No active reservations to confirm.');
+    err.statusCode = 409;
+    throw err;
   }
+
+  // Products are read up front so a reviewed confirmation can be refused before
+  // any stock moves: without a replica set runInTransaction falls back to no
+  // transaction, and a refusal thrown after the deductions would keep them.
+  const products = [];
+  for (const resItem of reservations) {
+    const product = await findProductById(resItem.productId, session, req.user);
+    if (!product) {
+      throw new Error(`Product ${resItem.skuCode} not found.`);
+    }
+    products.push(product);
+  }
+
+  if (reviewed) {
+    assertSelectionMatchesReview(reservations, reviewed);
+    const short = [];
+    reservations.forEach((r, i) => {
+      const available = Math.min(r.quantity, Math.max(0, products[i].availableForSale));
+      const line = reviewed.get(String(r._id));
+      if (available < line.bookable) short.push({ skuCode: r.skuCode, reviewed: line.bookable, available });
+    });
+    if (short.length) throw stockConflict(short);
+  }
+  const shortAtDeduction = [];
 
   const year = new Date().getFullYear();
   // Drawn OUTSIDE the transaction (no session). Every booking increments the
@@ -911,11 +1010,7 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
   // `entries()` rather than a bare for..of so each line keeps the position it
   // held in the customer's request. See the note on `lineSeq` in models/Order.js.
   for (const [lineSeq, resItem] of reservations.entries()) {
-    const product = await findProductById(resItem.productId, session, req.user);
-    if (!product) {
-      throw new Error(`Product ${resItem.skuCode} not found.`);
-    }
-
+    const product = products[lineSeq];
     const requestedQty = resItem.quantity;
 
     // Fulfill as much as live stock allows (atomically, so concurrent
@@ -928,6 +1023,13 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
       req,
     });
     const pendingQty = requestedQty - confirmedQty;
+
+    // Another booking took the stock between the check above and this
+    // deduction. Inside a transaction, throwing after the loop rolls it back.
+    const reviewedBookable = reviewed?.get(String(resItem._id))?.bookable ?? 0;
+    if (confirmedQty < reviewedBookable) {
+      shortAtDeduction.push({ skuCode: resItem.skuCode, reviewed: reviewedBookable, available: confirmedQty });
+    }
 
     if (confirmedQty > 0) {
       ordersToCreate.push({
@@ -1012,6 +1114,8 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
       availableStockAfter: product.availableForSale
     });
   }
+
+  if (shortAtDeduction.length) throw stockConflict(shortAtDeduction);
 
   const createdOrders = ordersToCreate.length
     ? await Order.insertMany(ordersToCreate, session ? { session } : {})

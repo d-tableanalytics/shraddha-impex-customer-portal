@@ -140,6 +140,75 @@ describe('confirmation', () => {
     assert.equal(await AuditLog.countDocuments({ action: 'Reservation Confirmed' }), 0);
   });
 
+  describe('the review popup: what was reviewed is what is booked', () => {
+    const reviewOf = async (user, bookable) => {
+      const r = await Reservation.findOne({ customerId: user._id, status: 'Reserved' }).lean();
+      return [{ id: String(r._id), quantity: r.quantity, bookable }];
+    };
+
+    test('the reviewed lines, unchanged, book normally', async () => {
+      const user = await customer();
+      const p = await product(ProductKoken, 'K-R1', 10);
+      await call(createReservation, { user, body: { productId: String(p._id), quantity: 4 } });
+
+      const res = await call(confirmBooking, { user, body: { reviewed: await reviewOf(user, 4) } });
+      assert.equal(res.statusCode, 201);
+      assert.deepEqual(await stock(p), { available: 6, booked: 4, total: 10 });
+    });
+
+    test('a quantity changed after the review is refused and nothing moves', async () => {
+      const user = await customer();
+      const p = await product(ProductKoken, 'K-R2', 10);
+      await call(createReservation, { user, body: { productId: String(p._id), quantity: 4 } });
+      const reviewed = await reviewOf(user, 4);
+      await Reservation.updateOne({ customerId: user._id }, { $set: { quantity: 6 } });
+
+      const res = await call(confirmBooking, { user, body: { reviewed } });
+      assert.equal(res.statusCode, 409);
+      assert.equal(res.payload.code, 'SELECTION_CHANGED');
+      assert.deepEqual(await stock(p), { available: 10, booked: 0, total: 10 });
+      assert.equal(await Order.countDocuments(), 0);
+    });
+
+    test('stock that fell below what was reviewed is refused, naming the SKU', async () => {
+      const user = await customer();
+      const p = await product(ProductKoken, 'K-R3', 10);
+      await call(createReservation, { user, body: { productId: String(p._id), quantity: 8 } });
+      const reviewed = await reviewOf(user, 8);
+      // Someone else books 5 of the 10 while the popup is open.
+      await ProductKoken.updateOne({ _id: p._id }, { $inc: { availableForSale: -5, bookedQuantity: 5 } });
+
+      const res = await call(confirmBooking, { user, body: { reviewed } });
+      assert.equal(res.statusCode, 409);
+      assert.equal(res.payload.code, 'STOCK_CHANGED');
+      assert.deepEqual(res.payload.details, [{ skuCode: 'K-R3', reviewed: 8, available: 5 }]);
+      assert.match(res.payload.message, /K-R3 now has 5 available/);
+      assert.deepEqual(await stock(p), { available: 5, booked: 5, total: 10 });
+      assert.equal((await Reservation.findOne({}).lean()).status, 'Reserved', 'still in the selection list');
+    });
+
+    test('a second Confirm after the first has committed is a 409, not a second booking', async () => {
+      const user = await customer();
+      const p = await product(ProductKoken, 'K-R4', 10);
+      await call(createReservation, { user, body: { productId: String(p._id), quantity: 2 } });
+      const reviewed = await reviewOf(user, 2);
+
+      assert.equal((await call(confirmBooking, { user, body: { reviewed } })).statusCode, 201);
+      const again = await call(confirmBooking, { user, body: { reviewed } });
+      assert.equal(again.statusCode, 409);
+      assert.equal(await Order.countDocuments(), 1);
+    });
+
+    test('malformed reviewed lines are a 400', async () => {
+      const user = await customer();
+      const p = await product(ProductKoken, 'K-R5', 10);
+      await call(createReservation, { user, body: { productId: String(p._id), quantity: 2 } });
+
+      const res = await call(confirmBooking, { user, body: { reviewed: [{ id: 'x', quantity: '2' }] } });
+      assert.equal(res.statusCode, 400);
+    });
+  });
+
   test('10. a bulk booking with one invalid row books nothing', async () => {
     const user = await customer();
     const p = await product(ProductKoken, 'K-10', 10);

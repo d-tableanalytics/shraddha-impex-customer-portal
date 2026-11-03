@@ -70,6 +70,11 @@ export const errorHandler = (err, req, res, next) => {
   res.status(statusCode).json({
     success: false,
     message,
+    // A refusal that names what to fix (e.g. the booking review's 409s) carries
+    // it here so the client can point at the lines. Never on a server fault.
+    ...(statusCode < 500 && typeof err.code === 'string' && err.details
+      ? { code: err.code, details: err.details }
+      : {}),
     stack: process.env.NODE_ENV === 'production' ? null : err.stack
   });
 };

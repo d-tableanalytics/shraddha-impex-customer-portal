@@ -13,10 +13,8 @@ import { findBatch } from './ledger.service.js';
  * modules; there is deliberately no HTTP route that writes to the ledger yet,
  * because no approved workflow produces movements until M7.
  *
- * Every query is brand-scoped through the shared helper, and the cross-SKU
- * search refuses to run without a narrowing filter — an unbounded scan of the
- * one collection that grows without limit is not something a client should be
- * able to ask for by accident.
+ * Every query is brand-scoped through the shared helper and paginated; the
+ * cross-SKU search runs with or without filters.
  */
 
 // Express parses the query string with `qs` in extended mode, so
@@ -72,12 +70,11 @@ const shapeMovement = (m) => ({
  * Build the shared filter for a ledger query.
  * Returns { filter } or { error } — never a partially-built filter.
  */
-const buildFilter = (req, { requireNarrowing }) => {
+const buildFilter = (req) => {
   const brands = allowedBrands(req.user);
   if (brands.length === 0) return { filter: null, brands };
 
   const filter = { brand: { $in: brands } };
-  let narrowed = false;
 
   const brand = asString(req.query.brand);
   if (brand) {
@@ -88,7 +85,7 @@ const buildFilter = (req, { requireNarrowing }) => {
   }
 
   const skuCode = asString(req.query.skuCode);
-  if (skuCode) { filter.skuCode = skuCode; narrowed = true; }
+  if (skuCode) filter.skuCode = skuCode;
 
   const movementType = asString(req.query.movementType);
   if (movementType) {
@@ -101,7 +98,6 @@ const buildFilter = (req, { requireNarrowing }) => {
       };
     }
     filter.movementType = movementType;
-    narrowed = true;
   }
 
   const movementClass = asString(req.query.movementClass);
@@ -118,16 +114,16 @@ const buildFilter = (req, { requireNarrowing }) => {
   }
 
   const reasonCode = asString(req.query.reasonCode);
-  if (reasonCode) { filter.reasonCode = reasonCode.toUpperCase(); narrowed = true; }
+  if (reasonCode) filter.reasonCode = reasonCode.toUpperCase();
 
   const locationCode = asString(req.query.locationCode);
   if (locationCode) filter.locationCode = locationCode.toUpperCase();
 
   const batchId = asString(req.query.batchId);
-  if (batchId) { filter.batchId = batchId; narrowed = true; }
+  if (batchId) filter.batchId = batchId;
 
   const referenceId = asString(req.query.referenceId);
-  if (referenceId) { filter.referenceId = referenceId; narrowed = true; }
+  if (referenceId) filter.referenceId = referenceId;
 
   const referenceType = asString(req.query.referenceType);
   if (referenceType) filter.referenceType = referenceType;
@@ -138,7 +134,6 @@ const buildFilter = (req, { requireNarrowing }) => {
       return { error: { status: 400, message: 'userId must be a valid id.' } };
     }
     filter.user = userId;
-    narrowed = true;
   }
 
   const from = asDate(req.query.from);
@@ -151,7 +146,6 @@ const buildFilter = (req, { requireNarrowing }) => {
     if (from) filter.effectiveDate.$gte = from;
     // Inclusive of the whole "to" day, which is what a user picking a date means.
     if (to) filter.effectiveDate.$lte = new Date(to.getTime() + 86_399_999);
-    narrowed = true;
 
     if (from && to && to.getTime() < from.getTime()) {
       return { error: { status: 400, message: '"to" cannot be earlier than "from".' } };
@@ -162,23 +156,13 @@ const buildFilter = (req, { requireNarrowing }) => {
     }
   }
 
-  if (requireNarrowing && !narrowed) {
-    return {
-      error: {
-        status: 400,
-        message:
-          'A ledger search needs at least one narrowing filter — SKU, date range, ' +
-          'movement type, reason, batch, reference or user.',
-      },
-    };
-  }
-
   return { filter };
 };
 
 /**
  * GET /api/v1/inventory/ledger
- * Cross-SKU movement search. Requires a narrowing filter (no unbounded scans).
+ * Cross-SKU movement search. With no filters it lists the whole (brand-scoped)
+ * ledger, paginated.
  */
 /**
  * GET /api/v1/inventory/ledger/grouped
@@ -198,7 +182,7 @@ const buildFilter = (req, { requireNarrowing }) => {
  */
 export const searchLedgerGrouped = async (req, res, next) => {
   try {
-    const { filter, error } = buildFilter(req, { requireNarrowing: true });
+    const { filter, error } = buildFilter(req);
     if (error) return res.status(error.status).json({ success: false, message: error.message });
     if (!filter) {
       return res.status(200).json({
@@ -285,7 +269,7 @@ export const searchLedgerGrouped = async (req, res, next) => {
 
 export const searchLedger = async (req, res, next) => {
   try {
-    const { filter, error, brands } = buildFilter(req, { requireNarrowing: true });
+    const { filter, error, brands } = buildFilter(req);
     if (error) return res.status(error.status).json({ success: false, message: error.message });
     if (!filter) {
       return res.status(200).json({
@@ -326,7 +310,7 @@ export const searchLedger = async (req, res, next) => {
 export const getSkuMovements = async (req, res, next) => {
   try {
     req.query.skuCode = req.params.sku;
-    const { filter, error } = buildFilter(req, { requireNarrowing: false });
+    const { filter, error } = buildFilter(req);
     if (error) return res.status(error.status).json({ success: false, message: error.message });
     if (!filter) return res.status(200).json({ success: true, data: [], pagination: { total: 0, page: 1, pages: 1, limit: 0 } });
 

@@ -1,9 +1,7 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { useCartStore } from "../../store/cartStore";
-import { ReviewIndentModal } from "../../components/booking/ReviewIndentModal";
-import { computeReview } from "../../utils/bookingReview";
+import { BookingReviewModal } from "../../components/booking/BookingReviewModal";
 import { useUserStore } from "../../store/userStore";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
 import { isMsilCustomer, moqAppliesTo, effectiveMoq, isMultipleOf } from "../../utils/moq";
@@ -12,9 +10,9 @@ import toast from "react-hot-toast";
 import { OrderTable } from "../../components/tables/OrderTable";
 import { ProductSearchDropdown } from "../../components/ui";
 import { CodeValue } from "../../components/ui/CodeValue";
-import { Modal } from "../../components/ui/Modal";
-import { Button } from "../../components/ui/Button";
-import { Package, Hash, Tag, MessageSquare, Receipt, ArrowRight, AlertTriangle, Clock, PackageCheck , Loader2 } from "lucide-react";
+import { Package, Hash, Tag, MessageSquare, Receipt, ArrowRight, Clock, Loader2 } from "lucide-react";
+
+const units = (n) => `${n} unit${n === 1 ? "" : "s"}`;
 
 const ValidityNotice = () => (
   <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
@@ -26,16 +24,13 @@ const ValidityNotice = () => (
 );
 
 export const CustomerOrders = () => {
-  const navigate = useNavigate();
   const [selectedProduct, setSelectedProduct] = useState(null);
   // The Confirm button's own step (re-reading live stock before the review),
   // kept apart from the cart's shared `loading`, which every list fetch and add
   // also sets — the button used to read "CONFIRMING…" during those.
   const [checkingStock, setCheckingStock] = useState(false);
   const [productSearchVal, setProductSearchVal] = useState("");
-  const [showIndentConfirm, setShowIndentConfirm] = useState(false);
-  const [showBookingConfirm, setShowBookingConfirm] = useState(false);
-  const [summary, setSummary] = useState(null);
+  const [showReview, setShowReview] = useState(false);
 
   const {
     items: cartItems,
@@ -44,7 +39,6 @@ export const CustomerOrders = () => {
     removeItems,
     updateQuantity,
     fetchReservations,
-    confirmBooking,
     loading,
     header,
     setPOHeader,
@@ -152,61 +146,40 @@ export const CustomerOrders = () => {
     }
   };
 
-  const review = computeReview(cartItems);
-
-  // "Raise Indent" from a Selection List row: opens the Review Indent popup so
-  // the user can confirm the booking (the shortfall becomes a Indent).
-  const handleRaiseIndent = () => {
-    setShowIndentConfirm(true);
+  // The booking itself is made inside the review popup; this only reports it,
+  // with a toast. The customer stays on this page — Booking History is in the
+  // menu. Worded from the server's `outcome` rather than guessed from totals: a
+  // confirmation that fulfilled nothing created an INDENT and no booking, and
+  // announcing that as a booking is what made the indent flow look broken.
+  const handleBookingConfirmed = (result) => {
+    setShowReview(false);
+    const pending = result?.totals?.totalPending ?? 0;
+    const outcome = result?.outcome || ((result?.totals?.totalConfirmed ?? 0) > 0 ? "booking" : "indent");
+    toast.success(
+      outcome === "indent"
+        ? `Indent ${result?.indentId} raised for ${units(pending)}. No stock was available, so no booking was created.`
+        : outcome === "booking+indent"
+          ? `Booking ${result?.orderId} created. ${units(pending)} moved to Indent ${result?.indentId}.`
+          : `Booking ${result?.orderId} created successfully.`,
+      { duration: 6000 },
+    );
   };
 
-  const runConfirmBooking = async () => {
-    setShowIndentConfirm(false);
-    setShowBookingConfirm(false);
-    try {
-      const result = await confirmBooking();
-      const totals = result?.totals;
-      // Show the confirmation summary popup with confirmed vs pending-indent
-      // counts. `outcome` comes from the server rather than being guessed here:
-      // a confirmation that fulfilled nothing created an INDENT and no booking,
-      // and heading that popup "Booking Confirmed" — then sending the customer
-      // to Booking History to find nothing — is what made the indent flow look
-      // broken from the outside.
-      setSummary({
-        outcome: result?.outcome || ((totals?.totalConfirmed ?? 0) > 0 ? "booking" : "indent"),
-        orderId: result?.orderId || "",
-        poNumber: result?.poNumber || "",
-        indentId: result?.indentId || "",
-        confirmed: totals?.totalConfirmed ?? 0,
-        pending: totals?.totalPending ?? 0,
-        lines: (result?.summary || []).length,
-      });
-    } catch (err) {
-      toast.error(err.response?.data?.message || "Failed to confirm booking.");
-    }
-  };
-
+  // Confirm Booking (and a row's "Raise Indent") opens the review popup; nothing
+  // is booked until its own Confirm Booking is pressed. Reservations are re-read
+  // first so the popup shows live stock.
   const handleOrderSubmission = async () => {
     if (cartItems.length === 0) {
       toast.error("No reserved items to confirm.");
       return;
     }
-
-    // Refresh reservations so the shortfall check runs on current stock, then
-    // show the Review Indent popup before finalising the booking.
     setCheckingStock(true);
     try {
       await fetchReservations();
     } finally {
       setCheckingStock(false);
     }
-    const freshReview = computeReview(useCartStore.getState().items);
-    if (freshReview.pending.length > 0) {
-      setShowIndentConfirm(true);
-      return;
-    }
-    // No indent — still confirm the 7-day validity note before booking.
-    setShowBookingConfirm(true);
+    setShowReview(true);
   };
 
   return (
@@ -377,7 +350,7 @@ export const CustomerOrders = () => {
                 onUpdateQty={handleInlineQtyChange}
                 onRemoveItem={handleRemoveCartItem}
                 onBulkRemove={handleBulkRemove}
-                onRaiseIndent={handleRaiseIndent}
+                onRaiseIndent={handleOrderSubmission}
                 enforceMoq={moqAppliesTo(user)}
               />
             </div>
@@ -446,97 +419,11 @@ export const CustomerOrders = () => {
         </div>
       </div>
 
-      {/* Review Indent / Confirm Booking — the shared popup. It decides which
-          of the two it is from whether anything is short, so this screen and
-          Bulk Upload cannot drift apart. */}
-      <ReviewIndentModal
-        isOpen={showIndentConfirm || showBookingConfirm}
-        onClose={() => { setShowIndentConfirm(false); setShowBookingConfirm(false); }}
-        onConfirm={runConfirmBooking}
-        review={review}
-        loading={loading}
-        itemCount={cartItems.length}
-        unitCount={getTotalQuantity()}
+      <BookingReviewModal
+        isOpen={showReview}
+        onClose={() => setShowReview(false)}
+        onConfirmed={handleBookingConfirmed}
       />
-
-      {/* CONFIRMATION SUMMARY POPUP — named after what was actually created:
-          a booking, an indent, or both. Each links to the history that holds
-          it, so nobody is sent to Booking History to look for an indent. */}
-      <Modal
-        isOpen={!!summary}
-        onClose={() => setSummary(null)}
-        title={
-          summary?.outcome === "indent"
-            ? "Indent Raised"
-            : summary?.outcome === "booking+indent"
-              ? "Booking Confirmed with Indent"
-              : "Booking Confirmed"
-        }
-        size="sm"
-      >
-        {summary && (
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center gap-3">
-              <div className={`w-11 h-11 rounded-full flex items-center justify-center ${
-                summary.outcome === "indent" ? "bg-amber-50" : "bg-emerald-50"
-              }`}>
-                {summary.outcome === "indent"
-                  ? <AlertTriangle size={22} className="text-amber-600" />
-                  : <PackageCheck size={22} className="text-emerald-600" />}
-              </div>
-              <div>
-                <p className="text-sm font-bold text-slate-800">
-                  {summary.outcome === "indent"
-                    ? `Indent ${summary.indentId}`
-                    : `Booking ${summary.orderId}`}
-                </p>
-                <p className="text-xs text-slate-500">PO {summary.poNumber}</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
-                <p className="text-2xl font-black text-emerald-700">{summary.confirmed}</p>
-                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mt-1">Units Confirmed</p>
-              </div>
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
-                <p className="text-2xl font-black text-amber-700">{summary.pending}</p>
-                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mt-1">Units → Indent</p>
-              </div>
-            </div>
-
-            {summary.pending > 0 && (
-              <p className="text-xs text-slate-500 leading-relaxed">
-                {summary.outcome === "indent"
-                  ? "None of the requested quantity was in stock, so no booking was created."
-                  : "Part of the booking could not be fulfilled from stock."}{" "}
-                Indent <span className="font-semibold text-amber-700">{summary.indentId}</span> is
-                tracked in Indent History and fulfilled when material is inwarded. We have emailed
-                you the details.
-              </p>
-            )}
-
-            <div className="flex justify-end gap-3 mt-1">
-              {/* Indent-only or combined: show Indent History button */}
-              {(summary.outcome === "indent" || summary.outcome === "booking+indent" || summary.pending > 0) && (
-                <Button
-                  variant={summary.outcome === "indent" ? "primary" : "secondary"}
-                  onClick={() => { setSummary(null); navigate("/orders/indent-history"); }}
-                >
-                  View Indent History
-                </Button>
-              )}
-              {/* Booking-only or combined: show Booking History button.
-                  Never shown for indent-only outcomes. */}
-              {summary.outcome !== "indent" && (summary.confirmed > 0 || summary.outcome === "booking" || summary.outcome === "booking+indent") && (
-                <Button variant="primary" onClick={() => { setSummary(null); navigate("/orders/history"); }}>
-                  View Booking History
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 };

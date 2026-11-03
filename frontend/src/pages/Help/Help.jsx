@@ -28,7 +28,7 @@ export const Help = () => {
   const faqs = [
     {
       question: "How do I create a new booking?",
-      answer: "Navigate to the 'Create Booking' tab in the sidebar. Select a product, enter your desired quantity, provide the PO number, delivery location, and optional remarks, then click 'Confirm Booking' to finalize.",
+      answer: "Navigate to the 'Create Booking' tab in the sidebar. Select a product, enter your desired quantity, provide the PO number, delivery location, and optional remarks, then click 'Confirm Booking'. A review popup lists every product; you can still change quantities, add or remove products there, and the booking is placed only when you press 'Confirm Booking' in that popup.",
     },
     {
       question: "What is an Indent and when is it raised?",

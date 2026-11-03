@@ -4,16 +4,8 @@ import { inventoryApi } from "../services/inventory";
 /**
  * Stock ledger state (IMS Module M2).
  *
- * The server refuses an unbounded ledger search, so the store opens with a
- * default 30-day window rather than an empty filter set — otherwise the first
- * render would always be a validation error, which reads as a broken screen.
+ * Opens with no filters, so the first render lists the whole ledger.
  */
-
-const isoDaysAgo = (days) => {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-};
 
 const initialFilters = () => ({
   skuCode: "",
@@ -22,7 +14,7 @@ const initialFilters = () => ({
   reasonCode: "",
   batchId: "",
   referenceId: "",
-  from: isoDaysAgo(30),
+  from: "",
   to: "",
   sort: "date-desc",
   page: 1,

@@ -111,6 +111,7 @@ export const useCartStore = create((set, get) => ({
             msilCode: r.msilCode,
             // Products are keyed by SKU (no separate display name field).
             name: r.skuCode,
+            description: p.description || null,
             category: Array.isArray(p.category) ? p.category.join(', ') : (p.category || '—'),
             brand: p.brand || '—',
             availableStock: p.availableForSale !== undefined ? p.availableForSale : 0,
@@ -264,11 +265,16 @@ export const useCartStore = create((set, get) => ({
 
   resetAll: () => set({ items: [], header: { ...initialHeader } }),
 
-  confirmBooking: async () => {
+  /**
+   * @param {Array} [reviewed] The lines the customer approved in the review
+   *   popup, [{ id, quantity, bookable }]. The server refuses with a 409 when
+   *   the Selection List or stock no longer matches them.
+   */
+  confirmBooking: async (reviewed) => {
     set({ loading: true, error: null });
     try {
       const header = get().header;
-      const order = await reservationsApi.confirm(header.deliveryLocation, header.remarks);
+      const order = await reservationsApi.confirm(header.deliveryLocation, header.remarks, reviewed);
       set({ items: [], header: { ...initialHeader }, loading: false });
       // A new booking: every screen showing bookings, indents or the dashboard
       // figures is now out of date.
