@@ -30,13 +30,17 @@ import PDFDocument from 'pdfkit';
  * ---------------------------------------------------------------------------
  *
  * The column set and the two-tier header — FULL ORDER over the ordered
- * quantities, DELIVERY SCHEDULE over what has moved and what has not — are the
- * format the customer already reads these in. It is reproduced rather than
- * improved on: the point of the document is that it drops into a file next to
- * the ones already there.
+ * quantities, DELIVERY SCHEDULE over what has been dispatched — are the format
+ * the customer already reads these in. It is reproduced rather than improved
+ * on: the point of the document is that it drops into a file next to the ones
+ * already there.
  *
- *     |-------- FULL ORDER ---------|------- DELIVERY SCHEDULE --------|
- *     | PO No | Sr | Maruti | SKU | Qty | Qty Disp | Date | Pend | Sched |
+ *     |-------- FULL ORDER ---------|-- DELIVERY SCHEDULE --|
+ *     | PO No | Sr | Maruti | SKU | Qty | Qty Disp | Date |
+ *
+ * ONE DELIBERATE DEPARTURE: the reference document also has QTY PENDING and
+ * PENDING SCHEDULE columns. They were removed from the mail on request
+ * (November 2026), so their absence is a decision, not a gap to fill back in.
  *
  * MARUTI CODE IS CONDITIONAL, and that is the only structural difference
  * between one customer's document and another's. See `scheduleColumns()`.
@@ -80,7 +84,6 @@ const SCHEDULE_GROUP = 'DELIVERY SCHEDULE';
 const PO_COL = 'PO NO.';
 const QTY_COL = 'Qty';
 const DISPATCH_COL = 'QTY DISPATCH';
-const PENDING_COL = 'QTY PENDING';
 
 /**
  * The columns, for one specific customer's document.
@@ -126,13 +129,10 @@ export const scheduleColumns = ({ showMsilCode = false, skuLabel = 'SKU Code' } 
    * reference document does and is not merely cosmetic: "0 dispatched" and
    * "nothing has moved yet" are the same fact, and a column of zeroes down a
    * fresh purchase order reads as a report of failure rather than of a schedule
-   * not yet begun. Qty Pending is NOT treated this way — a pending of zero means
-   * the line is fully dispatched, which is information worth printing.
+   * not yet begun.
    */
   { header: DISPATCH_COL, group: SCHEDULE_GROUP, width: 12, pdfWidth: 46, get: (l) => l.qtyDispatched || '', numeric: true },
   { header: 'DISPATCH DATE', group: SCHEDULE_GROUP, width: 14, pdfWidth: 58, get: (l) => fmtDate(l.dispatchDate), date: true },
-  { header: PENDING_COL, group: SCHEDULE_GROUP, width: 12, pdfWidth: 46, get: (l) => l.qtyPending ?? 0, numeric: true },
-  { header: 'PENDING SCHEDULE', group: SCHEDULE_GROUP, width: 24, pdfWidth: 104, get: (l) => l.pendingSchedule || '' },
 ];
 
 /**
@@ -155,7 +155,6 @@ const totalFor = (column, doc) => {
     case PO_COL: return 'TOTAL';
     case QTY_COL: return doc.totals?.qty ?? 0;
     case DISPATCH_COL: return doc.totals?.dispatched || '';
-    case PENDING_COL: return doc.totals?.pending ?? 0;
     default: return '';
   }
 };
@@ -226,7 +225,6 @@ export const buildScheduleXlsx = async (doc) => {
   meta('PO Date', fmtDate(doc.poDate));
   meta('Delivery Schedule Date', fmtDate(doc.deliveryScheduleDate));
   meta('Total Ordered Qty', doc.totals?.qty ?? 0);
-  meta('Total Pending Qty', doc.totals?.pending ?? 0);
   sheet.addRow([]);
 
   /* -- The two-tier header --------------------------------------------- */
@@ -286,9 +284,8 @@ export const buildScheduleXlsx = async (doc) => {
       to: { row: headRow.number, column: lastCol },
     };
 
-    // A totals row, because the first question asked of this sheet is "how much
-    // is still outstanding" and nobody should have to select a column to find
-    // out.
+    // A totals row, so the ordered and dispatched quantities can be read off
+    // without anybody having to select a column to sum it.
     const totalRow = sheet.addRow(columns.map((c) => totalFor(c, doc)));
     totalRow.font = { bold: true, size: 10, color: { argb: BRAND_ARGB } };
     totalRow.eachCell((cell, i) => {
@@ -320,7 +317,7 @@ export const buildSchedulePdf = async (doc) =>
       const columns = scheduleColumns(doc);
       // PORTRAIT, unlike the weekly reports. This is a document about ONE
       // purchase order that a customer files or prints alongside the PO itself,
-      // and nine columns fit an A4 width comfortably — see the pdfWidth ratios,
+      // and seven columns fit an A4 width comfortably — see the pdfWidth ratios,
       // which total well under the usable span.
       const pdf = new PDFDocument({ size: 'A4', margin: 30, bufferPages: true });
       const chunks = [];
@@ -351,7 +348,6 @@ export const buildSchedulePdf = async (doc) =>
         ['PO Date', fmtDate(doc.poDate)],
         ['Delivery Schedule Date', fmtDate(doc.deliveryScheduleDate)],
         ['Total Ordered Qty', String(doc.totals?.qty ?? 0)],
-        ['Total Pending Qty', String(doc.totals?.pending ?? 0)],
       ].filter(([, v]) => v !== null && v !== undefined && v !== '');
 
       // Two columns of label/value, so the block stays short on a page whose
@@ -382,9 +378,9 @@ export const buildSchedulePdf = async (doc) =>
       const widthOf = (c) => c.pdfWidth * scale;
       const rowH = 15;
       const bandH = 14;
-      // Tall enough for a header that WRAPS. "QTY DISPATCH" and "QTY PENDING"
-      // are two lines in their columns — as they are in the reference document —
-      // and at 20pt the second line spilled into the first data row.
+      // Tall enough for a header that WRAPS onto two lines, as the dispatch
+      // headers do in the reference document — at 20pt the second line spilled
+      // into the first data row.
       const headH = 24;
       const bottom = pdf.page.height - pdf.page.margins.bottom - 24;
 
@@ -496,8 +492,8 @@ export const buildSchedulePdf = async (doc) =>
  * The same table, for the body of the email.
  *
  * Present so the mail is USEFUL WITHOUT OPENING AN ATTACHMENT — read on a phone,
- * a customer can see what is pending without downloading a spreadsheet they
- * cannot open there. Inline styles and a plain `<table>` throughout, because
+ * a customer can see every line of the order without downloading a spreadsheet
+ * they cannot open there. Inline styles and a plain `<table>` throughout, because
  * that is the only layout every mail client agrees on.
  */
 export const scheduleTableHtml = (doc) => {

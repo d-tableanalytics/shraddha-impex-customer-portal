@@ -11,10 +11,15 @@ import { usePagination } from "../../hooks/usePagination";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
 import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
-import { effectiveMoq, isMultipleOf, moqAppliesTo } from "../../utils/moq";
+import { effectiveMoq, isMultipleOf } from "../../utils/moq";
+import { invalidBookingLines, lineMultiple } from "./bookingLines";
 
 /**
  * Booking review — the last step before a Selection List becomes a booking.
+ *
+ * SALES ONLY (2026-11-03): shown to whoever passes `seesBookingReview` — the
+ * desk, booking on a customer's behalf. A customer's Confirm Booking books
+ * straight away, without this popup; see CustomerOrders.
  *
  * Nothing is booked until the Confirm Booking button in here is pressed. The
  * popup lists every line with its stock split and lets the customer change
@@ -143,7 +148,6 @@ export const BookingReviewModal = ({ isOpen, onClose, onConfirmed }) => {
   } = useCartStore();
   const user = useUserStore((s) => s.user);
   const showMsilCode = useShowMsilCode();
-  const enforceMoq = moqAppliesTo(user);
 
   const [submitting, setSubmitting] = useState(false);
   const [problem, setProblem] = useState(null); // { message, skus: Set }
@@ -166,11 +170,7 @@ export const BookingReviewModal = ({ isOpen, onClose, onConfirmed }) => {
     return promise;
   };
 
-  const rowMultiple = (line) => {
-    if (!enforceMoq) return 0;
-    const moq = Number(line.product.moq) || 0;
-    return moq > 1 ? moq : 0;
-  };
+  const rowMultiple = (line) => lineMultiple(user, line);
 
   const handleQtyChange = async (code, qty) => {
     const res = await track(updateQuantity(code, qty));
@@ -203,10 +203,7 @@ export const BookingReviewModal = ({ isOpen, onClose, onConfirmed }) => {
         setProblem({ message: "Add at least one product before confirming.", skus: new Set() });
         return;
       }
-      const invalid = current.filter((l) => {
-        const m = rowMultiple(l);
-        return !Number.isInteger(l.orderQuantity) || l.orderQuantity < 1 || (m && !isMultipleOf(l.orderQuantity, m));
-      });
+      const invalid = invalidBookingLines(user, current);
       if (invalid.length) {
         setProblem({
           message: `Fix the quantity for ${invalid.map((l) => l.product.code).join(", ")} before confirming.`,

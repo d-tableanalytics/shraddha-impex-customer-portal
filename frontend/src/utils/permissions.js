@@ -241,6 +241,16 @@ export const isSales = (user) => user?.role === "Sales";
 export const canUseSalesDesk = (user) => hasPermission(user, PERMISSIONS.VIEW_ALL_BOOKINGS);
 
 /**
+ * Whether Confirm Booking opens the "Are you sure?" review popup first.
+ *
+ * Sales only (2026-11-03) - the desk books on a customer's behalf, so it checks
+ * every line before committing. A customer's Confirm Booking books straight
+ * away. Asked of view_all_bookings, the sales-desk permission, so a custom role
+ * granted the desk gets the popup too, and Super Admin through the wildcard.
+ */
+export const seesBookingReview = (user) => canUseSalesDesk(user);
+
+/**
  * Whether this user works ORDERS at all - bookings, the selection list, bulk
  * upload, booking and indent history.
  *
@@ -504,6 +514,7 @@ export default {
   isSuperAdmin,
   isSales,
   canUseSalesDesk,
+  seesBookingReview,
   canUseOrdering,
   homePathFor,
   canEditBooking,

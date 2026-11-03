@@ -9,9 +9,9 @@
  *      number; everyone else's does not carry the column at all. That decision
  *      is made from the CUSTOMER RECORD, so it cannot be tested without one.
  *   2. THE DERIVED DISPATCH FIGURES. There is no per-line dispatched quantity
- *      in this system — Qty Dispatch, Dispatch Date and Qty Pending are all
- *      read off the line's lifecycle status, and getting that wrong puts a
- *      number on a customer's document that nothing can reconcile.
+ *      in this system — Qty Dispatch and Dispatch Date are both read off the
+ *      line's lifecycle status, and getting that wrong puts a number on a
+ *      customer's document that nothing can reconcile.
  *   3. RAISING A PO WITH A DATE. The date has to land on every open SKU line
  *      and on none of the closed ones.
  *   4. THE ATTACHMENTS. Both formats have to build from the same document, and
@@ -124,15 +124,15 @@ describe('the Maruti Code column', () => {
     assert.deepEqual(msil.filter((h) => h !== 'Maruti Code'), other);
     assert.deepEqual(other, [
       'PO NO.', 'Sr. No.', 'Koken Code', 'Qty',
-      'QTY DISPATCH', 'DISPATCH DATE', 'QTY PENDING', 'PENDING SCHEDULE',
+      'QTY DISPATCH', 'DISPATCH DATE',
     ]);
   });
 });
 
 /* ── The figures the document derives ─────────────────────────────────────── */
 
-describe('the dispatch and pending figures', () => {
-  test('an undispatched line reports nothing dispatched and everything pending', async () => {
+describe('the dispatch figures', () => {
+  test('an undispatched line reports nothing dispatched', async () => {
     const customer = await makeCustomer();
     await makeLine(customer._id, { lineSeq: 0, confirmedQty: 22, scheduledDate: null });
 
@@ -140,7 +140,6 @@ describe('the dispatch and pending figures', () => {
     assert.equal(line.qty, 22);
     assert.equal(line.qtyDispatched, 0);
     assert.equal(line.dispatchDate, null);
-    assert.equal(line.pendingSchedule, 'CHECKING WITH OEM');
   });
 
   test('a dispatched line reports its quantity and the date the stage was set', async () => {
@@ -153,8 +152,6 @@ describe('the dispatch and pending figures', () => {
     const [line] = (await buildBookingScheduleDoc(ORDER_ID)).lines;
     assert.equal(line.qtyDispatched, 30);
     assert.equal(new Date(line.dispatchDate).toISOString(), dispatchedOn.toISOString());
-    // Fully dispatched: nothing outstanding, so no pending schedule to state.
-    assert.equal(line.pendingSchedule, '');
   });
 
   test("'Delivered' counts as dispatched — it is a later stage, not a different one", async () => {
@@ -168,22 +165,6 @@ describe('the dispatch and pending figures', () => {
     assert.equal(line.qty - line.qtyDispatched, 0);
   });
 
-  test('a scheduled pending line prints its date instead of the OEM placeholder', async () => {
-    const customer = await makeCustomer();
-    await makeLine(customer._id, { lineSeq: 0, scheduledDate: new Date('2026-08-03T00:00:00Z') });
-
-    const [line] = (await buildBookingScheduleDoc(ORDER_ID)).lines;
-    assert.match(line.pendingSchedule, /^\d{2}-\d{2}-2026$/);
-  });
-
-  test('a scheduling note stands in when there is a note but no date', async () => {
-    const customer = await makeCustomer();
-    await makeLine(customer._id, { lineSeq: 0, scheduleNote: 'Awaiting vessel' });
-
-    const [line] = (await buildBookingScheduleDoc(ORDER_ID)).lines;
-    assert.equal(line.pendingSchedule, 'Awaiting vessel');
-  });
-
   test('the totals add up across a mixed booking', async () => {
     const customer = await makeCustomer();
     await makeLine(customer._id, {
@@ -192,7 +173,7 @@ describe('the dispatch and pending figures', () => {
     await makeLine(customer._id, { lineSeq: 1, skuCode: '13145M.200-12', confirmedQty: 22 });
 
     const doc = await buildBookingScheduleDoc(ORDER_ID);
-    assert.deepEqual(doc.totals, { qty: 52, dispatched: 30, pending: 22 });
+    assert.deepEqual(doc.totals, { qty: 52, dispatched: 30 });
   });
 
   test('a cancelled line is left off entirely — nobody is sending those goods', async () => {
@@ -310,25 +291,50 @@ describe('the Excel and PDF attachments', () => {
     const headRow = rows.find((r) => r[0] === 'PO NO.');
     assert.deepEqual(headRow, [
       'PO NO.', 'Sr. No.', 'Maruti Code', 'Koken Code', 'Qty',
-      'QTY DISPATCH', 'DISPATCH DATE', 'QTY PENDING', 'PENDING SCHEDULE',
+      'QTY DISPATCH', 'DISPATCH DATE',
     ]);
 
     const first = rows[rows.indexOf(headRow) + 1];
-    assert.deepEqual(first, [PO, 1, 'MA0LW004000', '14145M.150-14', 30, 30, '03-08-2026', 0, '']);
+    assert.deepEqual(first, [PO, 1, 'MA0LW004000', '14145M.150-14', 30, 30, '03-08-2026']);
 
     const second = rows[rows.indexOf(headRow) + 2];
-    assert.deepEqual(second, [PO, 2, 'MA0M1000000', '13145M.200-12', 22, '', '', 22, 'CHECKING WITH OEM']);
+    assert.deepEqual(second, [PO, 2, 'MA0M1000000', '13145M.200-12', 22, '', '']);
 
     const totals = rows[rows.indexOf(headRow) + 3];
     assert.equal(totals[0], 'TOTAL');
     assert.equal(totals[4], 52);
+    assert.equal(totals[5], 30);
 
     // The body of the email carries the same table, so the mail is readable
     // without opening anything.
     assert.match(tableHtml, /14145M\.150-14/);
     assert.match(tableHtml, /13145M\.200-12/);
-    assert.match(tableHtml, /CHECKING WITH OEM/);
+    assert.match(tableHtml, /03-08-2026/);
     assert.equal(doc.totals.qty, 52);
+  });
+
+  test('carries no pending columns or pending total, in the body or the spreadsheet', async () => {
+    // The reference document has QTY PENDING and PENDING SCHEDULE; they were
+    // removed from the mail on request. An undated line with a scheduling note
+    // is what used to fill them — with the note, or 'CHECKING WITH OEM'.
+    const customer = await makeCustomer();
+    await makeLine(customer._id, { lineSeq: 0, scheduledDate: null, scheduleNote: 'Awaiting vessel' });
+    await makeLine(customer._id, { lineSeq: 1, skuCode: '13145M.200-12', confirmedQty: 22 });
+
+    const { attachments, tableHtml } = await buildScheduleMailParts(ORDER_ID);
+    assert.doesNotMatch(tableHtml, /PENDING|CHECKING WITH OEM|Awaiting vessel/i);
+
+    // Every text cell of the workbook, the header block above the table included
+    // — that is where "Total Pending Qty" used to sit.
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(attachments[0].content);
+    const text = [];
+    wb.getWorksheet('Delivery Schedule').eachRow((row) => {
+      text.push(...row.values.filter((v) => typeof v === 'string'));
+    });
+    assert.ok(text.includes('Total Ordered Qty'), text.join(' | '));
+    assert.ok(!text.some((v) => /PENDING|CHECKING WITH OEM|Awaiting vessel/i.test(v)), text.join(' | '));
   });
 
   test('a non-MSIL workbook drops the column and narrows the band', async () => {
@@ -344,7 +350,7 @@ describe('the Excel and PDF attachments', () => {
     const rows = [];
     sheet.eachRow((row) => rows.push(row.values.slice(1).map((v) => v ?? '')));
     const headRow = rows.find((r) => r[0] === 'PO NO.');
-    assert.equal(headRow.length, 8);
+    assert.equal(headRow.length, 6);
     assert.ok(!headRow.includes('Maruti Code'));
 
     /*
@@ -362,7 +368,7 @@ describe('the Excel and PDF attachments', () => {
     assert.ok(bandRowNumber, 'the FULL ORDER band row exists');
     const merges = sheet.model.merges.join(',');
     assert.ok(merges.includes(`A${bandRowNumber}:D${bandRowNumber}`), merges);
-    assert.ok(merges.includes(`E${bandRowNumber}:H${bandRowNumber}`), merges);
+    assert.ok(merges.includes(`E${bandRowNumber}:F${bandRowNumber}`), merges);
   });
 
   test('an empty booking yields no document rather than a table of nothing', async () => {
@@ -380,7 +386,7 @@ describe('the Excel and PDF attachments', () => {
     // Not reachable through buildBookingScheduleDoc, which returns null first —
     // but the renderers are exported and must not throw on an empty list.
     const bare = {
-      reference: 'PO-1', orderId: 'BO-1', lines: [], totals: { qty: 0, dispatched: 0, pending: 0 },
+      reference: 'PO-1', orderId: 'BO-1', lines: [], totals: { qty: 0, dispatched: 0 },
       customer: { name: 'X' }, showMsilCode: false, skuLabel: 'SKU Code',
     };
     assert.ok((await buildScheduleXlsx(bare)).content.length > 0);

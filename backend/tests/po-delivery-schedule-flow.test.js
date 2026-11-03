@@ -172,6 +172,8 @@ describe('raising a PO with a delivery schedule date', () => {
     // The ordered quantities and the schedule total.
     assert.match(mail.html, /\b30\b/);
     assert.match(mail.html, /\b52\b/);
+    // And no pending columns: they were removed from this mail on request.
+    assert.doesNotMatch(mail.html, /QTY PENDING|PENDING SCHEDULE/);
 
     // The spreadsheet really is one, and holds the same two lines.
     const ExcelJS = require('exceljs');
@@ -185,7 +187,7 @@ describe('raising a PO with a delivery schedule date', () => {
     assert.equal(mail.attachments[1].content.subarray(0, 4).toString(), '%PDF');
   });
 
-  test('a PO raised without a date still goes out, with the lines marked pending', async () => {
+  test('a PO raised without a date still goes out, and quotes no delivery date', async () => {
     const customer = await makeCustomer();
     ADMIN._id = customer._id;
     await makeLine(customer._id, { lineSeq: 0 });
@@ -201,7 +203,10 @@ describe('raising a PO with a delivery schedule date', () => {
 
     assert.ok(await waitForMail(1));
     assert.equal(sent[0].attachments.length, 2);
-    assert.match(sent[0].html, /CHECKING WITH OEM/);
+    // The schedule table is still in the body; there is simply no date to put
+    // in the "Delivery scheduled from" line above it.
+    assert.match(sent[0].html, /FULL ORDER/);
+    assert.doesNotMatch(sent[0].html, /Delivery scheduled from/);
   });
 
   test('a date in the past is refused before anything is written', async () => {
@@ -373,7 +378,7 @@ describe('changing the delivery schedule afterwards', () => {
     assert.equal(mail.attachments.length, 2);
     // No Maruti column anywhere — and the rest of the table is unchanged.
     assert.ok(!mail.html.includes('Maruti Code'));
-    assert.match(mail.html, /PENDING SCHEDULE/);
+    assert.match(mail.html, /DISPATCH DATE/);
     assert.match(mail.html, /QTY DISPATCH/);
     assert.match(mail.html, /Koken Code/);
   });

@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { useCartStore } from "../../store/cartStore";
 import { BookingReviewModal } from "../../components/booking/BookingReviewModal";
+import { invalidBookingLines } from "../../components/booking/bookingLines";
 import { useUserStore } from "../../store/userStore";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
 import { isMsilCustomer, moqAppliesTo, effectiveMoq, isMultipleOf } from "../../utils/moq";
+import { seesBookingReview } from "../../utils/permissions";
 import toast from "react-hot-toast";
 
 import { OrderTable } from "../../components/tables/OrderTable";
@@ -31,6 +33,10 @@ export const CustomerOrders = () => {
   const [checkingStock, setCheckingStock] = useState(false);
   const [productSearchVal, setProductSearchVal] = useState("");
   const [showReview, setShowReview] = useState(false);
+  // A customer's Confirm Booking books straight away (no review popup). The ref
+  // is the synchronous double-click guard; state alone re-renders too late.
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const {
     items: cartItems,
@@ -39,6 +45,7 @@ export const CustomerOrders = () => {
     removeItems,
     updateQuantity,
     fetchReservations,
+    confirmBooking,
     loading,
     header,
     setPOHeader,
@@ -146,9 +153,9 @@ export const CustomerOrders = () => {
     }
   };
 
-  // The booking itself is made inside the review popup; this only reports it,
-  // with a toast. The customer stays on this page — Booking History is in the
-  // menu. Worded from the server's `outcome` rather than guessed from totals: a
+  // The booking itself is made inside the review popup (Sales) or by
+  // bookDirectly (customers); this only reports it, with a toast. The user
+  // stays on this page — Booking History is in the menu. Worded from the server's `outcome` rather than guessed from totals: a
   // confirmation that fulfilled nothing created an INDENT and no booking, and
   // announcing that as a booking is what made the indent flow look broken.
   const handleBookingConfirmed = (result) => {
@@ -165,12 +172,42 @@ export const CustomerOrders = () => {
     );
   };
 
-  // Confirm Booking (and a row's "Raise Indent") opens the review popup; nothing
-  // is booked until its own Confirm Booking is pressed. Reservations are re-read
-  // first so the popup shows live stock.
+  // A customer is not shown the review popup (Sales only, 2026-11-03): their
+  // Confirm Booking books the Selection List as it stands. No `reviewed` lines
+  // are sent — the customer reviewed no split, so the server books what stock
+  // covers and indents the rest, and the toast says which happened.
+  const bookDirectly = async () => {
+    if (submittingRef.current) return;
+    const lines = useCartStore.getState().items;
+    const invalid = invalidBookingLines(user, lines);
+    if (invalid.length) {
+      toast.error(`Fix the quantity for ${invalid.map((l) => l.product.code).join(", ")} before confirming.`);
+      return;
+    }
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      handleBookingConfirmed(await confirmBooking());
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to confirm booking. Please try again.");
+      await fetchReservations();
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  // Confirm Booking (and a row's "Raise Indent"). For Sales it opens the review
+  // popup, and nothing is booked until its own Confirm Booking is pressed;
+  // reservations are re-read first so the popup shows live stock. A customer
+  // books straight away — see bookDirectly.
   const handleOrderSubmission = async () => {
     if (cartItems.length === 0) {
       toast.error("No reserved items to confirm.");
+      return;
+    }
+    if (!seesBookingReview(user)) {
+      await bookDirectly();
       return;
     }
     setCheckingStock(true);
@@ -397,17 +434,17 @@ export const CustomerOrders = () => {
                 
                 <button
                   onClick={handleOrderSubmission}
-                  disabled={loading || checkingStock || cartItems.length === 0}
-                  aria-busy={checkingStock}
+                  disabled={loading || checkingStock || submitting || cartItems.length === 0}
+                  aria-busy={checkingStock || submitting}
                   className="w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black rounded-xl flex items-center justify-center gap-3 transition-all shadow-[0_4px_14px_0_rgba(16,185,129,0.39)] hover:shadow-[0_6px_20px_rgba(16,185,129,0.23)] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:hover:shadow-none disabled:cursor-not-allowed mb-4"
                 >
                   <div className="flex flex-col text-left">
-                    <span className="tracking-widest text-sm mb-0.5">{checkingStock ? "CHECKING STOCK…" : "CONFIRM BOOKING"}</span>
+                    <span className="tracking-widest text-sm mb-0.5">{checkingStock ? "CHECKING STOCK…" : submitting ? "CONFIRMING…" : "CONFIRM BOOKING"}</span>
                     <span className="text-[10px] text-green-100 font-medium tracking-wide uppercase opacity-90">
-                      {checkingStock ? "Reading live availability" : loading ? "Updating your list…" : "Submit Booking to ERP"}
+                      {checkingStock ? "Reading live availability" : submitting ? "Submitting your booking" : loading ? "Updating your list…" : "Submit Booking to ERP"}
                     </span>
                   </div>
-                  {checkingStock || loading
+                  {checkingStock || submitting || loading
                     ? <Loader2 size={22} className="ml-2 animate-spin opacity-80" />
                     : <ArrowRight size={24} className="ml-2 opacity-80" />}
                 </button>

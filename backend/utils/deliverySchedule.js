@@ -127,23 +127,6 @@ export async function gatherSchedule(customerId) {
  */
 const DISPATCHED_STATUSES = ['Dispatched', 'Delivered'];
 
-/**
- * What the Pending Schedule column says when a line has no date on it.
- *
- * Taken from the reference document the customer already reads these in, where
- * an undated pending line says exactly this. It is a statement of where the
- * commitment stands — we are asking the manufacturer — and it is a great deal
- * more useful than a blank cell, which reads as an oversight.
- */
-const NO_SCHEDULE_YET = 'CHECKING WITH OEM';
-
-/** The Pending Schedule column's date, in the same format the table uses. */
-const fmtScheduleDate = (d) => {
-  const date = new Date(d);
-  if (Number.isNaN(date.getTime())) return NO_SCHEDULE_YET;
-  return `${String(date.getDate()).padStart(2, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${date.getFullYear()}`;
-};
-
 const esc = (v) =>
   String(v ?? '')
     .replace(/&/g, '&amp;')
@@ -220,7 +203,6 @@ export async function buildBookingScheduleDoc(orderId, { customer = null, rows =
   const docLines = lines.map((row, i) => {
     const qty = row.confirmedQty ?? row.requestedQty ?? 0;
     const dispatched = DISPATCHED_STATUSES.includes(row.status) ? qty : 0;
-    const pending = Math.max(0, qty - dispatched);
     return {
       // Renumbered densely from 1. `lineSeq` is deliberately sparse — a line
       // that became an indent leaves a gap in it — and a customer's document
@@ -236,12 +218,6 @@ export async function buildBookingScheduleDoc(orderId, { customer = null, rows =
       // some earlier stage, which is not a dispatch date and must not print as
       // one.
       dispatchDate: dispatched ? row.statusTimestamp || null : null,
-      qtyPending: pending,
-      pendingSchedule: pending === 0
-        ? ''
-        : row.scheduledDate
-          ? fmtScheduleDate(row.scheduledDate)
-          : row.scheduleNote || NO_SCHEDULE_YET,
       scheduledDate: row.scheduledDate || null,
     };
   });
@@ -278,7 +254,6 @@ export async function buildBookingScheduleDoc(orderId, { customer = null, rows =
     totals: {
       qty: docLines.reduce((n, l) => n + l.qty, 0),
       dispatched: docLines.reduce((n, l) => n + l.qtyDispatched, 0),
-      pending: docLines.reduce((n, l) => n + Math.max(0, l.qty - l.qtyDispatched), 0),
     },
   };
 }
@@ -374,11 +349,11 @@ export async function sendDeliverySchedule(customer, { orderId = null } = {}) {
      * The booking that triggered this, in full.
      *
      * The section above is a summary across everything the customer holds — SKU,
-     * quantity, date. This is the purchase order itself: every line, what has
-     * been dispatched, what is outstanding and when each outstanding line is
-     * expected, in the layout the customer files POs in. Both belong in the same
-     * email; sending the summary and making them ask for the detail is what the
-     * attachments exist to avoid.
+     * quantity, date — and is the only place this mail gives a line's expected
+     * date. This is the purchase order itself: every line, its quantity and what
+     * has been dispatched, in the layout the customer files POs in. Both belong
+     * in the same email; sending the summary and making them ask for the detail
+     * is what the attachments exist to avoid.
      */
     let html = mail.html;
     let attachments = [];

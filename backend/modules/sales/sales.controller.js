@@ -196,8 +196,9 @@ const buildPoRaisedEmail = ({
 
     ${/*
        * THE DELIVERY SCHEDULE, in the layout the customer files purchase orders
-       * in — every SKU, the ordered quantity, what has been dispatched and what
-       * is still outstanding against a date.
+       * in — every SKU, the ordered quantity, and what has been dispatched and
+       * when. The delivery date itself is the "Delivery scheduled from" line in
+       * the box above.
        *
        * It does NOT replace the journey table above it, which answers a
        * different question: that one is what the desk CHANGED between the
