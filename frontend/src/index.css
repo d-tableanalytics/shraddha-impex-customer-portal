@@ -292,6 +292,27 @@ html.dark .from-emerald-50\/50 { --tw-gradient-from: rgba(16, 185, 129, 0.12); }
 html.dark .kpi-tile-sub { color: #a3aebf; }
 html.dark .group:hover .kpi-tile-sub { color: #c2ccd9; }
 
+/* ============================================================================
+   HOME DASHBOARD ("/")
+   ========================================================================== */
+
+/* Accents. A tile, chip or status row sets --dash-accent-l / --dash-accent-d
+   inline (components/dashboard/dashboardPalette.js) and uses
+   `bg-(--dash-accent)/10`, `text-(--dash-accent)` and so on. Tints are the
+   accent at low opacity, so they wash correctly over either theme's card, and
+   dark mode switches to the lighter step of the same hue — no per-hue remap. */
+.dash-accent { --dash-accent: var(--dash-accent-l); }
+html.dark .dash-accent { --dash-accent: var(--dash-accent-d, var(--dash-accent-l)); }
+
+/* Conversion gauge: the unfilled track is a light step of the same green. */
+.dash-gauge-track { stroke: #d1fae5; }
+html.dark .dash-gauge-track { stroke: rgba(5, 150, 105, 0.22); }
+
+/* Trend chart: hairline grid one step off the card, and a hover dot ringed in
+   the card colour, in both themes. */
+html.dark .dash-chart .recharts-cartesian-grid line { stroke: #2d394d; }
+html.dark .dash-chart .recharts-active-dot circle { stroke: #232e42; }
+
 /* Opacity-modified accent fills (`bg-red-50/70`, `bg-amber-50/60`, …). Each is a
    distinct class name, so the base -50/-100 remaps above never reached them and
    they kept rendering as bright cream/pink bands on dark — which also stranded the

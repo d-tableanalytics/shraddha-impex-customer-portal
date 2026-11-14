@@ -52,6 +52,7 @@ export const useSalesStore = create((set, get) => ({
   scope: "all", // all | pending | generated
   search: "",
   selected: null, // the booking open in the review drawer
+  historyFor: null, // the booking whose Booking History is open (the "Action" button)
   saving: false,
 
   /**
@@ -135,13 +136,20 @@ export const useSalesStore = create((set, get) => ({
     inFlight?.abort();
     inFlight = null;
     requestSeq += 1;
-    set({ ...initialList, scope: "all", search: "", selected: null, saving: false, pricing: null });
+    set({ ...initialList, scope: "all", search: "", selected: null, historyFor: null, saving: false, pricing: null });
   },
 
   // Selecting a booking drops the previous booking's price quote — see the
   // note on `pricing` below.
   select: (booking) => set({ selected: booking, pricing: null }),
   close: () => set({ selected: null, pricing: null }),
+
+  /**
+   * Booking History and the review drawer are two views of one booking; only
+   * one is open at a time, so each hands over to the other.
+   */
+  openHistory: (booking) => set({ historyFor: booking, selected: null, pricing: null }),
+  closeHistory: () => set({ historyFor: null }),
 
   /** Refresh the open booking from the server (after an edit elsewhere). */
   reloadSelected: async () => {

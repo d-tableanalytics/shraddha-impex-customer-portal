@@ -1,6 +1,6 @@
 import express from 'express';
 import {
-  getBookings, getBookingDetail, updateBookingItems, raisePo,
+  getBookings, getBookingDetail, getBookingHistory, updateBookingItems, raisePo,
   reorderBookingLines, updateBookingDetails,
   getBookingPricing, setBookingPricing, setBookingManualPricing,
   setBookingSupplyDate, convertHeldIndent, cancelHeldIndent,
@@ -17,6 +17,8 @@ router.use(protect);
 
 router.get('/bookings', authorize(PERMISSIONS.VIEW_ALL_BOOKINGS), getBookings);
 router.get('/bookings/:orderId', authorize(PERMISSIONS.VIEW_ALL_BOOKINGS), getBookingDetail);
+// The booking's full history (Sales Desk "Action"). Read-only, same gate as the detail.
+router.get('/bookings/:orderId/history', authorize(PERMISSIONS.VIEW_ALL_BOOKINGS), getBookingHistory);
 
 router.put(
   '/bookings/:orderId/items',

@@ -27,7 +27,7 @@ export const Dashboard = () => {
   const worksOrders = canUseOrdering(user);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
       <div className="flex flex-col gap-2">
         <PageHeader
           title={isAdmin ? "Admin Dashboard" : "Dashboard"}
@@ -61,11 +61,15 @@ export const Dashboard = () => {
         <>
           <ConversionSummary />
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2">
+          {/* Side by side from xl: below that the feed's third of the row is
+              too narrow for a booking ID, so the two stack. */}
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+            <div className="xl:col-span-2">
               <RevenueChart />
             </div>
-            <div>
+            {/* The chart sets the row's height; the feed fills it and scrolls
+                inside (ActivityFeed is absolutely positioned from xl up). */}
+            <div className="relative">
               <ActivityFeed />
             </div>
           </div>

@@ -40,5 +40,7 @@ export const invalidateBookingData = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.indentAssignment.all }),
     // Upcoming Stock lists each SKU's open indents.
     queryClient.invalidateQueries({ queryKey: queryKeys.upcomingStock.all }),
+    // Every booking change is a new entry in some booking's history.
+    queryClient.invalidateQueries({ queryKey: queryKeys.bookingHistory.all }),
   ]);
 };

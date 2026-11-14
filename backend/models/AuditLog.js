@@ -23,5 +23,12 @@ auditLogSchema.index({ action: 1 });
 // exclusion. Without this the sweep would collection-scan what is expected to
 // become the largest collection in the system - roughly a million rows a year.
 auditLogSchema.index({ createdAt: 1, action: 1 });
+// Everything recorded against one booking — the Sales Desk Booking History and
+// the edit replay both ask for `meta.orderId`. Partial, so the many entries that
+// name no booking cost nothing to index.
+auditLogSchema.index(
+  { 'meta.orderId': 1, createdAt: 1 },
+  { partialFilterExpression: { 'meta.orderId': { $exists: true } } },
+);
 
 export default mongoose.model('AuditLog', auditLogSchema);

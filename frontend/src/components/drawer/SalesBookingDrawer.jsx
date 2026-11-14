@@ -4,7 +4,7 @@ import {
   X, User, Hash, Calendar as CalendarIcon, Package, Lock, Timer,
   Plus, Trash2, Save, FileCheck2, Loader2, RotateCcw, AlertTriangle, Download, FileText,
   MapPin, Receipt, IndianRupee, Pencil, GripVertical, SlidersHorizontal,
-  PackageX,
+  PackageX, History,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
@@ -67,7 +67,7 @@ const toDraft = (booking) =>
 export const SalesBookingDrawer = () => {
   const {
     selected, close, saveItems, raisePo, setPricing, setManualPricing, reorderLines, saving, reloadSelected,
-    updateAllocationBatchStatus, updateBookingStatus, cancelBooking, cancelInwardAllocation,
+    updateAllocationBatchStatus, updateBookingStatus, cancelBooking, cancelInwardAllocation, openHistory,
   } = useSalesStore();
   const { user } = useUserStore();
 
@@ -499,12 +499,24 @@ export const SalesBookingDrawer = () => {
               <PoStatusBadge locked={locked} poNumber={selected.poNumber} />
               {!locked && <PoCountdown dueAt={selected.poDueAt} />}
             </div>
+            <div className="flex items-center gap-2">
+              {/* The same view the desk's "Action" button opens. */}
+              <ERPButton
+                variant="outline"
+                size="sm"
+                onClick={() => openHistory(selected)}
+                disabled={dirty}
+                title={dirty ? "Save or discard your line changes first" : "Everything that has happened to this booking"}
+              >
+                <History size={15} className="mr-1.5" /> Booking History
+              </ERPButton>
             <button
               onClick={close}
               className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors focus:outline-none"
             >
               <X size={24} />
             </button>
+            </div>
           </div>
 
           {/* MSIL bookings only: the date the customer needs the goods by, which

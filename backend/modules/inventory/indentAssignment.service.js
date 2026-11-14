@@ -60,6 +60,35 @@ const customerLabel = (c) => c?.customerName || c?.company || c?.user || c?.name
 /** No PO on any line of the booking — the only state an allocation may be moved in. */
 const bookingHasPo = (rows) => rows.some((r) => Boolean(r.poGeneratedAt) || !isPlaceholderPo(r.poNumber));
 
+/** A PO number that was actually raised, or null — '-' and blanks are "no PO". */
+const realPo = (value) => (isPlaceholderPo(value) ? null : String(value).trim());
+
+/**
+ * The PO number an indent goes by, resolved the way Indent History resolves it
+ * (reservation.controller getPendingReservations): the indent's own, stamped
+ * when the PO is raised, else its booking's for rows stamped before that.
+ */
+const indentPoNumber = (indent, bookingRows) => realPo(indent.poNumber)
+  || (bookingRows || []).map((r) => realPo(r.poNumber)).find(Boolean)
+  || null;
+
+/**
+ * The Customer Name and Company Name columns, resolved the way the Sales Desk
+ * and Indent History resolve theirs (SalesDesk customerNameOf / companyNameOf).
+ *
+ * The name is the Customer Master name, else the contact person — never the
+ * company, or two customers at one company would read the same. The company is
+ * the customer's current one. Only once the customer's account has been deleted
+ * does it fall back to the company stamped on the booking — not before, because
+ * a booking for a customer with no company is stamped with the seller's own
+ * name, which is not theirs. `customerLabel` (one string, company included)
+ * stays for the toasts and the "Move to…" list.
+ */
+const customerNameOf = (c) => c?.customerName || c?.user || null;
+const companyOf = (c, bookingRows) => (c
+  ? c.company || null
+  : (bookingRows || []).map((r) => r.company).find(Boolean) || null);
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -127,7 +156,11 @@ export const assignmentQueue = async ({ skuCodes = null } = {}) => {
           reservationId: r.reservationId,
           indentNumber: r.indentNumber || null,
           bookingId,
+          // null until a PO is raised — the screen shows a dash, never "-" as a PO.
+          poNumber: indentPoNumber(r, rowsOf.get(bookingId)),
           customer: customerLabel(r.customerId),
+          customerName: customerNameOf(r.customerId),
+          company: companyOf(r.customerId, rowsOf.get(bookingId)),
           // What the customer asked for on this line, and what still waits.
           requested: line?.bookedQty || r.quantity + allocated,
           pending: r.quantity,

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Search, X, Eye, Clock, Lock, FileCheck2, Download, FileText, Loader2 } from "lucide-react";
+import { History, Clock, Lock, FileCheck2, Download, FileText, Loader2 } from "lucide-react";
+import { SearchInput } from "../../components/ui/SearchInput";
 import { useBusyAction } from "../../hooks/useBusyAction";
 import { PageHeader } from "../../components/common/PageHeader";
 import { Card, CardContent } from "../../components/ui/Card";
@@ -8,6 +9,7 @@ import { TableSkeleton } from "../../components/ui/TableSkeleton";
 import { PoStatusBadge } from "../../components/ui/PoStatusBadge";
 import { PoCountdown } from "../../components/ui/PoCountdown";
 import { SalesBookingDrawer } from "../../components/drawer/SalesBookingDrawer";
+import { BookingHistoryDrawer } from "../../components/drawer/BookingHistoryDrawer";
 import { useSalesStore } from "../../store/salesStore";
 import { useUserStore } from "../../store/userStore";
 import { canUseSalesDesk } from "../../utils/permissions";
@@ -56,7 +58,7 @@ export const companyNameOf = (booking) =>
 export const SalesDesk = () => {
   const {
     bookings, meta, scope, search, appliedScope, appliedSearch, loading, refreshing, error,
-    ensureBookings, setScope, setSearch, select,
+    ensureBookings, setScope, setSearch, select, openHistory,
   } = useSalesStore();
   // Exports of the whole list build their file in the browser; busy until done.
   const { run: runExport, isBusy: isExporting } = useBusyAction();
@@ -214,31 +216,18 @@ export const SalesDesk = () => {
       {/* Toolbar */}
       <div className="flex flex-col gap-4 bg-white p-4 border border-slate-200 rounded-xl shadow-sm">
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="relative flex-1 min-w-64 max-w-md">
-            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search booking, SKU, customer, PO…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
-            />
-            {search && (
-              <X
-                size={14}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 cursor-pointer hover:text-slate-600"
-                onClick={() => setSearch("")}
-              />
-            )}
-            {/* A refresh keeps the current rows on screen; this says one is running. */}
-            {refreshing && (
-              <Loader2
-                size={14}
-                aria-label="Refreshing bookings"
-                className={`absolute ${search ? "right-8" : "right-3"} top-1/2 -translate-y-1/2 text-slate-400 animate-spin`}
-              />
-            )}
-          </div>
+          {/* Matched on the server: customer name (partial, any case), booking
+              ID, SKU, company and PO number. A refresh keeps the current rows
+              on screen; the spinner says one is running. */}
+          <SearchInput
+            className="flex-1 min-w-64 max-w-md"
+            value={search}
+            onChange={setSearch}
+            placeholder="Search customer name, booking, SKU, PO…"
+            label="Search bookings"
+            busy={refreshing}
+            busyLabel="Refreshing bookings"
+          />
 
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
             {SCOPES.map((s) => {
@@ -265,6 +254,14 @@ export const SalesDesk = () => {
             })}
           </div>
         </div>
+        {/* What the rows were fetched for, not the box: while typing, the box
+            runs a moment ahead of the list. */}
+        {!loading && appliedSearch.trim() && (
+          <p className="-mt-1 text-xs text-slate-500" role="status">
+            <span className="font-bold text-slate-700">{(meta.total ?? 0).toLocaleString()}</span>
+            {" "}booking{meta.total === 1 ? "" : "s"} match “{appliedSearch.trim()}”
+          </p>
+        )}
       </div>
 
       {error && (
@@ -287,13 +284,13 @@ export const SalesDesk = () => {
               <th className="px-5 py-3 border-b border-slate-200">PO Number</th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">Items</th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">Qty</th>
-              <th className="px-5 py-3 border-b border-slate-200 text-center">Review</th>
+              <th className="px-5 py-3 border-b border-slate-200 text-center">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
             {/* The skeleton's ten columns: Booking ID, Customer Name, Company
                 Name, Date, PO Status, PO Deadline, PO Number, Items, Qty,
-                Review. */}
+                Action. */}
             {loading ? (
               <TableSkeleton rows={8} columns={10} cellClass="px-5 py-4" />
             ) : bookings.length > 0 ? (
@@ -348,15 +345,20 @@ export const SalesDesk = () => {
                   <td className="px-5 py-4 text-center font-bold text-slate-700">{b.lineCount}</td>
                   <td className="px-5 py-4 text-center font-bold text-slate-700">{b.totalQuantity}</td>
                   <td className="px-5 py-4 text-center">
+                    {/* Action: the booking's whole history — created, indent,
+                        allocations, PO, status and every update. Clicking the
+                        row still opens it for review and editing. */}
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        select(b);
+                        openHistory(b);
                       }}
-                      className="p-1.5 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors focus:outline-none"
-                      title={b.locked ? "View booking (locked)" : "Review & edit booking"}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                      title={`Booking History for ${b.orderId}`}
+                      aria-label={`Action: booking history for ${b.orderId}`}
                     >
-                      <Eye size={18} />
+                      <History size={14} aria-hidden="true" /> Action
                     </button>
                   </td>
                 </tr>
@@ -375,6 +377,7 @@ export const SalesDesk = () => {
       </div>
 
       <SalesBookingDrawer />
+      <BookingHistoryDrawer />
     </div>
   );
 };

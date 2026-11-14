@@ -20,6 +20,7 @@ import {
 import { recordAudit } from '../../utils/auditLog.js';
 import { brandOfProduct } from '../../utils/brandAccess.js';
 import { attachCustomerDetails } from '../../utils/customerContact.js';
+import { containsMatch } from '../../utils/searchQuery.js';
 import {
   QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
   openIndentBySku, openIndentsByOrder, openIndentLinesFor, awaitingDecisionByOrder,
@@ -32,6 +33,7 @@ import {
 import { reorderLines, updateDetails } from './bookingEdit.service.js';
 import { FieldValidationError } from '../../utils/bookingFields.js';
 import { setSupplyDate, convertIndent, cancelIndent } from './msilSupply.service.js';
+import { getBookingHistory as readBookingHistory } from './bookingHistory.service.js';
 
 /**
  * Sales desk: review confirmed bookings, amend them while the PO is pending,
@@ -257,8 +259,9 @@ const buildQuantityAmendedEmail = ({ customerName, orderId, editorName, journeyH
 // Profile fallback for phone/location — shared with order.controller.
 
 /**
- * GET /api/v1/sales/bookings?status=pending|generated|all
+ * GET /api/v1/sales/bookings?status=pending|generated|all&search=
  * Bookings grouped by orderId. Defaults to those still awaiting a PO.
+ * `search` matches booking id, SKU, PO number, company or customer name.
  */
 export const getBookings = async (req, res, next) => {
   try {
@@ -266,12 +269,31 @@ export const getBookings = async (req, res, next) => {
     const search = String(req.query.search || '').trim();
 
     const query = {};
-    if (search) {
+    // Case-insensitive "contains", matched literally. Escaping is what lets a
+    // real customer name be searched at all: "A.K. Motors (P) Ltd" is a regex
+    // syntax error unescaped, and its "." would match any character.
+    const term = containsMatch(search);
+    if (term) {
+      /**
+       * BY CUSTOMER NAME, as the desk's Customer Name column shows it.
+       *
+       * That column is read live from the customer's user record (the Customer
+       * Master name, else the contact person, see customerNameOf on the desk),
+       * not stamped on the booking, so the booking rows alone cannot answer
+       * it: the customers whose name matches are looked up first and their
+       * bookings joined by `user`. The profile's company rides along because
+       * the Company Name column prefers it over the booking's stamped copy.
+       */
+      const customers = await User.find(
+        { $or: [{ customerName: term }, { user: term }, { company: term }] },
+        '_id',
+      ).lean();
       query.$or = [
-        { orderId: { $regex: search, $options: 'i' } },
-        { skuCode: { $regex: search, $options: 'i' } },
-        { company: { $regex: search, $options: 'i' } },
-        { poNumber: { $regex: search, $options: 'i' } },
+        { orderId: term },
+        { skuCode: term },
+        { company: term },
+        { poNumber: term },
+        ...(customers.length ? [{ user: { $in: customers.map((c) => c._id) } }] : []),
       ];
     }
 
@@ -347,6 +369,27 @@ export const getBookingDetail = async (req, res, next) => {
         await shapedWithValue(rows, req, { includePricing: mayPrice(req.user) }),
       ]))[0],
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/v1/sales/bookings/:orderId/history
+ *
+ * The booking's whole journey in one place — created, indent raised, stock
+ * allocated, PO raised, status changes and every later update — each entry
+ * saying where it was raised from and by whom. Read-only and built from the
+ * records already kept (see bookingHistory.service.js). Same gate as the
+ * booking detail; rate tiers only for a caller who may see pricing.
+ */
+export const getBookingHistory = async (req, res, next) => {
+  try {
+    const history = await readBookingHistory(req.params.orderId, { includePricing: mayPrice(req.user) });
+    if (!history) {
+      return res.status(404).json({ success: false, message: 'Booking not found.' });
+    }
+    res.status(200).json({ success: true, data: history });
   } catch (error) {
     next(error);
   }

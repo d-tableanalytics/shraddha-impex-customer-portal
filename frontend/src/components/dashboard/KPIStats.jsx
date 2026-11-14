@@ -1,10 +1,30 @@
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Card, CardContent } from '../ui/Card';
-import { Package, Clock, AlertTriangle, Users, PackageX, Layers, Loader2 } from 'lucide-react';
+import { Package, Clock, AlertTriangle, Users, PackageX, Layers, ArrowUpRight } from 'lucide-react';
 import { useDashboardStats } from '../../store/homeDashboardStore';
 import { useUserStore } from '../../store/userStore';
 import { canUseOrdering, isSuperAdmin} from '../../utils/permissions';
+import { SkeletonLoader } from '../ui/SkeletonLoader';
+import { accentStyle } from './dashboardPalette';
+
+/**
+ * Columns per tile count. The count depends on the role (1 stock tile, up to 6
+ * for an admin who works orders), so each count gets a layout that keeps tiles
+ * a readable width: a lone tile never stretches across the page, and six sit
+ * three-by-two until the screen is wide enough for one row.
+ */
+const GRID_BY_COUNT = {
+  1: 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3',
+  2: 'grid-cols-1 sm:grid-cols-2',
+  3: 'grid-cols-1 sm:grid-cols-3',
+  4: 'grid-cols-2 xl:grid-cols-4',
+  5: 'grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5',
+  6: 'grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6',
+  7: 'grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7',
+};
+
+const TILE_SHELL =
+  'relative flex h-full w-full flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-enterprise sm:p-5';
 
 export const KPIStats = () => {
   const navigate = useNavigate();
@@ -15,22 +35,6 @@ export const KPIStats = () => {
   // no ordering permission cannot open. Showing them would offer a tile that
   // bounces straight back here.
   const worksOrders = canUseOrdering(user);
-
-  if (loading) {
-    const skeletonCount = isSuperAdmin(user) ? 5 : 3;
-    const gridCols = isSuperAdmin(user) ? 'xl:grid-cols-5' : 'xl:grid-cols-3';
-    return (
-      <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 ${gridCols} gap-4`}>
-        {Array.from({ length: skeletonCount }).map((_, i) => (
-          <Card key={i} className="animate-pulse">
-            <CardContent className="p-4 h-24 flex items-center justify-center">
-              <Loader2 className="animate-spin text-slate-300" size={24} />
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    );
-  }
 
   const tiles = [
     {
@@ -91,63 +95,62 @@ export const KPIStats = () => {
     }] : []),
   ];
 
-  const colorMap = {
-    primary: { bg: 'bg-primary-50', text: 'text-primary-600', border: 'border-primary-200', glow: 'hover:shadow-primary-500/20', hoverBorder: 'hover:border-primary-300' },
-    warning:  { bg: 'bg-warning-50', text: 'text-warning-600', border: 'border-warning-200', glow: 'hover:shadow-warning-500/20', hoverBorder: 'hover:border-warning-300' },
-    indigo:   { bg: 'bg-indigo-50', text: 'text-indigo-600', border: 'border-indigo-200', glow: 'hover:shadow-indigo-500/20', hoverBorder: 'hover:border-indigo-300' },
-    success:  { bg: 'bg-success-50', text: 'text-success-600', border: 'border-success-200', glow: 'hover:shadow-success-500/20', hoverBorder: 'hover:border-success-300' },
-    error:    { bg: 'bg-error-50', text: 'text-error-600', border: 'border-error-200', glow: 'hover:shadow-error-500/20', hoverBorder: 'hover:border-error-300' },
-    emerald:  { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-200', glow: 'hover:shadow-emerald-500/20', hoverBorder: 'hover:border-emerald-300' },
-    amber:    { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-200', glow: 'hover:shadow-amber-500/20', hoverBorder: 'hover:border-amber-300' },
-  };
+  const gridCols = GRID_BY_COUNT[tiles.length] || GRID_BY_COUNT[6];
 
-  const colClassByCount = {
-    // 1 and 2 exist for the roles that see only the stock tiles; without them a
-    // single tile stretched the full width of the page.
-    1: 'xl:grid-cols-1', 2: 'xl:grid-cols-2',
-    3: 'xl:grid-cols-3', 4: 'xl:grid-cols-4', 5: 'xl:grid-cols-5', 6: 'xl:grid-cols-6', 7: 'xl:grid-cols-7'
-  };
-  const gridCols = colClassByCount[tiles.length] || 'xl:grid-cols-6';
+  // Placeholders in the exact shape and number of the tiles to come, so the
+  // page does not jump when the figures land.
+  if (loading) {
+    return (
+      <div className={`grid ${gridCols} gap-4`} aria-busy="true">
+        {tiles.map((stat) => (
+          <div key={stat.id} className={TILE_SHELL}>
+            <SkeletonLoader variant="text" className="h-10 w-10 rounded-xl" />
+            <SkeletonLoader variant="text" className="mt-4 h-3.5 w-2/3" />
+            <SkeletonLoader variant="text" className="mt-2.5 h-7 w-1/2" />
+            <SkeletonLoader variant="text" className="mt-2 h-3 w-3/4" />
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
-    <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 ${gridCols} gap-5`}>
+    <div className={`grid ${gridCols} gap-4`}>
       {tiles.map((stat, idx) => {
         const Icon = stat.icon;
-        const colors = colorMap[stat.color];
-        
+
         return (
           <motion.div
             key={stat.id}
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: idx * 0.07, type: "spring", stiffness: 300, damping: 24 }}
+            transition={{ delay: idx * 0.06, type: "spring", stiffness: 300, damping: 26 }}
             className="h-full"
           >
             <button
               type="button"
               onClick={() => navigate(stat.path)}
-              className={`relative h-full w-full text-left group hover:shadow-xl ${colors.glow} hover:-translate-y-1 transition-all duration-300 border border-slate-200 ${colors.hoverBorder} bg-white rounded-2xl`}
+              style={accentStyle(stat.color)}
+              className={`dash-accent group text-left transition-all duration-300 hover:-translate-y-0.5 hover:border-(--dash-accent)/40 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-(--dash-accent)/50 ${TILE_SHELL}`}
             >
-              {/* Background Glow */}
-              <div className={`absolute top-0 right-0 w-32 h-32 bg-linear-to-bl from-white to-transparent opacity-50 rounded-bl-full z-0`} />
-              
-              {/* Watermark Icon */}
-              <div className={`absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-10 transition-all duration-500 transform group-hover:scale-110 group-hover:-rotate-12 ${colors.text} z-0 pointer-events-none`}>
-                <Icon size={120} strokeWidth={1.5} />
+              {/* Accent rule along the top edge, and a soft glow on hover. */}
+              <span aria-hidden="true" className="absolute inset-x-0 top-0 h-[3px] bg-(--dash-accent) opacity-70 transition-opacity duration-300 group-hover:opacity-100" />
+              <span aria-hidden="true" className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-(--dash-accent)/10 opacity-0 blur-2xl transition-opacity duration-500 group-hover:opacity-100" />
+
+              <div className="relative flex items-start justify-between gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-(--dash-accent)/10 text-(--dash-accent) ring-1 ring-inset ring-(--dash-accent)/20 transition-transform duration-300 group-hover:scale-105">
+                  <Icon size={20} strokeWidth={2.25} />
+                </span>
+                <ArrowUpRight
+                  size={16}
+                  aria-hidden="true"
+                  className="text-slate-300 transition-all duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-(--dash-accent)"
+                />
               </div>
 
-              <CardContent className="p-5 relative z-10 flex flex-col h-full gap-4 justify-between">
-                <div className="flex justify-between items-start">
-                  <div className={`p-2.5 rounded-xl border shadow-sm ${colors.bg} ${colors.text} ${colors.border} group-hover:scale-110 transition-transform duration-300`}>
-                    <Icon size={20} strokeWidth={2.5} />
-                  </div>
-                </div>
-                <div>
-                  <h3 className="text-3xl font-bold text-slate-800 tracking-tight group-hover:text-slate-900 transition-colors">{stat.value}</h3>
-                  <p className="text-[10px] font-bold text-slate-500 uppercase mt-1 tracking-widest">{stat.title}</p>
-                  <p className="kpi-tile-sub text-[11px] font-medium text-slate-400 mt-1 line-clamp-1 group-hover:text-slate-500 transition-colors">{stat.sub}</p>
-                </div>
-              </CardContent>
+              <p className="relative mt-4 text-[13px] font-semibold leading-snug text-slate-500">{stat.title}</p>
+              <h3 className="relative mt-0.5 text-[26px] font-bold leading-tight tracking-tight text-slate-900 sm:text-3xl">{stat.value}</h3>
+              <p className="kpi-tile-sub relative mt-1 line-clamp-2 text-xs sm:line-clamp-1 font-medium text-slate-400 transition-colors group-hover:text-slate-500">{stat.sub}</p>
             </button>
           </motion.div>
         );

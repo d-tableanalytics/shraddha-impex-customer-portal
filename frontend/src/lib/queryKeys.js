@@ -21,6 +21,9 @@ export const STALE = {
   // Upcoming stock is reserved from: re-read on every visit, the last copy
   // shown meanwhile. The server re-checks every reservation anyway.
   upcomingStock: 0,
+  // A booking's history grows with every change to it: re-read each time it
+  // is opened, the last copy shown meanwhile.
+  bookingHistory: 0,
 };
 
 export const queryKeys = {
@@ -36,5 +39,9 @@ export const queryKeys = {
   upcomingStock: {
     all: ["upcoming-stock"],
     list: () => ["upcoming-stock", "list"],
+  },
+  bookingHistory: {
+    all: ["booking-history"],
+    detail: (orderId) => ["booking-history", orderId],
   },
 };

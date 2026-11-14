@@ -120,6 +120,69 @@ describe('manual mode', () => {
     assert.deepEqual(row.indents.map((i) => [i.bookingId, i.requested, i.pending]), [[A, 10, 8], [B, 6, 6]]);
   });
 
+  test("each waiting indent carries its booking's PO number, null until one is raised", async () => {
+    const { p, A } = await twoWaiting();
+    await arrive(p, 5);
+    const poOf = async () => (await assignmentQueue()).skus
+      .find((s) => s.skuCode === 'SKU-1').indents.map((i) => i.poNumber);
+
+    // Before a PO the stored value is the '-' placeholder, which is not a PO.
+    assert.deepEqual(await poOf(), [null, null]);
+
+    await call(updateOrderPO, { user: ADMIN, params: { orderId: A }, body: { poNumber: 'PO-A-778' } });
+    assert.deepEqual(await poOf(), ['PO-A-778', null], "A's PO only");
+  });
+
+  test("an indent never stamped with its PO falls back to its booking's", async () => {
+    const { p, A } = await twoWaiting();
+    await arrive(p, 5);
+    // A PO raised on the booking rows alone, the indent still carrying '-'.
+    await Order.updateMany({ orderId: A }, { $set: { poNumber: 'PO-ROWS-1' } });
+    assert.equal((await indentOf(A)).poNumber, '-');
+    const row = (await assignmentQueue()).skus.find((s) => s.skuCode === 'SKU-1');
+    assert.equal(row.indents.find((i) => i.bookingId === A).poNumber, 'PO-ROWS-1');
+  });
+
+  describe('the Customer Name and Company Name columns', () => {
+    const namesOf = async () => (await assignmentQueue()).skus
+      .find((s) => s.skuCode === 'SKU-1').indents.map((i) => [i.customerName, i.company]);
+
+    test('the contact person until a Customer Master name exists — never the company', async () => {
+      const { a, b, p } = await twoWaiting();
+      await arrive(p, 5);
+      assert.deepEqual(await namesOf(), [[a.user, a.company], [b.user, b.company]]);
+    });
+
+    test('read live from the account, so master details filled in later show at once', async () => {
+      const { a, b, p } = await twoWaiting();
+      await arrive(p, 5);
+      await User.updateOne({ _id: a._id }, { $set: { customerName: 'Sharma Auto Parts (P) Ltd.', company: 'SAP Group' } });
+      assert.deepEqual(await namesOf(), [['Sharma Auto Parts (P) Ltd.', 'SAP Group'], [b.user, b.company]]);
+    });
+
+    test("a customer with no company shows none, not the seller's name stamped on the booking", async () => {
+      const { a, b, p, A } = await twoWaiting();
+      await arrive(p, 5);
+      await User.updateOne({ _id: a._id }, { $unset: { company: 1 } });
+      await Order.updateMany({ orderId: A }, { $set: { company: 'Shraddha Impex' } });
+      assert.deepEqual(await namesOf(), [[a.user, null], [b.user, b.company]]);
+    });
+
+    test('once the account is deleted, the company stamped on its booking is what is left', async () => {
+      const { a, b, p } = await twoWaiting();
+      await arrive(p, 5);
+      await User.deleteOne({ _id: a._id });
+      assert.deepEqual(await namesOf(), [[null, a.company], [b.user, b.company]]);
+    });
+
+    test('the one-line customer label the toasts use is unchanged', async () => {
+      const { a, p } = await twoWaiting();
+      await arrive(p, 5);
+      const first = (await assignmentQueue()).skus.find((s) => s.skuCode === 'SKU-1').indents[0];
+      assert.equal(first.customer, a.company, 'Customer Master name, else company, as before');
+    });
+  });
+
   test('a user can choose the newer indent, partially', async () => {
     const { p, A, B } = await twoWaiting();
     await arrive(p, 5);

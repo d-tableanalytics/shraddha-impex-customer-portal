@@ -16,6 +16,16 @@ export const salesApi = {
   },
 
   /**
+   * The booking's whole journey (read-only): `{ booking, lines, indents, events }`
+   * — created, indent raised, stock allocated, PO raised, status changes and
+   * every later update, each with where it was raised from and by whom.
+   */
+  getHistory: async (orderId) => {
+    const res = await api.get(`/sales/bookings/${encodeURIComponent(orderId)}/history`);
+    return res.data.data;
+  },
+
+  /**
    * MSIL Supply Date for a booking: 'YYYY-MM-DD', or null to clear it. The
    * server re-checks the booking's waiting indents against the new date.
    */
