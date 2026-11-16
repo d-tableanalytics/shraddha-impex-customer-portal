@@ -1,8 +1,15 @@
 import { api } from "./api";
 
+/**
+ * `customerId` on the calls below is the customer a Sales Person or Admin is
+ * booking FOR from Create Booking. Omitted (every customer's own call), the
+ * server books for the signed-in account exactly as it always has.
+ */
+const forCustomer = (customerId) => (customerId ? { customerId } : {});
+
 export const reservationsApi = {
-  getAll: async () => {
-    const response = await api.get('/reservations');
+  getAll: async ({ customerId } = {}) => {
+    const response = await api.get('/reservations', { params: forCustomer(customerId) });
     return response.data.data || [];
   },
 
@@ -16,8 +23,8 @@ export const reservationsApi = {
     return response.data.data?.count ?? 0;
   },
 
-  create: async (productId, quantity) => {
-    const response = await api.post('/reservations', { productId, quantity });
+  create: async (productId, quantity, customerId = null) => {
+    const response = await api.post('/reservations', { productId, quantity, ...forCustomer(customerId) });
     // 201 is a new line; 200 means the product was already in the selection
     // list and the quantity was merged into that existing line.
     return { reservation: response.data.data, merged: response.status === 200 };
@@ -46,8 +53,10 @@ export const reservationsApi = {
   // removed from the UI. POST /reservations/:id/restore still exists on the
   // server for anything calling the API directly.
 
-  confirm: async (deliveryLocation, remarks, reviewed) => {
-    const response = await api.post('/reservations/confirm', { deliveryLocation, remarks, reviewed });
+  confirm: async (deliveryLocation, remarks, reviewed, customerId = null) => {
+    const response = await api.post('/reservations/confirm', {
+      deliveryLocation, remarks, reviewed, ...forCustomer(customerId),
+    });
     return response.data.data;
   },
 

@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 
-import { customerNameOf, companyNameOf } from "./SalesDesk";
+import { customerNameOf, companyNameOf, siTeamOf } from "./SalesDesk";
+import { siTeamLabelOf } from "../../utils/bookingParty";
 
 /**
  * The Customer Name / Company Name split on the Sales Desk.
@@ -79,5 +80,29 @@ describe("the Company Name column", () => {
 
   test("is null when neither exists", () => {
     expect(companyNameOf(booking({ customer: null }))).toBeNull();
+  });
+});
+
+describe("the SI Team column", () => {
+  test("names the Sales Person / Admin STORED on the booking as its creator", () => {
+    const b = booking({ createdBy: { id: "s1", name: "Sales Person A", role: "Sales" } });
+    expect(siTeamOf(b)).toBe("Sales Person A");
+    expect(siTeamLabelOf(b)).toBe("Sales Person A (Sales)");
+  });
+
+  test("is empty for a booking the customer placed themselves — never the viewer", () => {
+    expect(siTeamOf(booking({ createdBy: null }))).toBeNull();
+    expect(siTeamOf(booking())).toBeNull();
+    expect(siTeamLabelOf(booking())).toBeNull();
+  });
+
+  test("is independent of the customer columns: a desk booking still names the customer, not the desk", () => {
+    const b = booking({
+      customerProfile: { customerName: "Customer ABC", company: "ABC Industries" },
+      createdBy: { id: "s1", name: "Sales Person A", role: "Sales" },
+    });
+    expect(customerNameOf(b)).toBe("Customer ABC");
+    expect(companyNameOf(b)).toBe("ABC Industries");
+    expect(siTeamOf(b)).toBe("Sales Person A");
   });
 });

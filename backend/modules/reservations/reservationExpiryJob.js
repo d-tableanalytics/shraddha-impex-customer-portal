@@ -96,29 +96,50 @@ const STAGES = {
   },
 };
 
-const notifyStage = async (stageKey, customer, items) => {
+/**
+ * @param {object} recipient  the account whose Selection List the lines are in
+ * @param {object} [onBehalfOf] the customer, when `recipient` is a staff member
+ *        building a list FOR them (see reservation.controller.js). The lines
+ *        sat in the staff member's private list — the customer never saw them
+ *        — so the reminder goes to the person who can act on it, and says
+ *        whose booking it would be.
+ */
+const notifyStage = async (stageKey, recipient, items, onBehalfOf = null) => {
   const stage = STAGES[stageKey];
-  const name = customer.user || customer.company || 'there';
+  const name = recipient.user || recipient.company || 'there';
+  const customerName = onBehalfOf
+    ? (onBehalfOf.customerName || onBehalfOf.user || onBehalfOf.company || onBehalfOf.email)
+    : null;
 
   await logSystemEvent(
     stage.action,
-    `${plural(items.length, 'reservation')} for ${customer.email || customer._id}: ${items.map((r) => r.reservationId).join(', ')}`,
+    `${plural(items.length, 'reservation')} for ${recipient.email || recipient._id}`
+      + (customerName ? ` (selection list for ${customerName})` : '')
+      + `: ${items.map((r) => r.reservationId).join(', ')}`,
   );
 
-  sendSystemNotification(customer._id, stage.notificationTitle, stage.notification(items));
+  sendSystemNotification(
+    recipient._id,
+    stage.notificationTitle,
+    (customerName ? `Selection list for ${customerName}: ` : '') + stage.notification(items),
+  );
 
-  if (!customer.email) return;
+  if (!recipient.email) return;
 
   await sendEmail(
-    customer.email,
-    stage.subject(items),
+    recipient.email,
+    stage.subject(items) + (customerName ? ` — ${customerName}` : ''),
     `<p>Hi ${name},</p>
+     ${customerName
+      ? `<p>These lines are in the Selection List you are building on behalf of
+         <strong>${customerName}</strong> from Create Booking.</p>`
+      : ''}
      <p>${stage.intro(items)}</p>
      ${itemsTable(items, { showExpiry: stage.showExpiry })}
      <p>${stage.outro(items)}</p>`,
     // Copied to the company addresses like every other customer-facing mail —
     // these expiry warnings were going out with no Cc at all.
-    { cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC] },
+    { cc: [...(recipient.bookingCcEmails || []), ...COMPANY_CC] },
   );
 };
 
@@ -126,22 +147,36 @@ export const runReservationExpiryChecks = async () => {
   console.log('[Job] Starting Daily Reservation Lifecycle checks...');
   try {
     const now = new Date();
-    const activeReservations = await Reservation.find({ status: 'Reserved' }).populate('customerId');
+    const activeReservations = await Reservation.find({ status: 'Reserved' })
+      .populate('customerId')
+      // Who put the line in the list. The customer themselves on every line
+      // they reserved; a staff account on a line the desk is building for
+      // them, which lives in the staff member's own Selection List.
+      .populate('reservedBy', 'user company email bookingCcEmails');
 
-    // Collect each customer's due lines first, then send one mail per stage —
+    // Collect each account's due lines first, then send one mail per stage —
     // otherwise a ten-item selection list produces ten identical day-5 emails.
+    //
+    // Keyed by the account the list belongs to AND the customer it is for, so
+    // a salesperson building lists for two customers gets one mail per
+    // customer rather than one that mixes them.
     const byCustomer = new Map();
-    const bucketFor = (customer) => {
-      const key = String(customer._id);
+    const bucketFor = (customer, onBehalfOf) => {
+      const key = `${customer._id}|${onBehalfOf ? onBehalfOf._id : ''}`;
       if (!byCustomer.has(key)) {
-        byCustomer.set(key, { customer, expired: [], finalReminder: [], firstReminder: [] });
+        byCustomer.set(key, { customer, onBehalfOf, expired: [], finalReminder: [], firstReminder: [] });
       }
       return byCustomer.get(key);
     };
 
     for (let reservation of activeReservations) {
-      const customer = reservation.customerId;
-      if (!customer) continue;
+      const owner = reservation.customerId;
+      if (!owner) continue;
+      // The desk's own list for this customer: the desk is told, not the customer.
+      const staff = reservation.reservedBy;
+      const stagedByDesk = staff?._id && String(staff._id) !== String(owner._id);
+      const customer = stagedByDesk ? staff : owner;
+      const onBehalfOf = stagedByDesk ? owner : null;
 
       const timeDiff = now.getTime() - reservation.reservationDate.getTime();
       const daysElapsed = timeDiff / (24 * 60 * 60 * 1000);
@@ -161,7 +196,7 @@ export const runReservationExpiryChecks = async () => {
       // drop the un-confirmed item from the list and notify the customer.
       if (now >= reservation.expiryDate) {
         if (await claim({}, { status: 'Expired', expiredAt: now })) {
-          bucketFor(customer).expired.push(reservation);
+          bucketFor(customer, onBehalfOf).expired.push(reservation);
         }
         continue;
       }
@@ -170,7 +205,7 @@ export const runReservationExpiryChecks = async () => {
       //    lands before the item is dropped (daily cron + 7-day expiry window).
       if (daysElapsed >= 6 && reservation.lastReminderSent !== 'day7') {
         if (await claim({ lastReminderSent: { $ne: 'day7' } }, { lastReminderSent: 'day7' })) {
-          bucketFor(customer).finalReminder.push(reservation);
+          bucketFor(customer, onBehalfOf).finalReminder.push(reservation);
         }
         continue;
       }
@@ -178,17 +213,17 @@ export const runReservationExpiryChecks = async () => {
       // 3. Day 5 reminder — first nudge, ~2 days before auto-cancel.
       if (daysElapsed >= 5 && reservation.lastReminderSent !== 'day5' && reservation.lastReminderSent !== 'day7') {
         if (await claim({ lastReminderSent: { $nin: ['day5', 'day7'] } }, { lastReminderSent: 'day5' })) {
-          bucketFor(customer).firstReminder.push(reservation);
+          bucketFor(customer, onBehalfOf).firstReminder.push(reservation);
         }
       }
     }
 
-    for (const { customer, expired, finalReminder, firstReminder } of byCustomer.values()) {
+    for (const { customer, onBehalfOf, expired, finalReminder, firstReminder } of byCustomer.values()) {
       // A customer can legitimately hit more than one stage on the same run —
       // e.g. one line expiring while another is only on day 5.
-      if (expired.length) await notifyStage('expired', customer, expired);
-      if (finalReminder.length) await notifyStage('finalReminder', customer, finalReminder);
-      if (firstReminder.length) await notifyStage('firstReminder', customer, firstReminder);
+      if (expired.length) await notifyStage('expired', customer, expired, onBehalfOf);
+      if (finalReminder.length) await notifyStage('finalReminder', customer, finalReminder, onBehalfOf);
+      if (firstReminder.length) await notifyStage('firstReminder', customer, firstReminder, onBehalfOf);
     }
 
     console.log('[Job] Completed Daily Reservation Lifecycle checks.');

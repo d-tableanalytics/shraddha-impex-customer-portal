@@ -15,6 +15,7 @@ import {
 } from '../../utils/roleResolver.js';
 import { validateGrants, compileGrants } from '../../config/moduleRegistry.js';
 import { mergeServedGrants, normaliseExtraGrants } from '../../utils/portalGrants.js';
+import { containsMatch } from '../../utils/searchQuery.js';
 
 /**
  * Roles an admin may assign.
@@ -142,6 +143,51 @@ const asArchivedRow = (doc) => ({
   status: 'Suspended',
   archived: true,
 });
+
+/**
+ * GET /api/v1/users/customers?search=&id=&limit=
+ *
+ * The customer picker on Create Booking, for a Sales Person or Admin booking
+ * on a customer's behalf. Reads the SAME accounts Customer Management manages —
+ * there is no second customer list — and returns only what the booking form
+ * needs: who they are, and the fields that decide the rules their booking is
+ * made under (category for MOQ and MSIL, brand access, the MOQ override).
+ *
+ * Live Customer accounts only. A suspended account cannot be booked for (see
+ * resolveBookingCustomer), so offering it would only produce a refusal. Matched
+ * on the Customer Master name, the contact name, the company and the email —
+ * the same four fields the Customer Management search box matches.
+ *
+ * `id` fetches one account by id, for Create Booking re-selecting a customer
+ * that was just created from the Add Customer link.
+ */
+export const searchCustomers = async (req, res, next) => {
+  try {
+    const term = containsMatch(String(req.query.search || '').trim());
+    const id = String(req.query.id || '').trim();
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+
+    const query = { role: 'Customer', status: 'Active' };
+    if (id) {
+      if (!/^[0-9a-fA-F]{24}$/.test(id)) {
+        return res.status(200).json({ success: true, data: [] });
+      }
+      query._id = id;
+    } else if (term) {
+      query.$or = [{ customerName: term }, { user: term }, { company: term }, { email: term }];
+    }
+
+    const customers = await User.find(query)
+      .select('user customerName company email customerCategory location phone brandAccess moq showMsilCode')
+      .sort({ customerName: 1, user: 1, company: 1 })
+      .limit(limit)
+      .lean();
+
+    res.status(200).json({ success: true, data: customers });
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const getUsers = async (req, res, next) => {
   try {

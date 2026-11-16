@@ -65,6 +65,9 @@ const istDateTime = (d) => new Date(d).toLocaleString('en-IN', { ...IST, hour: '
 
 export const SOURCES = Object.freeze({
   customer: { key: 'customer-portal', label: 'Customer Portal' },
+  // The desk placing a booking FOR a customer from Create Booking — the same
+  // /reservations endpoints the customer uses, by somebody who is not them.
+  createBooking: { key: 'create-booking', label: 'Create Booking (on behalf)' },
   salesDesk: { key: 'sales-desk', label: 'Sales Desk' },
   indentAssignment: { key: 'indent-assignment', label: 'Indent Stock Assignment' },
   indentHistory: { key: 'indent-history', label: 'Indent History' },
@@ -83,6 +86,9 @@ const sourceOf = (audit, customerId) => {
   if (endpoint.includes('/inventory/indent-assignment')) return SOURCES.indentAssignment;
   if (endpoint.includes('/sales/')) return SOURCES.salesDesk;
   if (customerId && String(audit.user) === String(customerId)) return SOURCES.customer;
+  // Confirming or direct-booking on /reservations as somebody other than the
+  // customer is the desk placing the booking for them.
+  if (/\/reservations\/(confirm|direct-booking)/.test(endpoint)) return SOURCES.createBooking;
   if (endpoint.includes('/reservations')) return SOURCES.indentHistory;
   if (endpoint.includes('/orders')) return SOURCES.bookings;
   return SOURCES.staff;
@@ -214,7 +220,10 @@ export const getBookingHistory = async (orderId, { includePricing = false } = {}
       { action: { $in: MSIL_INDENT_ACTIONS }, 'meta.reservationId': { $in: rids } },
       {
         action: 'Reservation Confirmed',
-        user: customerId,
+        // Written by whoever pressed Confirm: the customer, or the Sales
+        // Person / Admin who placed the booking for them (stamped on the rows
+        // as createdBy). Either is this booking's confirmation.
+        user: { $in: [customerId, ...(rows[0].createdBy ? [rows[0].createdBy] : [])] },
         remarks: { $in: rids.map((id) => new RegExp(`^Reservation ${escapeRegex(id)}:`)) },
       },
       {
@@ -745,6 +754,13 @@ export const getBookingHistory = async (orderId, { includePricing = false } = {}
       createdAt: created?.at || placedAt,
       createdFrom: created?.source || SOURCES.record,
       createdBy: created?.actor || null,
+      // The "SI Team": the Sales Person or Admin who placed the booking on
+      // the customer's behalf, as STORED on the booking (models/Order.js) —
+      // not inferred from the audit trail or the viewer. Null when the
+      // customer placed it themselves.
+      siTeam: rows[0].createdBy
+        ? { name: rows[0].createdByName || null, role: rows[0].createdByRole || null, email: rows[0].createdByEmail || null }
+        : null,
       totals: {
         atBooking,
         allocated: sum(rows.flatMap((r) => (r.allocations || []).filter((x) => x.status !== 'Cancelled')), (x) => x.quantity),

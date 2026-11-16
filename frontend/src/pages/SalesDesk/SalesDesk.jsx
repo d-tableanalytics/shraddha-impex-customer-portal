@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { History, Clock, Lock, FileCheck2, Download, FileText, Loader2 } from "lucide-react";
+import { History, Eye, Clock, Lock, FileCheck2, Download, FileText, Loader2 } from "lucide-react";
 import { SearchInput } from "../../components/ui/SearchInput";
 import { useBusyAction } from "../../hooks/useBusyAction";
 import { PageHeader } from "../../components/common/PageHeader";
@@ -13,6 +13,7 @@ import { BookingHistoryDrawer } from "../../components/drawer/BookingHistoryDraw
 import { useSalesStore } from "../../store/salesStore";
 import { useUserStore } from "../../store/userStore";
 import { canUseSalesDesk } from "../../utils/permissions";
+import { customerNameOf, companyNameOf, siTeamOf, siTeamLabelOf } from "../../utils/bookingParty";
 import toast from "react-hot-toast";
 
 // `count` reads the matching figure out of meta, so each tab shows its own
@@ -25,35 +26,12 @@ const SCOPES = [
 ];
 
 /**
- * THE CUSTOMER NAME NEVER FALLS BACK TO THE COMPANY.
- *
- * That rule is not a preference here — it is pinned by
- * `services/customerName.test.js`, which records the bug it fixes: when the
- * Customer Name slot fell through to the company, two customers at one company
- * were indistinguishable, and the failure "looks filled in", so nobody reports
- * it. The chain is the Customer Master name, then the CONTACT person, then
- * nothing.
- *
- * Identical to how `services/orders.js#mapOrder` resolves `customerName` for
- * Booking History, so the two screens cannot drift. Deliberately NOT
- * `customerExportRow`, whose chain does include the company: that helper serves
- * the history EXPORTS, where a filled cell beats an empty one, and borrowing it
- * here would have quietly reintroduced the exact defect the test guards.
+ * Customer Name, Company Name and SI Team are resolved by ONE rule shared with
+ * the booking drawer and the exports — see utils/bookingParty.js, which also
+ * records why the customer name never falls back to the company. Re-exported
+ * here because `salesDeskCustomer.test.js` pins that rule through this module.
  */
-export const customerNameOf = (booking) =>
-  booking?.customerProfile?.customerName
-  || booking?.customerProfile?.contactName
-  || null;
-
-/**
- * The company, which is a different fact and gets its own column.
- *
- * The PROFILE's company leads because it is current; the booking's stamped
- * `company` is the fallback, and the only value available at all for a row
- * whose customer account has since been deleted.
- */
-export const companyNameOf = (booking) =>
-  booking?.customerProfile?.company || booking?.customer || null;
+export { customerNameOf, companyNameOf, siTeamOf };
 
 export const SalesDesk = () => {
   const {
@@ -109,6 +87,7 @@ export const SalesDesk = () => {
       orderId: b.orderId,
       customerName: customerNameOf(b) || "-",
       customer: companyNameOf(b) || "-",
+      siTeam: siTeamOf(b) || "-",
       date: b.date ? new Date(b.date).toLocaleDateString() : "-",
       poStatus: b.locked ? "PO Generated" : "PO Pending",
       poNumber: b.poNumber || "-",
@@ -120,6 +99,7 @@ export const SalesDesk = () => {
       { key: "orderId", label: "Booking ID" },
       { key: "customerName", label: "Customer Name" },
       { key: "customer", label: "Company Name" },
+      { key: "siTeam", label: "SI Team" },
       { key: "date", label: "Date" },
       { key: "poStatus", label: "PO Status" },
       { key: "poNumber", label: "PO Number" },
@@ -223,7 +203,7 @@ export const SalesDesk = () => {
             className="flex-1 min-w-64 max-w-md"
             value={search}
             onChange={setSearch}
-            placeholder="Search customer name, booking, SKU, PO…"
+            placeholder="Search customer name, booking, SKU, PO, SI Team…"
             label="Search bookings"
             busy={refreshing}
             busyLabel="Refreshing bookings"
@@ -278,6 +258,7 @@ export const SalesDesk = () => {
               <th className="px-5 py-3 border-b border-slate-200">Booking ID</th>
               <th className="px-5 py-3 border-b border-slate-200">Customer Name</th>
               <th className="px-5 py-3 border-b border-slate-200">Company Name</th>
+              <th className="px-5 py-3 border-b border-slate-200">SI Team</th>
               <th className="px-5 py-3 border-b border-slate-200">Date</th>
               <th className="px-5 py-3 border-b border-slate-200">PO Status</th>
               <th className="px-5 py-3 border-b border-slate-200">PO Deadline</th>
@@ -288,11 +269,11 @@ export const SalesDesk = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
-            {/* The skeleton's ten columns: Booking ID, Customer Name, Company
-                Name, Date, PO Status, PO Deadline, PO Number, Items, Qty,
-                Action. */}
+            {/* The skeleton's eleven columns: Booking ID, Customer Name, Company
+                Name, SI Team, Date, PO Status, PO Deadline, PO Number, Items,
+                Qty, Action. */}
             {loading ? (
-              <TableSkeleton rows={8} columns={10} cellClass="px-5 py-4" />
+              <TableSkeleton rows={8} columns={11} cellClass="px-5 py-4" />
             ) : bookings.length > 0 ? (
               bookings.map((b) => (
                 <tr
@@ -318,6 +299,14 @@ export const SalesDesk = () => {
                     title={companyNameOf(b) || undefined}
                   >
                     {companyNameOf(b) || <span className="text-slate-400">—</span>}
+                  </td>
+                  {/* SI Team: who placed the booking for the customer, as
+                      stored on it. A dash is the customer's own booking. */}
+                  <td
+                    className="px-5 py-4 text-slate-600 truncate max-w-[180px]"
+                    title={siTeamLabelOf(b) || "Placed by the customer"}
+                  >
+                    {siTeamOf(b) || <span className="text-slate-400">—</span>}
                   </td>
                   <td className="px-5 py-4 text-slate-600">
                     {b.date ? new Date(b.date).toLocaleDateString() : "—"}
@@ -345,27 +334,43 @@ export const SalesDesk = () => {
                   <td className="px-5 py-4 text-center font-bold text-slate-700">{b.lineCount}</td>
                   <td className="px-5 py-4 text-center font-bold text-slate-700">{b.totalQuantity}</td>
                   <td className="px-5 py-4 text-center">
-                    {/* Action: the booking's whole history — created, indent,
-                        allocations, PO, status and every update. Clicking the
-                        row still opens it for review and editing. */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openHistory(b);
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-                      title={`Booking History for ${b.orderId}`}
-                      aria-label={`Action: booking history for ${b.orderId}`}
-                    >
-                      <History size={14} aria-hidden="true" /> Action
-                    </button>
+                    {/* Two actions, one icon each. View Details opens the
+                        booking for review and editing (the same drawer a row
+                        click opens); View History opens the booking's whole
+                        history — created, indent, allocations, PO, status and
+                        every update. */}
+                    <div className="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          select(b);
+                        }}
+                        className="p-1.5 rounded-lg text-slate-400 transition-colors hover:text-primary-600 hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                        title={`View Details for ${b.orderId}`}
+                        aria-label={`View details for ${b.orderId}`}
+                      >
+                        <Eye size={18} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openHistory(b);
+                        }}
+                        className="p-1.5 rounded-lg text-slate-400 transition-colors hover:text-violet-600 hover:bg-violet-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                        title={`View History for ${b.orderId}`}
+                        aria-label={`View history for ${b.orderId}`}
+                      >
+                        <History size={18} aria-hidden="true" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={10} className="px-5 py-10 text-center text-slate-400">
+                <td colSpan={11} className="px-5 py-10 text-center text-slate-400">
                   {appliedScope === "pending"
                     ? "No bookings are waiting for a PO."
                     : "No bookings found matching your criteria."}

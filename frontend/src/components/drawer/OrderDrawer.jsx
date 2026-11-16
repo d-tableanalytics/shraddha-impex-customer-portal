@@ -424,6 +424,29 @@ export const OrderDrawer = () => {
                 </div>
               )}
 
+              {/* Who placed the booking on the customer's behalf (the SI Team),
+                  as stored on the booking. Shown to everyone, the customer
+                  included: it is their booking, and they are told who made it.
+                  Absent on a booking the customer placed themselves. */}
+              {selectedOrder.siTeam && (
+                <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+                  <div className="w-8 h-8 rounded-full bg-violet-50 flex items-center justify-center shrink-0">
+                    <User size={16} className="text-violet-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">
+                      Booked by (SI Team)
+                    </p>
+                    <p className="text-sm font-bold text-slate-800 truncate" title={selectedOrder.siTeam}>
+                      {selectedOrder.siTeam}
+                    </p>
+                    {selectedOrder.siTeamRole && (
+                      <p className="text-[10px] text-slate-500 mt-0.5">{selectedOrder.siTeamRole} · Shraddha Impex</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* The customer's registered master details, from User
                   Management. Read live, so anything an admin fills in there
                   appears on past bookings too.

@@ -19,6 +19,40 @@ import { hasPermission, PERMISSIONS, isSuperAdmin} from '../../middlewares/rbac.
 import { enforceMoq, moqError } from '../../utils/moq.js';
 import { sendIndentRaisedMails, sendBookingMails } from '../../utils/indentMail.js';
 import { supplyCheckNow, holdForDecision } from '../inventory/indentAvailability.service.js';
+import {
+  resolveBookingCustomer, loadBookingCustomer, creatorStamp, actorName, customerLabel,
+} from '../../utils/bookingActor.js';
+import { creatorEmails } from '../../utils/bookingRecipients.js';
+
+/**
+ * ── Booking on a customer's behalf ─────────────────────────────────────────
+ *
+ * A Sales Person or Admin may build and confirm a booking FOR a customer from
+ * Create Booking. The request names the customer (`customerId` in the body, or
+ * in the query for reads) and utils/bookingActor.js decides whether the caller
+ * may act for them. From there every write treats the CUSTOMER as the account
+ * the booking belongs to and the CALLER as the person who placed it:
+ *
+ *   Reservation.customerId  the customer   — whose booking this becomes
+ *   Reservation.reservedBy  the caller     — who is building it
+ *   Order.user              the customer   — their Booking History, their mail
+ *   Order.createdBy*        the caller     — the "SI Team" column, a Cc on mail
+ *
+ * A staff-built Selection List is PRIVATE to the staff member building it —
+ * it is keyed by (customer, reservedBy) — so a customer never finds half-built
+ * lines in their own list, and two salespeople can work the same customer
+ * without confirming each other's lines. The customer's own list is unchanged:
+ * it is the lines they reserved themselves, as it always was.
+ *
+ * Without a `customerId` nothing here behaves differently.
+ */
+
+/** Which Selection List: the customer's own, or the one `actor` is building for them. */
+const selectionListFilter = (customer, actor) => ({
+  customerId: customer._id,
+  reservedBy: actor._id,
+  status: 'Reserved',
+});
 
 // Helper to find product across brands. Pass a session to read within a
 // transaction so the stock value is consistent for the read-modify-write cycle.
@@ -115,15 +149,18 @@ const sendNotification = (userId, title, message, type = 'reservation') => {
 
 export const getReservations = async (req, res, next) => {
   try {
+    // `?customerId=` — the desk reading the list it is building for a customer.
+    const { customer } = await resolveBookingCustomer(req, req.query?.customerId);
     // Oldest first — the order the customer built their selection in. Unsorted,
     // this returned natural order, which stops matching insertion order as soon
     // as a row is updated, so the list could reorder itself under the customer.
-    const reservations = await Reservation.find({ customerId: req.user._id, status: 'Reserved' })
+    const reservations = await Reservation.find(selectionListFilter(customer, req.user))
       .sort({ createdAt: 1, _id: 1 });
     // Manually populate since refs don't span multiple models. The lookup is
-    // brand-scoped, so a line whose brand access was revoked resolves to null.
+    // brand-scoped to the CUSTOMER the list is for, so a line whose brand
+    // access was revoked resolves to null.
     const populated = await Promise.all(reservations.map(async r => {
-      const { product } = await findProductWithBrand(r.productId, req.user);
+      const { product } = await findProductWithBrand(r.productId, customer);
       return { ...r.toObject(), productId: product };
     }));
     // Drop rows the user may no longer see, rather than returning a line with a
@@ -491,6 +528,11 @@ export const restoreBackorder = async (req, res, next) => {
     // Move it back into the active selection list with a fresh 7-day window.
     const now = new Date();
     reservation.status = 'Reserved';
+    // Into the CUSTOMER's own list: the mail below asks the customer to confirm
+    // it, so it has to be where they can see it — even if the desk raised the
+    // indent for them (reservedBy then names the staff member, whose private
+    // list the customer cannot open).
+    reservation.reservedBy = reservation.customerId?._id ?? reservation.customerId;
     reservation.reservationDate = now;
     reservation.expiryDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     reservation.confirmedAt = undefined;
@@ -557,27 +599,34 @@ export const createReservation = async (req, res, next) => {
       throw new Error('Valid Product ID and a whole-number Quantity are required.');
     }
 
+    // The customer this line is for — the caller, unless the desk named one.
+    // Every rule below (brand access, MOQ, MSIL) is the CUSTOMER's, because the
+    // booking will be theirs.
+    const { customer, onBehalf } = await resolveBookingCustomer(req, req.body.customerId);
+
     // Brand-scoped: a product in a brand this customer has no access to is
     // indistinguishable from one that does not exist, so it cannot be booked
     // by guessing its id.
-    const product = await findProductById(productId, null, req.user);
+    const product = await findProductById(productId, null, customer);
     if (!product) {
-      throw new Error('Product not found.');
+      // The desk can see every brand, so for them the likelier cause is named.
+      throw new Error(onBehalf
+        ? 'Product not found, or this customer does not have access to its brand.'
+        : 'Product not found.');
     }
 
     // Adding a product that is already in the selection list tops up that line
     // rather than creating a second row for the same SKU.
     const existing = await Reservation.findOne({
-      customerId: req.user._id,
+      ...selectionListFilter(customer, req.user),
       productId: product._id,
-      status: 'Reserved',
     });
     const mergedQuantity = (existing?.quantity || 0) + quantity;
 
     // MOQ applies to non-MSIL customers only; MSIL customers are exempt. It is
     // checked against the merged total, since that is the quantity that will
     // actually be booked — topping up a line must not fail on the increment alone.
-    enforceMoq(req.user, product, mergedQuantity);
+    enforceMoq(customer, product, mergedQuantity);
 
     // NOTE: Stock availability is intentionally NOT validated here. Customers may
     // book any quantity, even beyond availableForSale. Stock is only checked and
@@ -587,7 +636,7 @@ export const createReservation = async (req, res, next) => {
     // MSIL Code Validation — only enforced for users MSIL Codes apply to, and
     // only when a code is actually assigned. Products without an MSIL Code are
     // allowed to be booked; the MSIL field is simply left blank throughout the UI.
-    if (msilAppliesTo(req.user) && product.msilCode) {
+    if (msilAppliesTo(customer) && product.msilCode) {
       const msilDoc = await MsilCode.findOne({ code: product.msilCode });
       if (!msilDoc || msilDoc.status !== 'Active') {
         throw new Error(`MSIL Code ${product.msilCode} for product ${product.skuCode} is inactive or does not exist.`);
@@ -596,7 +645,10 @@ export const createReservation = async (req, res, next) => {
 
     // Stock is NOT allocated/deducted at booking time — only at confirmation.
 
-    const who = req.user.company || req.user.user || req.user.email;
+    const who = onBehalf
+      ? `${actorName(req.user)} (for ${customerLabel(customer)})`
+      : (req.user.company || req.user.user || req.user.email);
+    const forWhom = onBehalf ? ` for ${customerLabel(customer)}` : '';
 
     if (existing) {
       // $inc so a concurrent add (e.g. a bulk import landing alongside a manual
@@ -611,8 +663,10 @@ export const createReservation = async (req, res, next) => {
       );
 
       if (updated) {
-        await recordAudit(req.user, 'Reservation Updated', `Added ${quantity} units of ${product.skuCode} to an existing reservation (now ${updated.quantity})`, req);
-        sendNotification(req.user._id, 'Item Booked', `${product.skuCode} updated to ${updated.quantity} units in your selection list. Confirm within 7 days — it is auto-cancelled after that.`, 'reservation');
+        await recordAudit(req.user, 'Reservation Updated', `Added ${quantity} units of ${product.skuCode} to an existing reservation${forWhom} (now ${updated.quantity})`, req);
+        // The in-app notice goes to whoever is building the list — the desk's
+        // own list for this customer is theirs to confirm, not the customer's.
+        sendNotification(req.user._id, 'Item Booked', `${product.skuCode} updated to ${updated.quantity} units in your selection list${forWhom}. Confirm within 7 days — it is auto-cancelled after that.`, 'reservation');
         notifyAdmins({ title: 'New Booking', message: `${who} added ${quantity} more of ${product.skuCode} (now ${updated.quantity} units in their selection list).`, type: 'reservation' });
         return res.status(200).json({ success: true, data: updated });
       }
@@ -626,7 +680,7 @@ export const createReservation = async (req, res, next) => {
 
     const reservation = await Reservation.create([{
       reservationId,
-      customerId: req.user._id,
+      customerId: customer._id,
       productId: product._id,
       skuCode: product.skuCode,
       msilCode: product.msilCode,
@@ -637,8 +691,8 @@ export const createReservation = async (req, res, next) => {
       reservedBy: req.user._id
     }]);
 
-    await recordAudit(req.user, 'Reservation Created', `Reserved ${quantity} units of ${product.skuCode}`, req);
-    sendNotification(req.user._id, 'Item Booked', `${product.skuCode} (${quantity} units) added to your selection list. Confirm within 7 days — it is auto-cancelled after that.`, 'reservation');
+    await recordAudit(req.user, 'Reservation Created', `Reserved ${quantity} units of ${product.skuCode}${forWhom}`, req);
+    sendNotification(req.user._id, 'Item Booked', `${product.skuCode} (${quantity} units) added to your selection list${forWhom}. Confirm within 7 days — it is auto-cancelled after that.`, 'reservation');
     notifyAdmins({ title: 'New Booking', message: `${who} booked ${product.skuCode} (${quantity} units). It is now in their selection list.`, type: 'reservation' });
 
     res.status(201).json({ success: true, data: reservation[0] });
@@ -660,17 +714,32 @@ export const updateReservationQuantity = async (req, res, next) => {
       throw new Error('Reservation not found.');
     }
 
+    // Owner, or the desk acting for the customer — the same rule the cancel
+    // below applies, with the same 404 so ids cannot be probed.
+    const isOwner = String(reservation.customerId) === String(req.user._id);
+    const canActForOthers = isSuperAdmin(req.user)
+      || hasPermission(req.user, PERMISSIONS.VIEW_ALL_BOOKINGS)
+      || hasPermission(req.user, PERMISSIONS.MANAGE_ORDERS);
+    if (!isOwner && !canActForOthers) {
+      return res.status(404).json({ success: false, message: 'Reservation not found.' });
+    }
+
     if (reservation.status !== 'Reserved') {
       throw new Error('Only active reservations can be edited.');
     }
 
-    const product = await findProductById(reservation.productId, null, req.user);
+    // The line's CUSTOMER sets the rules (brand, MOQ), not whoever is editing:
+    // a desk-built line for an MSIL customer stays MOQ-exempt, and a line for a
+    // regular customer keeps its multiple whoever types the number.
+    const customer = await loadBookingCustomer(req, reservation.customerId);
+
+    const product = await findProductById(reservation.productId, null, customer);
     if (!product) {
       throw new Error('Product not found.');
     }
 
     // MOQ applies to non-MSIL customers only; MSIL customers are exempt.
-    enforceMoq(req.user, product, quantity);
+    enforceMoq(customer, product, quantity);
 
     // No stock validation/adjustment — stock is only allocated at confirmation time.
     reservation.quantity = quantity;
@@ -737,14 +806,21 @@ export const cancelReservation = async (req, res, next) => {
 
     // Tell the OWNER, not the caller — a desk cancel must land in the
     // customer's notifications, not the salesperson's.
-    sendNotification(
-      reservation.customerId,
-      isIndent ? 'Indent Cancelled' : 'Reservation Cancelled',
-      isIndent
-        ? `Indent line ${reservation.skuCode} x${reservation.quantity} (${reservation.indentNumber || reservation.reservationId}) has been cancelled.`
-        : `Reservation ${reservation.reservationId} has been cancelled and removed from your selection list.`,
-      'reservation',
-    );
+    //
+    // Except a line the desk was still building for the customer: that sat in
+    // the staff member's private list, the customer never saw it, and "removed
+    // from your selection list" would describe something that was never there.
+    const stagedByDesk = !isIndent && String(reservation.reservedBy) !== String(reservation.customerId);
+    if (!stagedByDesk) {
+      sendNotification(
+        reservation.customerId,
+        isIndent ? 'Indent Cancelled' : 'Reservation Cancelled',
+        isIndent
+          ? `Indent line ${reservation.skuCode} x${reservation.quantity} (${reservation.indentNumber || reservation.reservationId}) has been cancelled.`
+          : `Reservation ${reservation.reservationId} has been cancelled and removed from your selection list.`,
+        'reservation',
+      );
+    }
     if (isOwner && isIndent) {
       notifyAdmins({
         title: 'Indent Cancelled',
@@ -775,8 +851,9 @@ export const cancelReservation = async (req, res, next) => {
  * twice is one line of demand and MOQ has to be judged on the total.
  *
  * @param {object[]} items [{ productId, quantity }]
+ * @param {object}   customer the account the lines are for (see resolveBookingCustomer)
  */
-const reserveDirectBookingLines = async (req, session, items) => {
+const reserveDirectBookingLines = async (req, session, items, customer) => {
   // Bad lines in an upload are the CUSTOMER's to fix, not a server fault, so
   // they answer 400 and the upload screen shows the reason against the file.
   // A bare Error would fall through to the handler's default 500 and read as an
@@ -819,7 +896,7 @@ const reserveDirectBookingLines = async (req, session, items) => {
     // Brand-scoped, exactly as the single-line path is: a SKU in a brand this
     // customer cannot access resolves to null and is reported as missing rather
     // than being bookable by id.
-    const product = await findProductById(productId, session, req.user);
+    const product = await findProductById(productId, session, customer);
     if (!product) {
       throw badRequest(`Product ${productId} not found.`);
     }
@@ -828,9 +905,9 @@ const reserveDirectBookingLines = async (req, session, items) => {
     // re-checked here rather than trusted from validate-bulk: that response is
     // a preview the client holds, and stock, MOQ and MSIL status can all move
     // between the preview and the click.
-    enforceMoq(req.user, product, quantity);
+    enforceMoq(customer, product, quantity);
 
-    if (msilAppliesTo(req.user) && product.msilCode) {
+    if (msilAppliesTo(customer) && product.msilCode) {
       const msilDoc = await MsilCode.findOne({ code: product.msilCode }, null, session ? { session } : {});
       if (!msilDoc || msilDoc.status !== 'Active') {
         throw badRequest(`MSIL Code ${product.msilCode} for product ${product.skuCode} is inactive or does not exist.`);
@@ -840,7 +917,7 @@ const reserveDirectBookingLines = async (req, session, items) => {
     const seq = seqs[docs.length];
     docs.push({
       reservationId: `RES-${year}-${String(seq).padStart(6, '0')}`,
-      customerId: req.user._id,
+      customerId: customer._id,
       productId: product._id,
       skuCode: product.skuCode,
       msilCode: product.msilCode,
@@ -938,12 +1015,16 @@ const stockConflict = (shortLines) => reviewConflict(
 //             in the same breath, never touching the Selection List.
 // Everything after the line set is identical for both, so a booking made from a
 // sheet and one made from the list cannot diverge in what they produce.
-const runConfirmBooking = async (req, session, { items = null } = {}) => {
+//
+// `customer` is the account the booking is FOR and `onBehalf` says whether the
+// caller is the desk acting for them (see the note at the top of this file).
+// Every row is the customer's; the caller is stamped as its creator.
+const runConfirmBooking = async (req, session, { items = null, customer, onBehalf = false } = {}) => {
   const reviewed = items ? null : parseReviewedLines(req.body);
   const reservations = items
-    ? await reserveDirectBookingLines(req, session, items)
+    ? await reserveDirectBookingLines(req, session, items, customer)
     : await Reservation.find(
-        { customerId: req.user._id, status: 'Reserved' },
+        selectionListFilter(customer, req.user),
         null,
         session ? { session } : {}
       // The SAME sort the Selection List uses. This loop's index becomes each
@@ -963,12 +1044,13 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
   // transaction, and a refusal thrown after the deductions would keep them.
   const products = [];
   for (const resItem of reservations) {
-    const product = await findProductById(resItem.productId, session, req.user);
+    const product = await findProductById(resItem.productId, session, customer);
     if (!product) {
       throw new Error(`Product ${resItem.skuCode} not found.`);
     }
     products.push(product);
   }
+  const creator = creatorStamp(req, onBehalf);
 
   if (reviewed) {
     assertSelectionMatchesReview(reservations, reviewed);
@@ -1036,11 +1118,15 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
         lineSeq,
         orderId: orderNumber,
         brand: brandFromModel(product),
-        user: req.user._id,
+        // The CUSTOMER's booking, whoever placed it. Their identity is
+        // snapshotted below; the staff member who placed it (if any) is in
+        // `creator`, which is null for the customer's own booking.
+        user: customer._id,
+        ...creator,
         status: 'PO Received',
         orderTimestamp: dateNow,
-        company: req.user.company || 'Shraddha Impex',
-        role: req.user.role || 'user',
+        company: customer.company || 'Shraddha Impex',
+        role: customer.role || 'user',
         date: dateNow,
         skuCode: product.skuCode,
         category: Array.isArray(product.category) ? product.category.join(', ') : (product.category || 'Unknown'),
@@ -1055,21 +1141,21 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
         msilCode: product.msilCode || null,
         boxNo: product.boxNo || null,
         vendorCode: product.vendorCode || null,
-        emailId: req.user.email || null,
-        phoneNumber: req.user.phone || null,
+        emailId: customer.email || null,
+        phoneNumber: customer.phone || null,
         // ── Customer identity, snapshotted at creation ──────────────────
         // Copied onto the row rather than looked up when the picklist is drawn,
         // so a customer who later moves or re-registers does not rewrite the
         // address on a booking that has already been picked. Same reasoning as
         // `unitPrice` — see models/Order.js.
-        shippingAddress: req.user.shippingAddress || null,
-        billingAddress: req.user.billingAddress || null,
-        shopNumber: req.user.shopNumber || null,
-        gstCode: req.user.gstNumber || null,
+        shippingAddress: customer.shippingAddress || null,
+        billingAddress: customer.billingAddress || null,
+        shopNumber: customer.shopNumber || null,
+        gstCode: customer.gstNumber || null,
         // The delivery location chosen at checkout, falling back to the
         // customer's profile location. Stamped so the pick list can carry the
         // location and its phone number without a second lookup.
-        location: req.body.deliveryLocation || req.user.location || null
+        location: req.body.deliveryLocation || customer.location || null
       });
     }
 
@@ -1098,7 +1184,8 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
       endpoint: req.originalUrl || 'N/A',
       ipAddress: req.ip || '127.0.0.1',
       userAgent: req.headers?.['user-agent'] || 'ERP SYSTEM',
-      remarks: `Reservation ${resItem.reservationId}: confirmed ${confirmedQty}, pending ${pendingQty} (requested ${requestedQty})`,
+      remarks: `Reservation ${resItem.reservationId}: confirmed ${confirmedQty}, pending ${pendingQty} (requested ${requestedQty})`
+        + (onBehalf ? ` — placed by ${actorName(req.user)} for ${customerLabel(customer)}` : ''),
     });
 
     summary.push({
@@ -1160,12 +1247,16 @@ const runConfirmBooking = async (req, session, { items = null } = {}) => {
 const runConfirmationRequest = async (req, res, next, { items = null } = {}) => {
   const tag = items ? 'createDirectBooking' : 'confirmBooking';
   try {
+    // Who the booking is for. Decided BEFORE the transaction so a refused
+    // customer (not the desk, not a customer account, suspended) costs nothing.
+    const { customer, onBehalf } = await resolveBookingCustomer(req, req.body?.customerId);
+
     // One ACID transaction for the whole confirmation — every line, its stock
     // and its booking row, or none of them. A write conflict with another
     // booking of the same SKU is retried; ledger postings wait for the commit.
     // See utils/transaction.js.
     const result = await runInTransaction(
-      (session) => runConfirmBooking(req, session, { items }),
+      (session) => runConfirmBooking(req, session, { items, customer, onBehalf }),
       { label: tag },
     );
 
@@ -1188,14 +1279,28 @@ const runConfirmationRequest = async (req, res, next, { items = null } = {}) => 
       : isCombined
         ? `Booking ${orderNumber} (PO ${poNumber}): ${totalConfirmed} units confirmed, ${totalPending} units moved to Indent ${indentId}.`
         : `Your booking ${orderNumber} (PO ${poNumber}) is confirmed.`;
+    // The CUSTOMER's notification — it is their booking, and it lands in their
+    // portal exactly as one they placed themselves would.
     sendNotification(
-      req.user._id,
+      customer._id,
       isStandaloneIndent ? 'Indent Raised' : 'Booking Confirmed',
       notifMessage,
       'order',
     );
+    // And the desk's own, when they placed it, so the person who pressed
+    // Confirm sees the outcome in their notifications too.
+    if (onBehalf) {
+      sendNotification(
+        req.user._id,
+        isStandaloneIndent ? 'Indent Raised' : 'Booking Confirmed',
+        `For ${customerLabel(customer)}: ${notifMessage}`,
+        'order',
+      );
+    }
 
-    const who = req.user.company || req.user.user || req.user.email;
+    const who = onBehalf
+      ? `${actorName(req.user)} (for ${customerLabel(customer)})`
+      : (req.user.company || req.user.user || req.user.email);
     notifyAdmins({
       title: isStandaloneIndent
         ? 'Indent Raised'
@@ -1218,10 +1323,17 @@ const runConfirmationRequest = async (req, res, next, { items = null } = {}) => 
     // reported defect was mail that silently did not go, and a promise nobody
     // waits on cannot report that. The wait is a second or two on an
     // already-saved record, and both helpers swallow their own failures.
+    //
+    // TO the customer, whoever placed it. A booking the desk placed copies the
+    // staff member (`extraCc`) and names them in the body — the customer is
+    // never replaced as the recipient of mail about their own booking.
+    const creator = creatorStamp(req, onBehalf);
     const mailArgs = {
-      customer: req.user,
+      customer,
       indentDate: confirmedAt,
       poNumber,
+      extraCc: creatorEmails([creator]),
+      placedBy: onBehalf ? { name: creator.createdByName, role: creator.createdByRole } : null,
     };
     const delivery = isStandaloneIndent
       ? await sendIndentRaisedMails({
@@ -1253,7 +1365,7 @@ const runConfirmationRequest = async (req, res, next, { items = null } = {}) => 
     // An indent with no booking still changes what Indent History shows, and
     // the screen had no reason to refetch because no order-created ever fired.
     if (totalPending > 0) {
-      io.emit('indent-raised', { indentId, customerId: String(req.user._id) });
+      io.emit('indent-raised', { indentId, customerId: String(customer._id) });
     }
 
     res.status(201).json({
@@ -1262,6 +1374,16 @@ const runConfirmationRequest = async (req, res, next, { items = null } = {}) => 
         orderId: orderNumber,
         poNumber,
         indentId,
+        // Whose booking it is, and who placed it (null when the customer did).
+        customer: {
+          id: String(customer._id),
+          name: customerLabel(customer),
+          company: customer.company || null,
+          email: customer.email || null,
+        },
+        createdBy: onBehalf
+          ? { id: String(req.user._id), name: creator.createdByName, role: creator.createdByRole }
+          : null,
         order: createdOrders[0] || null,
         orders: createdOrders,
         summary,

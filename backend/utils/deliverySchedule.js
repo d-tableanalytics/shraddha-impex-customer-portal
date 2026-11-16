@@ -30,6 +30,7 @@ import Reservation from '../models/Reservation.js';
 import User from '../models/User.js';
 import { sendEmail } from './mailer.js';
 import { COMPANY_CC } from './mailRecipients.js';
+import { creatorEmailsForOrder } from './bookingRecipients.js';
 import { buildDeliveryScheduleMail } from './deliveryScheduleMail.js';
 import { termsFor } from './transactionTerms.js';
 import {
@@ -373,8 +374,11 @@ export async function sendDeliverySchedule(customer, { orderId = null } = {}) {
       }
     }
 
+    // When the mail is about one booking, the staff member who placed it (if
+    // the desk did) is copied, as on every other mail in that booking's life.
+    const creatorCc = orderId ? await creatorEmailsForOrder(orderId) : [];
     await sendEmail(record.email, mail.subject, html, {
-      cc: [...(record.bookingCcEmails || []), ...COMPANY_CC],
+      cc: [...(record.bookingCcEmails || []), ...COMPANY_CC, ...creatorCc],
       ...(attachments.length ? { attachments } : {}),
     });
     return { sent: true, total: mail.total, attachments: attachments.length };

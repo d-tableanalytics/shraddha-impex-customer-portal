@@ -1,4 +1,4 @@
-import { PERMISSIONS, hasPermission, homePathFor, canManageRoles } from "./permissions";
+import { PERMISSIONS, hasPermission, homePathFor, canManageRoles, canAction } from "./permissions";
 
 /**
  * Turns the user's access into the sidebar's groups.
@@ -92,11 +92,12 @@ const FALLBACK_MODULES = [
     items: [
       { key: "dashboard", label: "Inventory Dashboard", path: "/inventory/dashboard", icon: "GaugeCircle", any: [PERMISSIONS.VIEW_INVENTORY] },
       { key: "master", label: "Inventory Master", path: "/inventory/master", icon: "Warehouse", any: [PERMISSIONS.VIEW_INVENTORY] },
-      { key: "health", label: "Inventory Health", path: "/inventory/health", icon: "Activity", any: [PERMISSIONS.VIEW_INVENTORY] },
+      // Inventory Health and Brands are not menu entries: both are reached from
+      // buttons on Inventory Master (Inventory Health Check, Add Brands). They
+      // are `hidden` in backend/config/moduleRegistry.js for the same reason.
       { key: "ledger", label: "Stock Ledger", path: "/inventory/ledger", icon: "ScrollText", any: [PERMISSIONS.VIEW_STOCK_LEDGER] },
       { key: "imports", label: "Inventory Import", path: "/inventory/import", icon: "Upload", any: [PERMISSIONS.VIEW_INVENTORY] },
       { key: "product_content", label: "Product Details", path: "/admin/product-details", icon: "Images", any: [PERMISSIONS.MANAGE_INVENTORY_MASTER] },
-      { key: "brands", label: "Brands", path: "/inventory/brands", icon: "Tags", any: [PERMISSIONS.CONFIGURE_INVENTORY] },
     ],
   },
   {
@@ -172,9 +173,15 @@ const withRolesItem = (groups, user) => {
  *
  * It has no registry entry — its API is guarded by existing permission keys
  * (view_inventory / manage_inventory_master / assign_indent_stock) rather than
- * a cell of its own — so the server's menu never carries it. It is placed
- * directly after Inventory Health and only where Health is offered, which is
- * also the cell its route checks.
+ * a cell of its own — so the server's menu never carries it.
+ *
+ * It is offered to whoever may VIEW INVENTORY HEALTH, the cell its route
+ * checks (routes/index.jsx), and placed directly after Inventory Master.
+ *
+ * It used to be anchored on the Inventory Health menu row and offered only
+ * where that row was present. Inventory Health left the sidebar (2026-11-16),
+ * and anchoring on the row would have taken Upcoming Stock out with it, so it
+ * now asks the permission itself.
  */
 const UPCOMING_ITEM = {
   id: "inventory.upcoming",
@@ -184,14 +191,59 @@ const UPCOMING_ITEM = {
   icon: "CalendarClock",
 };
 
-const withUpcomingItem = (groups) =>
-  groups.map((g) => {
-    const at = g.items.findIndex((i) => i.path === "/inventory/health");
+/** May open Upcoming Stock: the route's own cell, or view_inventory on an older server. */
+const mayOpenUpcoming = (user) => (Array.isArray(user?.grants)
+  ? canAction(user, "inventory", "health", "view")
+  : hasPermission(user, PERMISSIONS.VIEW_INVENTORY));
+
+const withUpcomingItem = (groups, user) => {
+  if (!mayOpenUpcoming(user)) return groups;
+  return groups.map((g) => {
+    const at = g.items.findIndex((i) => i.path === "/inventory/master");
     if (at < 0 || g.items.some((i) => i.path === UPCOMING_ITEM.path)) return g;
     const items = [...g.items];
     items.splice(at + 1, 0, UPCOMING_ITEM);
     return { ...g, items };
   });
+};
+
+/**
+ * Pages with no sidebar entry of their own that belong to one that has.
+ *
+ * Inventory Health and Brands are opened from buttons on Inventory Master and
+ * are not in the menu. The sidebar highlights the item whose path is the
+ * longest prefix of the URL, so without this "/inventory/health" fell through
+ * to "/inventory" — Product Catalogue — which has nothing to do with it.
+ *
+ * Exact parents, not a pattern: only these pages are re-pointed, so no other
+ * URL can start highlighting Inventory Master by accident.
+ */
+export const NAV_PARENTS = Object.freeze({
+  "/inventory/health": "/inventory/master",
+  "/inventory/brands": "/inventory/master",
+});
+
+/**
+ * The path the sidebar should treat as current.
+ *
+ * A child page reads as its parent. Two guards keep that honest: if the child
+ * ever gets a menu entry of its own again, that entry wins; and if the parent
+ * is not in this user's menu, the result is null — highlight nothing — rather
+ * than letting the parent's path fall through to some broader prefix and light
+ * up an unrelated item, which is the bug this exists to stop.
+ *
+ * @param {string} pathname  location.pathname
+ * @param {Array<{path: string}>} items  every item in the sidebar
+ * @returns {string|null}
+ */
+export const navPathFor = (pathname, items = []) => {
+  for (const [child, parent] of Object.entries(NAV_PARENTS)) {
+    if (pathname !== child && !pathname.startsWith(`${child}/`)) continue;
+    if (items.some((i) => i.path === child)) return pathname;
+    return items.some((i) => i.path === parent) ? parent : null;
+  }
+  return pathname;
+};
 
 export const buildNavigation = (user) => {
   const menu = Array.isArray(user?.menu) && user.menu.length ? user.menu : fallbackMenu(user);
@@ -226,7 +278,7 @@ export const buildNavigation = (user) => {
     }))
     .filter((mod) => mod.items.length > 0);
 
-  return withRolesItem(withUpcomingItem(groups), user);
+  return withRolesItem(withUpcomingItem(groups, user), user);
 };
 
 export default buildNavigation;

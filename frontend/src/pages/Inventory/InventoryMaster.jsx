@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import {
   Boxes, Search, AlertCircle, X, Save, Loader2, Layers, PackagePlus, Upload, Trash2,
-  Pencil, Check,
+  Pencil, Check, Activity, Tags,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -26,8 +26,33 @@ import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import {
   canUseInventoryMaster, canEditPlanning, canEditBoxNo, canAdjustStock, canManagePricing,
-  hasPermission, PERMISSIONS,
+  hasPermission, PERMISSIONS, canAction,
 } from '../../utils/permissions';
+
+/** Where the Inventory Health Check button goes: the existing health screen. */
+export const INVENTORY_HEALTH_PATH = '/inventory/health';
+
+/**
+ * Whether to offer the Inventory Health Check button: the SAME cell the
+ * /inventory/health route is guarded by (ModuleRoute inventory.health.view),
+ * so the button never leads to an access-denied screen. An older server sends
+ * no grants; the route then lets everyone through, and so does this.
+ */
+export const canOpenInventoryHealth = (user) =>
+  !Array.isArray(user?.grants) || canAction(user, 'inventory', 'health', 'view');
+
+/** Where the Add Brands button goes: the existing Brands management screen. */
+export const BRANDS_PATH = '/inventory/brands';
+
+/**
+ * Whether to offer the Add Brands button: the cell the /inventory/brands route
+ * is guarded by (inventory.brands.view). On an older server that sends no
+ * grants, the permission behind that cell — configure_inventory, Admin-only
+ * by default — so the button is not offered to everyone in that window.
+ */
+export const canOpenBrands = (user) => (Array.isArray(user?.grants)
+  ? canAction(user, 'inventory', 'brands', 'view')
+  : hasPermission(user, PERMISSIONS.CONFIGURE_INVENTORY));
 import { onStockUpdated } from '../../services/socketService';
 
 /**
@@ -346,13 +371,19 @@ const DetailPanel = ({
 
 export const InventoryMaster = () => {
   const { user } = useUserStore();
+  const navigate = useNavigate();
   const {
     items, total, catalogueTotal, loading, error,
     filters, setFilters, fetchItems,
     selected, detailLoading, openItem, closeItem, savePlanning,
   } = useInventoryStore();
 
-  const [searchTerm, setSearchTerm] = useState('');
+  // Seeded from the search the store still holds. The filters (search, brand,
+  // status, sort, page) live in the inventory store and survive leaving the
+  // page — to Inventory Health or Brands and back. The box used to start empty
+  // regardless, so on return the list was still filtered by the old term while
+  // the box showed nothing, and `filtering` below never settled.
+  const [searchTerm, setSearchTerm] = useState(() => filters.search || '');
 
   // True from the first keystroke, not only once the request is in flight.
   // The search box waits 300ms before firing, and during that pause the old
@@ -501,7 +532,20 @@ export const InventoryMaster = () => {
       <PageHeader
         title="Inventory Master"
         actions={(
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+          {/* One click to the existing Inventory Health screen (bands, coverage
+              days, availability, its own filters). This button is now the way
+              in: Inventory Health is no longer in the sidebar. */}
+          {canOpenInventoryHealth(user) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(INVENTORY_HEALTH_PATH)}
+              title="Open Inventory Health: stock bands, coverage days and availability"
+            >
+              <Activity size={15} className="mr-2" />Inventory Health Check
+            </Button>
+          )}
           {canEditPlanning(user) && (
             <Button size="sm" onClick={() => setAddOpen(true)}>
               <PackagePlus size={15} className="mr-2" />Add SKU
@@ -510,14 +554,19 @@ export const InventoryMaster = () => {
           <Button variant="outline" size="sm" onClick={() => setLookupOpen(true)}>
             <Upload size={15} className="mr-2" />Import
           </Button>
-          <ExportButton
-            exportType="inventory-master"
-            filters={{
-              search: filters.search, brand: filters.brand,
-              status: filters.status,
-            }}
-            selected={[...picked]}
-          />
+          {/* Where Export used to sit (it moved to the filter bar, beside what
+              it exports). Opens the existing Brands management screen, which
+              left the sidebar. */}
+          {canOpenBrands(user) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(BRANDS_PATH)}
+              title="Open Brands: add brands and manage which customers see them"
+            >
+              <Tags size={15} className="mr-2" />Add Brands
+            </Button>
+          )}
           </div>
         )}
       />
@@ -611,6 +660,18 @@ export const InventoryMaster = () => {
               >
                 {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
+
+              {/* Export sits with the filters it exports: the current search,
+                  brand and status, or the ticked SKUs. Same component and
+                  props it had in the header — only its position changed. */}
+              <ExportButton
+                exportType="inventory-master"
+                filters={{
+                  search: filters.search, brand: filters.brand,
+                  status: filters.status,
+                }}
+                selected={[...picked]}
+              />
             </div>
           </div>
 

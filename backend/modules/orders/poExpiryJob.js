@@ -2,7 +2,7 @@ import Order from '../../models/Order.js';
 import User from '../../models/User.js';
 import AuditLog from '../../models/AuditLog.js';
 import { sendEmail } from '../../utils/mailer.js';
-import { COMPANY_CC } from '../../utils/mailRecipients.js';
+import { bookingCc } from '../../utils/bookingRecipients.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { isPoGenerated, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { runInTransaction } from '../../utils/transaction.js';
@@ -276,7 +276,8 @@ const settleOnce = async ({ dryRun = false } = {}) => {
               lines,
               bookingDate: bookingDateOf(lines[0]),
             }),
-            { cc: [...(customer?.bookingCcEmails || []), ...COMPANY_CC] },
+            // Copied to the staff member who placed the booking, if the desk did.
+            { cc: bookingCc(customer, lines) },
           ).catch((e) => console.error('[poSettlement] email error', e));
         }
       }

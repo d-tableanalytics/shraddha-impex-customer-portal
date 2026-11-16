@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
+import { customerNameOf, companyNameOf, siTeamOf, siTeamLabelOf } from "../../utils/bookingParty";
 import { useUserStore } from "../../store/userStore";
 import { useBusyAction } from "../../hooks/useBusyAction";
 import { ERPButton } from "../ui/ERPButton";
@@ -369,7 +370,10 @@ export const SalesBookingDrawer = () => {
       ...(showBoxNo ? [{ key: "boxNo", label: "Box No" }] : []),
       { key: "quantity", label: "Quantity" },
     ];
-    const title = `Booking ${selected.orderId}${selected.customer ? ` — ${selected.customer}` : ""}`;
+    // The CUSTOMER's name, the same way the desk list shows it; the company
+    // only when no name is on the account (utils/bookingParty.js).
+    const partyName = customerNameOf(selected) || companyNameOf(selected);
+    const title = `Booking ${selected.orderId}${partyName ? ` — ${partyName}` : ""}`;
     // Reference lines under the title. The pick list travels to the warehouse
     // floor, so the delivery location and its phone number ride on it — always
     // both lines, with an em dash when unknown, so a missing value is VISIBLY
@@ -695,19 +699,36 @@ export const SalesBookingDrawer = () => {
                 )}
               </div>
 
-              {/* CUSTOMER */}
-              <div className="h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+              {/* CUSTOMER — the same three facts the desk list shows, from the
+                  same rule (utils/bookingParty.js): the customer's name from
+                  their live profile (never the company in its place), their
+                  company, and the SI Team stored on the booking. This tile
+                  used to show `selected.customer`, which is the COMPANY
+                  stamped on the order rows, under a "Customer" heading. */}
+              <div className="h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm" data-testid="booking-customer-tile">
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <User size={13} className="text-blue-600 shrink-0" />
                   <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 whitespace-nowrap">
-                    Customer
+                    Customer Name
                   </p>
                 </div>
                 <p
                   className="text-sm font-bold text-slate-800 truncate"
-                  title={selected.customer || ""}
+                  title={customerNameOf(selected) || "No customer name on this account"}
                 >
-                  {selected.customer || "—"}
+                  {customerNameOf(selected) || "—"}
+                </p>
+                <p
+                  className="mt-1 text-[11px] font-semibold text-slate-500 truncate"
+                  title={companyNameOf(selected) || "No company recorded"}
+                >
+                  Company: <span className="text-slate-700">{companyNameOf(selected) || "—"}</span>
+                </p>
+                <p
+                  className="mt-0.5 text-[11px] font-semibold text-slate-500 truncate"
+                  title={siTeamLabelOf(selected) || "Placed by the customer"}
+                >
+                  SI Team: <span className="text-slate-700">{siTeamOf(selected) || "—"}</span>
                 </p>
               </div>
 

@@ -197,15 +197,18 @@ const bookingTable = (summary = [], { audience = 'customer' } = {}) => {
  *
  * @returns {{customer: 'sent'|'failed'|'skipped', support: 'sent'|'failed'|'skipped'}}
  */
-const deliver = async ({ customer, subject, customerBody, supportSubject, supportBody, tag }) => {
+const deliver = async ({ customer, subject, customerBody, supportSubject, supportBody, tag, extraCc = [] }) => {
   const toCustomer = async () => {
     if (!customer?.email || customer?.preferences?.emailNotifications === false) {
       console.warn(`[${tag}] no customer mail: `
         + (customer?.email ? 'email notifications are switched off for this account.' : 'no address on the account.'));
       return 'skipped';
     }
+    // `extraCc` is the Sales Person or Admin who placed the booking on the
+    // customer's behalf — copied on the customer's mail, never sent instead
+    // of it. The customer stays the To: address whoever pressed the button.
     const ok = await sendEmail(customer.email, subject, customerBody, {
-      cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC],
+      cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC, ...extraCc],
     }).catch((e) => {
       console.error(`[${tag}] customer mail threw for ${customer.email}:`, e.message);
       return false;
@@ -250,7 +253,20 @@ const deliver = async ({ customer, subject, customerBody, supportSubject, suppor
  * skipped or, worse, went out headed "Booking confirmed — 0 units", which is
  * both wrong and alarming.
  */
-export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, poNumber, lines }) => {
+/**
+ * One line naming the staff member who placed a booking on the customer's
+ * behalf. Empty for the customer's own booking, so those mails read exactly as
+ * they always have.
+ */
+const placedByLine = (placedBy) => (placedBy?.name
+  ? `<p style="font-size: 13px; color: #555;">This was placed on your behalf by
+       <strong>${esc(placedBy.name)}</strong>${placedBy.role ? ` (${esc(placedBy.role)})` : ''} of Shraddha Impex,
+       who is copied on this mail.</p>`
+  : '');
+
+export const sendIndentRaisedMails = async ({
+  customer, indentId, indentDate, poNumber, lines, extraCc = [], placedBy = null,
+}) => {
   const name = customer?.user || customer?.name || customer?.company || 'Customer';
   const count = lines.length;
   const units = lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
@@ -275,6 +291,7 @@ export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, po
     <p>Your indent has been <strong>raised successfully</strong>. The ${units} unit(s) below are
        not in stock today, so they have been recorded as an indent and will be fulfilled as soon
        as fresh stock is received.</p>
+    ${placedByLine(placedBy)}
     ${facts('customer')}
     <p>We will email you the moment material is inwarded against this indent, and the booking
        will be raised for you automatically — no action is needed from your side.</p>
@@ -284,6 +301,7 @@ export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, po
     <p><strong>A new indent has been raised and needs to be actioned.</strong></p>
     <p>${esc(name)} requested ${units} unit(s) across ${count} line(s) that could not be
        fulfilled from available stock. No booking exists for this request.</p>
+    ${placedBy?.name ? `<p>Placed on the customer's behalf by <strong>${esc(placedBy.name)}</strong>.</p>` : ''}
     ${facts('support')}
     <p>Please arrange procurement or set an expected availability date from
        <strong>Indent History</strong>.</p>`;
@@ -295,6 +313,7 @@ export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, po
     supportSubject: `[Support] Indent ${indentId} raised by ${name} — ${units} units`,
     supportBody,
     tag: 'Indent Raised',
+    extraCc,
   });
 };
 
@@ -307,7 +326,7 @@ export const sendIndentRaisedMails = async ({ customer, indentId, indentDate, po
  */
 export const sendBookingMails = async ({
   customer, orderNumber, poNumber, indentId, bookingDate,
-  summary, totalConfirmed, totalPending,
+  summary, totalConfirmed, totalPending, extraCc = [], placedBy = null,
 }) => {
   const name = customer?.user || customer?.name || customer?.company || 'Customer';
   const totalRequested = totalConfirmed + totalPending;
@@ -345,6 +364,7 @@ export const sendBookingMails = async ({
   const customerBody = `
     <p>Hi ${esc(name)},</p>
     <p>Your booking is <strong>confirmed</strong>.</p>
+    ${placedByLine(placedBy)}
     ${facts('customer')}
     ${hasIndent
       ? `<p>Of the ${totalRequested} unit(s) booked, <strong>${totalConfirmed}</strong> were confirmed
@@ -365,6 +385,7 @@ export const sendBookingMails = async ({
       : 'A booking has been confirmed.'}</strong></p>
     <p>${esc(name)} confirmed ${totalRequested} unit(s): ${totalConfirmed} fulfilled from stock${
       hasIndent ? `, ${totalPending} recorded against indent ${esc(indentId)}` : ''}.</p>
+    ${placedBy?.name ? `<p>Placed on the customer's behalf by <strong>${esc(placedBy.name)}</strong>.</p>` : ''}
     ${facts('support')}
     ${hasIndent
       ? '<p>Please arrange procurement for the indented lines, or set an expected availability date '
@@ -382,6 +403,7 @@ export const sendBookingMails = async ({
     supportSubject: `[Support] ${subject} — ${name}`,
     supportBody,
     tag: 'Booking Confirmed',
+    extraCc,
   });
 };
 
@@ -394,7 +416,7 @@ export const sendBookingMails = async ({
  * booking mail already opens with "stock has arrived for items you were waiting
  * on", and sending this as well would be the duplicate the brief rules out.
  */
-export const sendMaterialInwardMails = async ({ customer, lines, reference }) => {
+export const sendMaterialInwardMails = async ({ customer, lines, reference, extraCc = [] }) => {
   const name = customer?.user || customer?.name || customer?.company || 'Customer';
   const count = lines.length;
 
@@ -453,6 +475,7 @@ export const sendMaterialInwardMails = async ({ customer, lines, reference }) =>
     supportSubject: `[Support] Material inwarded against ${name}'s open indent — ${count} line(s)`,
     supportBody,
     tag: 'Material Inward',
+    extraCc,
   });
 };
 

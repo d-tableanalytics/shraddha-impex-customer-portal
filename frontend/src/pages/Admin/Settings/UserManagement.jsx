@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAdminStore } from '../../../store/adminStore';
 import { useUserStore } from '../../../store/userStore';
 import { Card, CardContent } from '../../../components/ui/Card';
@@ -193,6 +193,20 @@ export const UserManagement = ({ audience = 'internal' }) => {
     roles, fetchAssignableRoles,
   } = useAdminStore();
   const { user } = useUserStore();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  /**
+   * Arrived from Create Booking's "+ Add Customer" (`?add=1&returnTo=…`).
+   *
+   * The Add form opens by itself, and a created customer sends the user back
+   * to where they came from with the new account's id, so Create Booking can
+   * select it without a second search. Only a path inside this app is honoured
+   * as a return address.
+   */
+  const returnTo = (() => {
+    const raw = searchParams.get('returnTo') || '';
+    return raw.startsWith('/') && !raw.startsWith('//') ? raw : null;
+  })();
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -298,6 +312,18 @@ export const UserManagement = ({ audience = 'internal' }) => {
   useEffect(() => {
     if (mayOpen) fetchUsers();
   }, [fetchUsers, mayOpen]);
+
+  // `?add=1`: open the Add form straight away (customers only — it is what
+  // Create Booking links to), then drop the flag so a reload does not reopen it.
+  useEffect(() => {
+    if (!isCustomerAudience || !mayAdd || searchParams.get('add') !== '1') return;
+    setForm((f) => ({ ...f, accessLevel: addLevels[0] ?? f.accessLevel, brandAccess: allBrandsTicked() }));
+    setShowAdd(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('add');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCustomerAudience, mayAdd, searchParams.get('add')]);
 
   // The custom roles, for the access-level dropdown. Only an actor who may
   // manage every account can assign one, so a Sales user does not pay for a
@@ -462,6 +488,11 @@ export const UserManagement = ({ audience = 'internal' }) => {
       toast.success('User created');
       setForm(emptyForm);
       setShowAdd(false);
+      // Back to Create Booking with the new customer pre-selected.
+      if (returnTo && isCustomerLevel(accessLevel) && res.user?._id) {
+        const joiner = returnTo.includes('?') ? '&' : '?';
+        navigate(`${returnTo}${joiner}customer=${encodeURIComponent(res.user._id)}`);
+      }
     } else {
       toast.error(res.error || 'Failed to create user');
     }
@@ -479,6 +510,15 @@ export const UserManagement = ({ audience = 'internal' }) => {
               ? 'Onboard and maintain the businesses we sell to — categories, brand access and contact details.'
               : 'Create and maintain staff accounts. These people work across both portals.'}
           </p>
+          {returnTo && isCustomerAudience && (
+            <button
+              type="button"
+              onClick={() => navigate(returnTo)}
+              className="mt-1 text-xs font-bold text-primary-600 hover:text-primary-700"
+            >
+              ← Back to Create Booking
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <div className="relative w-full sm:w-72">

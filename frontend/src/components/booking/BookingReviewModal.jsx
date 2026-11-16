@@ -143,10 +143,13 @@ const AddProductRow = ({ user, disabled, onAdd }) => {
 
 export const BookingReviewModal = ({ isOpen, onClose, onConfirmed }) => {
   const {
-    items: lines, header, setPOHeader, loading,
+    items: lines, header, setPOHeader, loading, customer: actingCustomer,
     addItem, removeItem, updateQuantity, fetchReservations, confirmBooking,
   } = useCartStore();
-  const user = useUserStore((s) => s.user);
+  const signedIn = useUserStore((s) => s.user);
+  // The desk books FOR a customer: the lines are checked under that customer's
+  // rules (MOQ, MSIL), not the salesperson's. See cartStore `customer`.
+  const user = actingCustomer || signedIn;
   const showMsilCode = useShowMsilCode();
 
   const [submitting, setSubmitting] = useState(false);
@@ -245,6 +248,20 @@ export const BookingReviewModal = ({ isOpen, onClose, onConfirmed }) => {
             Check each line below. You can change quantities, remove lines or add products before confirming.
           </span>
         </p>
+
+        {actingCustomer && (
+          <div
+            className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3.5 py-2.5 text-sm"
+            data-testid="review-booking-for"
+          >
+            <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-700">Booking for</span>
+            <span className="font-black text-slate-800">
+              {actingCustomer.customerName || actingCustomer.user || actingCustomer.company || actingCustomer.email}
+            </span>
+            {actingCustomer.company && <span className="text-slate-500">· {actingCustomer.company}</span>}
+            {actingCustomer.email && <span className="text-slate-400 text-xs">· {actingCustomer.email}</span>}
+          </div>
+        )}
 
         {problem && (
           <div role="alert" className="flex items-start gap-2.5 p-3 bg-red-50 border border-red-200 rounded-xl">

@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { Card, CardContent } from '../../components/ui/Card';
 import { PageHeader } from '../../components/common/PageHeader';
 import { BrandSettings } from '../../components/inventory/BrandSettings';
+import { BackToInventoryMaster } from '../../components/inventory/BackToInventoryMaster';
 import { useUserStore } from '../../store/userStore';
 import { canConfigureInventory } from '../../utils/permissions';
 
@@ -21,7 +22,8 @@ export const InventoryBrands = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Brands" />
+      {/* Reached from Add Brands on Inventory Master, not the sidebar. */}
+      <PageHeader title="Brands" back={<BackToInventoryMaster />} />
       <Card>
         <CardContent className="p-6 flex flex-col gap-5">
           <p className="text-xs text-slate-500 leading-relaxed max-w-2xl">

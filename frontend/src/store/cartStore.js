@@ -65,8 +65,22 @@ const loadPendingItems = async () => {
   return pendingItems;
 };
 
+/**
+ * The customer the signed-in user is booking FOR, or null.
+ *
+ * Null for a customer (they book for themselves, as they always have). For a
+ * Sales Person or Admin it is the account chosen in the Select Customer field
+ * on Create Booking: the Selection List read and written below is THAT
+ * customer's (the one this staff member is building for them), and the
+ * booking confirmed from it belongs to that customer. The id rides on every
+ * reservation call; the whole record is kept so the form can apply the
+ * customer's own rules (MOQ, MSIL, brand) rather than the staff member's.
+ */
+const customerIdOf = (customer) => customer?._id || customer?.id || null;
+
 export const useCartStore = create((set, get) => ({
   items: [], // Stores reservation objects
+  customer: null, // the customer a Sales/Admin user is booking for (see above)
   pendingItems: [], // Backordered quantities awaiting stock
   // Starts true so the Indent History table shows skeleton rows on first paint
   // rather than a "no indents" flash before the first fetch resolves.
@@ -85,10 +99,25 @@ export const useCartStore = create((set, get) => ({
     }));
   },
 
+  /**
+   * Choose (or clear) the customer a staff member is booking for. The list on
+   * screen belongs to the previous customer, so it is dropped and re-read for
+   * the new one rather than shown for a moment under the wrong name.
+   */
+  setCustomer: async (customer) => {
+    const next = customer || null;
+    if (customerIdOf(next) === customerIdOf(get().customer)) return;
+    set({ customer: next, items: [], header: { ...initialHeader }, error: null });
+    await get().fetchReservations();
+  },
+
   fetchReservations: async () => {
     set({ loading: true, error: null });
     try {
-      const dbReservations = await reservationsApi.getAll();
+      const customerId = customerIdOf(get().customer);
+      const dbReservations = await reservationsApi.getAll({ customerId });
+      // The customer changed while this was in flight: that list is not this one.
+      if (customerIdOf(get().customer) !== customerId) return;
       
       // Map to items expected by the frontend
       // Each item has: { product: { id, code, name, msilCode, category, brand, availableStock, price, unit, warehouse }, orderQuantity, reservationDate, expiryDate, remainingDays, status, _id }
@@ -180,7 +209,7 @@ export const useCartStore = create((set, get) => ({
     set({ loading: true, error: null });
     try {
       const productId = product.id || product._id;
-      const { merged } = await reservationsApi.create(productId, quantity);
+      const { merged } = await reservationsApi.create(productId, quantity, customerIdOf(get().customer));
       selectionListChanged();
       await get().fetchReservations();
       set({ loading: false });
@@ -263,7 +292,7 @@ export const useCartStore = create((set, get) => ({
     }
   },
 
-  resetAll: () => set({ items: [], header: { ...initialHeader } }),
+  resetAll: () => set({ items: [], customer: null, header: { ...initialHeader } }),
 
   /**
    * @param {Array} [reviewed] The lines the customer approved in the review
@@ -274,7 +303,11 @@ export const useCartStore = create((set, get) => ({
     set({ loading: true, error: null });
     try {
       const header = get().header;
-      const order = await reservationsApi.confirm(header.deliveryLocation, header.remarks, reviewed);
+      // The chosen customer stays selected after the booking: the desk often
+      // books several times for one customer, and the list is empty anyway.
+      const order = await reservationsApi.confirm(
+        header.deliveryLocation, header.remarks, reviewed, customerIdOf(get().customer),
+      );
       set({ items: [], header: { ...initialHeader }, loading: false });
       // A new booking: every screen showing bookings, indents or the dashboard
       // figures is now out of date.
@@ -300,7 +333,7 @@ registerSessionReset(() => {
   pendingSeq += 1;
   pendingRequest = null;
   useCartStore.setState({
-    items: [], pendingItems: [], pendingLoading: true, pendingLoaded: false, pendingFetchedAt: 0,
+    items: [], customer: null, pendingItems: [], pendingLoading: true, pendingLoaded: false, pendingFetchedAt: 0,
     header: { ...initialHeader }, loading: false, error: null,
   });
 });

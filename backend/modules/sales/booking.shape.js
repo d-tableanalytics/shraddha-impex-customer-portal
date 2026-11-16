@@ -149,6 +149,19 @@ export const shapeBooking = (
     orderId: first.orderId,
     customer: first.company || null,
     user: first.user,
+    /**
+     * Who placed the booking, when it was not the customer — the "SI Team"
+     * column. Read off the row's own stamp (models/Order.js), never from the
+     * signed-in user. Null is the customer's own booking.
+     */
+    createdBy: first.createdBy
+      ? {
+        id: first.createdBy,
+        name: first.createdByName || null,
+        email: first.createdByEmail || null,
+        role: first.createdByRole || null,
+      }
+      : null,
     brand: first.brand,
     date: bookingDate,
     // Deadline for raising the PO. Sent as an absolute timestamp so the UI can

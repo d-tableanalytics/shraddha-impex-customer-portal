@@ -35,9 +35,16 @@ const RESERVATIONS = [{
 
 const confirmCalls = () => api.post.mock.calls.filter(([url]) => url === "/reservations/confirm");
 
+// The customer a salesperson books FOR — Select Customer is mandatory for them.
+const ABC = { _id: "cust-abc", customerName: "Customer ABC", company: "ABC Industries", email: "abc@example.com", moq: "SKIP" };
+
 const renderAs = async (user) => {
   useUserStore.setState({ user, loading: false });
   render(<MemoryRouter><CustomerOrders /></MemoryRouter>);
+  if (user.role === "Sales") {
+    fireEvent.focus(screen.getByLabelText(/Select Customer/));
+    fireEvent.click(await screen.findByText("Customer ABC"));
+  }
   // Enabled once the Selection List has loaded (it is disabled while empty).
   const button = (await screen.findByText("CONFIRM BOOKING")).closest("button");
   await waitFor(() => expect(button.disabled).toBe(false));
@@ -48,6 +55,7 @@ beforeEach(() => {
   resetSessionStores();
   api.get.mockImplementation((url) => {
     if (url === "/reservations") return Promise.resolve({ data: { data: RESERVATIONS } });
+    if (url === "/users/customers") return Promise.resolve({ data: { data: [ABC] } });
     return Promise.resolve({ data: { data: [] } });
   });
   api.post.mockResolvedValue({
@@ -81,5 +89,7 @@ describe("Confirm Booking", () => {
     fireEvent.click(confirm);
     await waitFor(() => expect(confirmCalls()).toHaveLength(1));
     expect(confirmCalls()[0][1].reviewed).toEqual([{ id: "r1", quantity: 4, bookable: 4 }]);
+    // Booked for the chosen customer, not the salesperson's own account.
+    expect(confirmCalls()[0][1].customerId).toBe("cust-abc");
   });
 });

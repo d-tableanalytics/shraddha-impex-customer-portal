@@ -13,6 +13,30 @@ const orderSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  /**
+   * ── Who placed the booking, when it was not the customer ─────────────────
+   *
+   * `user` above is always the CUSTOMER the booking belongs to — their Booking
+   * History, their emails, their indents. A Sales Person or Admin may now place
+   * a booking on a customer's behalf from Create Booking, and that fact is
+   * stamped here: the staff account, and a snapshot of their name, email and
+   * role as they were at the moment of booking.
+   *
+   * STORED, NOT INFERRED. The "SI Team" column on the Sales Desk and Booking
+   * History shows `createdByName`, which is what it said on the day — it never
+   * reads the signed-in user, and it survives the staff account being renamed
+   * or deleted. `createdByEmail` is what later lifecycle mails (status, PO,
+   * expiry, schedule) copy, so the person who placed the booking keeps seeing
+   * it move without being looked up each time.
+   *
+   * NULL on every booking the customer placed themselves, and on every row
+   * that predates this field. Null means "the customer", and the screens print
+   * a dash — which is the honest answer, not a gap to backfill.
+   */
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  createdByName: { type: String, default: null },
+  createdByEmail: { type: String, default: null },
+  createdByRole: { type: String, default: null },
   status: {
     type: String,
     // Admin-managed lifecycle: PO Received → Ready for Dispatch → Dispatched → Delivered.

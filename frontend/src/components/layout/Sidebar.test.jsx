@@ -213,3 +213,34 @@ describe("the active row is unmistakable", () => {
     expect(classList(header)).not.toContain("bg-white");
   });
 });
+
+/**
+ * Inventory Health and Brands have no sidebar entry; they are opened from
+ * Inventory Master. The rail highlights the longest matching path, so they
+ * used to fall through to "/inventory" — Product Catalogue.
+ */
+describe("child pages of Inventory Master", () => {
+  const INVENTORY_MENU = [{
+    key: "inventory",
+    label: "Inventory Management",
+    icon: "Warehouse",
+    items: [
+      { key: "catalogue", label: "Product Catalogue", path: "/inventory", icon: "Boxes" },
+      { key: "master", label: "Inventory Master", path: "/inventory/master", icon: "Warehouse" },
+      { key: "ledger", label: "Stock Ledger", path: "/inventory/ledger", icon: "ScrollText" },
+    ],
+  }];
+  const highlighted = () => [...document.querySelectorAll("a.nav-active")].map((a) => a.textContent.trim());
+
+  test.each([
+    ["/inventory/master", "Inventory Master"],
+    ["/inventory/health", "Inventory Master"],
+    ["/inventory/brands", "Inventory Master"],
+    ["/inventory", "Product Catalogue"],
+    ["/inventory/ledger", "Stock Ledger"],
+  ])("%s highlights %s, and only that", (path, label) => {
+    signIn({ menu: INVENTORY_MENU });
+    draw(path);
+    expect(highlighted()).toEqual([label]);
+  });
+});

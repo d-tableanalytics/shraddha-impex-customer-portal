@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
+import { useSearchParams } from "react-router-dom";
 import { useCartStore } from "../../store/cartStore";
 import { BookingReviewModal } from "../../components/booking/BookingReviewModal";
+import { CustomerSelect, customerDisplayName } from "../../components/booking/CustomerSelect";
 import { invalidBookingLines } from "../../components/booking/bookingLines";
 import { useUserStore } from "../../store/userStore";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
 import { isMsilCustomer, moqAppliesTo, effectiveMoq, isMultipleOf } from "../../utils/moq";
-import { seesBookingReview } from "../../utils/permissions";
+import { seesBookingReview, canUseSalesDesk } from "../../utils/permissions";
+import { customersApi } from "../../services/users";
 import toast from "react-hot-toast";
 
 import { OrderTable } from "../../components/tables/OrderTable";
@@ -50,18 +53,34 @@ export const CustomerOrders = () => {
     header,
     setPOHeader,
     getTotalQuantity,
+    customer: actingCustomer,
+    setCustomer,
   } = useCartStore();
 
   const { user } = useUserStore();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  /**
+   * WHO THE BOOKING IS FOR.
+   *
+   * A customer books for themselves. A Sales Person or Admin (anyone who works
+   * the sales desk) books ON BEHALF OF a customer chosen in the mandatory
+   * Select Customer field, and until one is chosen nothing can be added or
+   * confirmed. `bookingProfile` is the account whose rules apply — MOQ, MSIL,
+   * brand — which is the customer's, never the staff member's.
+   */
+  const booksForOthers = canUseSalesDesk(user);
+  const needsCustomer = booksForOthers && !actingCustomer;
+  const bookingProfile = booksForOthers ? actingCustomer : user;
 
   // MOQ is enforced only for non-MSIL customers; MSIL customers are exempt.
   // Both the classification and the rule come from utils/moq.js, which mirrors
   // backend/utils/moq.js — re-deriving `customerCategory === "MSIL"` here is
   // what let a category stored as 'msil' reclassify an MSIL customer as
   // Customer and put them behind an MOQ they are exempt from.
-  const isMsil = isMsilCustomer(user);
+  const isMsil = isMsilCustomer(bookingProfile);
   const showMsilCode = useShowMsilCode();
-  const productMoq = effectiveMoq(user, selectedProduct);
+  const productMoq = effectiveMoq(bookingProfile, selectedProduct);
   const moqApplies = productMoq > 0;
 
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm({
@@ -72,10 +91,43 @@ export const CustomerOrders = () => {
 
   const watchQuantity = watch("quantity");
 
-  // Load existing reservations on mount
+  // Load existing reservations on mount. The desk's list is PER CUSTOMER, so
+  // nothing is read until a customer is chosen (setCustomer reads it then).
   useEffect(() => {
-    fetchReservations();
+    if (!needsCustomer) fetchReservations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchReservations]);
+
+  // Back from "+ Add Customer": Customer Management returns here with the new
+  // account's id, which is selected and then dropped from the URL so a reload
+  // does not re-select it over a later choice.
+  useEffect(() => {
+    const id = searchParams.get("customer");
+    if (!booksForOthers || !id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const found = await customersApi.getById(id);
+        if (cancelled) return;
+        if (found) {
+          await setCustomer(found);
+          toast.success(`${customerDisplayName(found)} selected.`);
+        } else {
+          toast.error("That customer could not be found. Search for them to select them.");
+        }
+      } catch {
+        if (!cancelled) toast.error("Could not load the customer. Search for them to select them.");
+      } finally {
+        if (!cancelled) {
+          const next = new URLSearchParams(searchParams);
+          next.delete("customer");
+          setSearchParams(next, { replace: true });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booksForOthers, searchParams.get("customer")]);
 
   const handleProductSelect = (product) => {
     setSelectedProduct(product);
@@ -88,6 +140,10 @@ export const CustomerOrders = () => {
   };
 
   const handleAddToCart = async (data) => {
+    if (needsCustomer) {
+      toast.error("Select the customer this booking is for first.", { icon: "⚠️" });
+      return;
+    }
     if (!selectedProduct) {
       toast.error("Please Select Product", { icon: "⚠️" });
       return;
@@ -162,12 +218,15 @@ export const CustomerOrders = () => {
     setShowReview(false);
     const pending = result?.totals?.totalPending ?? 0;
     const outcome = result?.outcome || ((result?.totals?.totalConfirmed ?? 0) > 0 ? "booking" : "indent");
+    // Named for the desk, so a salesperson booking for several customers in a
+    // row can see which account each booking landed on.
+    const forWhom = booksForOthers && result?.customer?.name ? ` for ${result.customer.name}` : "";
     toast.success(
       outcome === "indent"
-        ? `Indent ${result?.indentId} raised for ${units(pending)}. No stock was available, so no booking was created.`
+        ? `Indent ${result?.indentId} raised${forWhom} for ${units(pending)}. No stock was available, so no booking was created.`
         : outcome === "booking+indent"
-          ? `Booking ${result?.orderId} created. ${units(pending)} moved to Indent ${result?.indentId}.`
-          : `Booking ${result?.orderId} created successfully.`,
+          ? `Booking ${result?.orderId} created${forWhom}. ${units(pending)} moved to Indent ${result?.indentId}.`
+          : `Booking ${result?.orderId} created successfully${forWhom}.`,
       { duration: 6000 },
     );
   };
@@ -179,7 +238,7 @@ export const CustomerOrders = () => {
   const bookDirectly = async () => {
     if (submittingRef.current) return;
     const lines = useCartStore.getState().items;
-    const invalid = invalidBookingLines(user, lines);
+    const invalid = invalidBookingLines(bookingProfile, lines);
     if (invalid.length) {
       toast.error(`Fix the quantity for ${invalid.map((l) => l.product.code).join(", ")} before confirming.`);
       return;
@@ -202,6 +261,10 @@ export const CustomerOrders = () => {
   // reservations are re-read first so the popup shows live stock. A customer
   // books straight away — see bookDirectly.
   const handleOrderSubmission = async () => {
+    if (needsCustomer) {
+      toast.error("Select the customer this booking is for first.");
+      return;
+    }
     if (cartItems.length === 0) {
       toast.error("No reserved items to confirm.");
       return;
@@ -236,18 +299,42 @@ export const CustomerOrders = () => {
           </div>
 
           <form onSubmit={handleSubmit(handleAddToCart)} className="flex flex-col gap-6">
-            
+
+            {/* SELECT CUSTOMER — Sales / Admin only, and mandatory for them:
+                the booking is created on the chosen customer's account. */}
+            {booksForOthers && (
+              <CustomerSelect
+                value={actingCustomer}
+                onChange={(c) => { setCustomer(c); setSelectedProduct(null); setProductSearchVal(""); setValue("quantity", 0); }}
+                disabled={loading || submitting || checkingStock}
+              />
+            )}
+
             {/* ITEM SKU CODE */}
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-bold text-slate-500 tracking-widest uppercase">
                 Item SKU Code
               </label>
               <div className="rounded-xl shadow-sm transition-colors focus-within:ring-2 focus-within:ring-[#1a5b9e]/20">
-                <ProductSearchDropdown
-                  placeholder={showMsilCode ? "Search by MSIL Code or SKU Code..." : "Search by SKU Code..."}
-                  value={productSearchVal}
-                  onChange={handleProductSelect}
-                />
+                {needsCustomer ? (
+                  // Not the live picker: a product chosen before the customer
+                  // would be checked against nobody's brand access or MOQ.
+                  <input
+                    type="text"
+                    disabled
+                    value=""
+                    readOnly
+                    placeholder="Select a customer first"
+                    aria-label="Item SKU Code"
+                    className="w-full px-4 py-3 border border-slate-200/80 rounded-xl text-slate-800 font-semibold placeholder-slate-300 bg-slate-50/50 disabled:cursor-not-allowed"
+                  />
+                ) : (
+                  <ProductSearchDropdown
+                    placeholder={showMsilCode ? "Search by MSIL Code or SKU Code..." : "Search by SKU Code..."}
+                    value={productSearchVal}
+                    onChange={handleProductSelect}
+                  />
+                )}
               </div>
             </div>
 
@@ -378,17 +465,24 @@ export const CustomerOrders = () => {
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">
               Selection List
             </h1>
+            {booksForOthers && (
+              <p className="text-xs font-semibold text-slate-500 mt-1" data-testid="selection-list-for">
+                {actingCustomer
+                  ? <>For <span className="text-slate-800">{customerDisplayName(actingCustomer)}</span>{actingCustomer.company ? ` · ${actingCustomer.company}` : ""}</>
+                  : "Select a customer to start their booking."}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col">
             <div className="w-full">
               <OrderTable
-                items={cartItems}
+                items={needsCustomer ? [] : cartItems}
                 onUpdateQty={handleInlineQtyChange}
                 onRemoveItem={handleRemoveCartItem}
                 onBulkRemove={handleBulkRemove}
                 onRaiseIndent={handleOrderSubmission}
-                enforceMoq={moqAppliesTo(user)}
+                enforceMoq={moqAppliesTo(bookingProfile)}
               />
             </div>
 
@@ -434,7 +528,7 @@ export const CustomerOrders = () => {
                 
                 <button
                   onClick={handleOrderSubmission}
-                  disabled={loading || checkingStock || submitting || cartItems.length === 0}
+                  disabled={needsCustomer || loading || checkingStock || submitting || cartItems.length === 0}
                   aria-busy={checkingStock || submitting}
                   className="w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black rounded-xl flex items-center justify-center gap-3 transition-all shadow-[0_4px_14px_0_rgba(16,185,129,0.39)] hover:shadow-[0_6px_20px_rgba(16,185,129,0.23)] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:hover:shadow-none disabled:cursor-not-allowed mb-4"
                 >

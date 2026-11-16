@@ -179,6 +179,9 @@ export const buildStatusMail = ({
 export const sendBookingStatusMail = async ({
   customer, orderId, status, previousStatus, changedAt, poNumber, lines = [],
   journeyHtml = null,
+  // The staff member who placed the booking on the customer's behalf, if any
+  // (utils/bookingRecipients.js). Copied, so they follow every stage.
+  extraCc = [],
 }) => {
   const mail = buildStatusMail({ customer, orderId, status, previousStatus, changedAt, poNumber, lines, journeyHtml });
   if (!mail) {
@@ -196,7 +199,7 @@ export const sendBookingStatusMail = async ({
     return { state: 'skipped', recipient: customer.email, subject: mail.subject, reason };
   }
 
-  const cc = [...(customer.bookingCcEmails || []), ...COMPANY_CC];
+  const cc = [...(customer.bookingCcEmails || []), ...COMPANY_CC, ...extraCc];
 
   // sendEmail already swallows SMTP errors and returns false; the catch is for
   // the ones it cannot — a transport that throws synchronously on a malformed

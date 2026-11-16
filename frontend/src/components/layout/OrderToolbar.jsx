@@ -14,7 +14,7 @@ import { Loader2 } from "lucide-react";
 import { useBusyAction } from "../../hooks/useBusyAction";
 import { availabilityFor, fetchExportAvailability } from "../../utils/exportAvailability";
 
-import { isSuperAdmin } from "../../utils/permissions";
+import { isSuperAdmin, canUseSalesDesk } from "../../utils/permissions";
 export const OrderToolbar = () => {
   const { searchQuery, setSearchQuery, filters, setFilters, selectedIds, allOrders } =
     useOrderHistoryStore();
@@ -23,6 +23,9 @@ export const OrderToolbar = () => {
   // loading a large library; busy until it is done — see useBusyAction.
   const { run: runExport, anyBusy: exporting } = useBusyAction();
   const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
+  // The SI Team column (who placed the booking for the customer) is exported
+  // for the desk, matching the table — see OrderHistoryTable.
+  const showSiTeam = useUserStore((s) => canUseSalesDesk(s.user));
 
   // Bookings to export: the selected ones, or the full filtered list.
   const selectedBookings = () => {
@@ -64,6 +67,7 @@ export const OrderToolbar = () => {
             location: b.customerLocation || b.shippingAddress || b.location,
           }),
           orderNumber: b.orderNumber,
+          siTeam: b.siTeam,
           poNumber: b.poNumber,
           status: b.status,
           date: b.date,
@@ -80,6 +84,7 @@ export const OrderToolbar = () => {
   const exportCols = [
     { key: 'orderNumber', label: 'Booking ID' },
     ...CUSTOMER_EXPORT_COLS,
+    ...(showSiTeam ? [{ key: 'siTeam', label: 'SI Team', format: (v) => v || '-' }] : []),
     { key: 'date', label: 'Booking Date', format: exportDate },
     // N/A rather than blank when no PO has been raised, and '-' — which is how
     // an unraised PO is stored — reads as no PO rather than as a number.

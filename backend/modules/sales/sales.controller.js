@@ -5,7 +5,7 @@ import { nextSequence } from '../../models/Counter.js';
 import { io } from '../../server.js';
 import { notifyUser } from '../../utils/notify.js';
 import { sendEmail } from '../../utils/mailer.js';
-import { COMPANY_CC } from '../../utils/mailRecipients.js';
+import { bookingCc } from '../../utils/bookingRecipients.js';
 import { assertBookingEditable, isPlaceholderPo } from '../../utils/bookingLock.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { boxKey, currentBoxNumbers, shapeBooking, pricingSummary } from './booking.shape.js';
@@ -293,6 +293,8 @@ export const getBookings = async (req, res, next) => {
         { skuCode: term },
         { company: term },
         { poNumber: term },
+        // The SI Team column: the staff member who placed the booking.
+        { createdByName: term },
         ...(customers.length ? [{ user: { $in: customers.map((c) => c._id) } }] : []),
       ];
     }
@@ -654,6 +656,13 @@ const runUpdateItems = async (req, session) => {
         orderId: template.orderId,
         brand: brandOfProduct(product),
         user: template.user,
+        // The booking's creator, inherited like the rest of its identity: the
+        // SI Team column reads the first row, and a desk-added line must not
+        // make a booking look as though nobody placed it.
+        createdBy: template.createdBy ?? null,
+        createdByName: template.createdByName ?? null,
+        createdByEmail: template.createdByEmail ?? null,
+        createdByRole: template.createdByRole ?? null,
         status: template.status,
         orderTimestamp: template.orderTimestamp,
         company: template.company,
@@ -824,8 +833,9 @@ export const updateBookingItems = async (req, res, next) => {
           editorName: req.user.user || req.user.email || null,
           journeyHtml: journeyTablesHtml(journey, { audience: 'customer' }),
         });
+        // Copied to the staff member who placed the booking, if the desk did.
         await sendEmail(to, `Quantities updated on your booking ${req.params.orderId}`, body, {
-          cc: [...(customer?.bookingCcEmails || []), ...COMPANY_CC],
+          cc: bookingCc(customer, updated),
         });
       })().catch((e) =>
         console.error('[updateBookingItems] quantity-change email failed:', e.message));
@@ -1145,7 +1155,8 @@ export const raisePo = async (req, res, next) => {
             : `Your Purchase Order #${poNumber} has been raised`;
 
           await sendEmail(to, subject, body, {
-            cc: [...(customer?.bookingCcEmails || []), ...COMPANY_CC],
+            // Copied to the staff member who placed the booking, if the desk did.
+            cc: bookingCc(customer, updated),
             ...(parts.attachments.length ? { attachments: parts.attachments } : {}),
           });
         })().catch((e) => console.error('[raisePo] email error', e));

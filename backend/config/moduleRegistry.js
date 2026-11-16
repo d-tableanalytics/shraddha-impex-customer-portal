@@ -323,6 +323,10 @@ export const MODULES = [
         label: 'Inventory Health',
         path: '/inventory/health',
         icon: 'Activity',
+        // Reached from the Inventory Health Check button on Inventory Master
+        // rather than the sidebar (removed from the menu 2026-11-16). The route
+        // and its permission cell are unchanged.
+        hidden: true,
         actions: { view: ['view_inventory'] },
       },
       {
@@ -381,6 +385,10 @@ export const MODULES = [
         label: 'Brands',
         path: '/inventory/brands',
         icon: 'Tags',
+        // Reached from the Add Brands button on Inventory Master rather than
+        // the sidebar (removed from the menu 2026-11-16). The route, the API
+        // and this permission cell are unchanged.
+        hidden: true,
         actions: {
           view: ['configure_inventory'],
           create: ['configure_inventory'],

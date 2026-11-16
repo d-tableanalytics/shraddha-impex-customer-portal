@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   getUsers, createUser, updateUser, updateUserRole, resetUserPassword, updateUserAccess,
+  searchCustomers,
 } from './user.controller.js';
 import { protect } from '../../middlewares/auth.js';
 import { authorize, PERMISSIONS } from '../../middlewares/rbac.js';
@@ -10,6 +11,20 @@ import { auditLogger } from '../../middlewares/auditLogger.js';
 const router = express.Router();
 
 router.use(protect);
+
+/**
+ * The customer picker for Create Booking (Sales / Admin booking on a
+ * customer's behalf). Declared BEFORE the user-management guard below: the
+ * desk permission that lets someone place a booking for a customer
+ * (VIEW_ALL_BOOKINGS) is what admits them here, whether or not they may also
+ * manage customer accounts. It is read-only and returns customer accounts
+ * only — never staff, never a password.
+ */
+router.get(
+  '/customers',
+  authorize(PERMISSIONS.VIEW_ALL_BOOKINGS, PERMISSIONS.MANAGE_CUSTOMER_USERS, PERMISSIONS.MANAGE_USERS),
+  searchCustomers,
+);
 
 /**
  * Two permissions reach this router:

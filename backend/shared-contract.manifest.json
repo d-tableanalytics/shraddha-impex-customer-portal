@@ -1,5 +1,5 @@
 {
-  "config/moduleRegistry.js": "afef3391d96f49d979d0e45769431b42dae1a79765243cbdb1b168d1e0ebf229",
+  "config/moduleRegistry.js": "2d35082b109636b11aff494ea5ada489078edb8e99fa6adb2732eca4af24b54b",
   "config/permissions.js": "f989c16330ee60cb678f20705c4880d8e7072132bc60a6b316f2562b4a1bdd1f",
   "middlewares/auth.js": "6703eadb56c0de1550e7ee3039a13c619d3a031951e514652ae8e8f82c806c28",
   "middlewares/portalGuard.js": "bfbb22d974441a2cec30512530ace7c72949154df43ed264e869bdf9f9091211",

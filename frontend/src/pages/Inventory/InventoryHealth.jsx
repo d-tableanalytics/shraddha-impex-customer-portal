@@ -9,6 +9,7 @@ import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { PageHeader } from '../../components/common/PageHeader';
 import { ExportButton } from '../../components/inventory/ExportButton';
+import { BackToInventoryMaster } from '../../components/inventory/BackToInventoryMaster';
 import toast from 'react-hot-toast';
 
 import { inventoryApi } from '../../services/inventory';
@@ -250,8 +251,10 @@ export const InventoryHealth = () => {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Reached from Inventory Health Check on Inventory Master, not the sidebar. */}
       <PageHeader
         title="Inventory Health"
+        back={<BackToInventoryMaster />}
         actions={(
           <div className="flex items-center gap-2">
           <ExportButton

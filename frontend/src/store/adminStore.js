@@ -35,7 +35,9 @@ export const useAdminStore = create((set, get) => ({
     try {
       const newUser = await adminApi.createUser(payload);
       set((state) => ({ users: [newUser, ...state.users] }));
-      return { success: true };
+      // The created account rides back so a caller can act on it (Create
+      // Booking's "+ Add Customer" returns with its id selected).
+      return { success: true, user: newUser };
     } catch (err) {
       return { success: false, error: err.response?.data?.message || "Failed to create user" };
     }

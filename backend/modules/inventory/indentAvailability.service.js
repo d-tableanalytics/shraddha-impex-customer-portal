@@ -30,6 +30,7 @@
 import Reservation from '../../models/Reservation.js';
 import StockBalance from '../../models/StockBalance.js';
 import Order from '../../models/Order.js';
+import User from '../../models/User.js';
 import AuditLog from '../../models/AuditLog.js';
 import { nextSequence } from '../../models/Counter.js';
 import {
@@ -41,11 +42,45 @@ import { isPlaceholderPo, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { sendEmail } from '../../utils/mailer.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { COMPANY_CC } from '../../utils/mailRecipients.js';
+import {
+  creatorEmailsForOrder, creatorEmailsForIndents,
+} from '../../utils/bookingRecipients.js';
+import { actorName } from '../../utils/bookingActor.js';
 import { brandOfProduct } from '../../utils/brandAccess.js';
 import { supplyDecision } from '../../utils/msilSupply.js';
 import { sendAutoBookSupportMail, sendMaterialInwardMails } from '../../utils/indentMail.js';
 
 const OPEN_STATUSES = ['Pending', 'Partially Confirmed'];
+
+const NO_CREATOR = Object.freeze({
+  createdBy: null, createdByName: null, createdByEmail: null, createdByRole: null,
+});
+
+/**
+ * The `createdBy*` stamp for a booking raised from these indents.
+ *
+ * An indent remembers who reserved it. When that is the customer, the booking
+ * is theirs and carries no creator; when it is a staff account, the desk
+ * raised the indent on the customer's behalf and the booking it becomes is
+ * stamped with that person, exactly as a booking they confirmed directly would
+ * be. Read live — an indent holds no name snapshot — and never fails a
+ * booking: an unresolvable account simply leaves the stamp empty.
+ */
+const creatorStampForIndents = async (customer, indents) => {
+  const staffId = indents
+    .map((i) => (i.reservedBy?._id ?? i.reservedBy))
+    .find((id) => id && String(id) !== String(customer._id));
+  if (!staffId) return NO_CREATOR;
+  const staff = await User.findById(staffId, 'user customerName company email role').lean()
+    .catch(() => null);
+  if (!staff) return NO_CREATOR;
+  return {
+    createdBy: staff._id,
+    createdByName: actorName(staff),
+    createdByEmail: staff.email || null,
+    createdByRole: staff.role || null,
+  };
+};
 
 /**
  * A scheduled date that has not arrived yet, compared by calendar day.
@@ -162,6 +197,12 @@ export const bookForCustomer = async (customer, indents) => {
   const orderNumber = `BO-${year}-${String(seq).padStart(6, '0')}`;
   const now = new Date();
 
+  // An indent the DESK raised for the customer (reservedBy is not the customer)
+  // becomes a booking the desk placed: the same Sales Person or Admin is
+  // stamped as its creator, so the SI Team column and the mail Cc follow the
+  // indent into the booking it turns into.
+  const creator = await creatorStampForIndents(customer, indents);
+
   const rows = [];
   const taken = [];
   const undo = [];
@@ -250,6 +291,7 @@ export const bookForCustomer = async (customer, indents) => {
       orderId: orderNumber,
       brand: brandFromModel(product),
       user: customer._id,
+      ...creator,
       status: 'PO Received',
       orderTimestamp: now,
       company: customer.company || 'Shraddha Impex',
@@ -508,8 +550,12 @@ export const allocateToBooking = async (customer, orderId, items, parentRows = [
     const base = template
       ? {
         // Inherited from the booking, like a desk-added line: same customer,
-        // same address, same PO and price tier.
+        // same address, same PO and price tier — and the same creator.
         user: template.user,
+        createdBy: template.createdBy ?? null,
+        createdByName: template.createdByName ?? null,
+        createdByEmail: template.createdByEmail ?? null,
+        createdByRole: template.createdByRole ?? null,
         orderTimestamp: template.orderTimestamp,
         company: template.company,
         role: template.role,
@@ -529,8 +575,10 @@ export const allocateToBooking = async (customer, orderId, items, parentRows = [
       }
       : {
         // Nothing on this booking was ever confirmed: built as the booking
-        // would have been, under its original id.
+        // would have been, under its original id — including who placed it,
+        // read off the indents the way bookForCustomer does.
         user: customer._id,
+        ...(await creatorStampForIndents(customer, items.map((i) => i.indent))),
         orderTimestamp: now,
         company: customer.company || 'Shraddha Impex',
         role: customer.role || 'user',
@@ -658,7 +706,9 @@ export const announceIndentBooking = async (customer, made) => {
       bookingEmail({
         customerName, orderNumber: made.orderNumber, lines: made.lines, dueAt, allocation: made.allocation,
       }),
-      { cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC] },
+      // Copied to the staff member who placed the booking (or raised the
+      // indent it came from), if the desk did.
+      { cc: [...(customer.bookingCcEmails || []), ...COMPANY_CC, ...(await creatorEmailsForOrder(made.orderNumber))] },
     );
     if (delivered) {
       told.emailed += 1;
@@ -774,7 +824,11 @@ const notifyMaterialInward = async ({ skus, inwardBySku, reference, exclude = []
       reference: l.reservationId,
     }));
 
-    const result = await sendMaterialInwardMails({ customer, lines: rows, reference });
+    const result = await sendMaterialInwardMails({
+      customer, lines: rows, reference,
+      // The desk member who raised any of these indents for the customer.
+      extraCc: await creatorEmailsForIndents(lines),
+    });
     stats.inwardCustomers += 1;
     stats.inwardLines += lines.length;
     if (result.customer === 'sent') stats.inwardEmailed += 1;

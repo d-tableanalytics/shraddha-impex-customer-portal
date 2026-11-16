@@ -11,7 +11,7 @@ import {
   CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
 } from "../../utils/historyExportColumns";
 
-import { isSuperAdmin } from "../../utils/permissions";
+import { isSuperAdmin, canUseSalesDesk } from "../../utils/permissions";
 export const OrderHistoryTable = () => {
   const {
     orders,
@@ -52,6 +52,11 @@ export const OrderHistoryTable = () => {
     || (Boolean(order.poNumber) && indentPOs.has(order.poNumber));
 
   const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
+  // The SI Team column (who placed the booking for the customer) is for the
+  // desk — Sales and Admin — the people whose names it carries. A customer's
+  // own history keeps its columns; the drawer still tells them who booked.
+  const showSiTeam = useUserStore((s) => canUseSalesDesk(s.user));
+  const columnCount = 6 + (isAdmin ? 2 : 0) + (showSiTeam ? 1 : 0);
 
   const totalPages = Math.max(1, Math.ceil(orders.length / limit));
   const currentPage = Math.min(page, totalPages);
@@ -81,11 +86,13 @@ export const OrderHistoryTable = () => {
     bookingId: order.orderNumber,
     date: order.date,
     poNumber: order.poNumber,
+    siTeam: order.siTeam,
   });
 
   const ROW_EXPORT_COLS = [
     { key: "bookingId", label: "Booking ID" },
     ...CUSTOMER_EXPORT_COLS,
+    ...(showSiTeam ? [{ key: "siTeam", label: "SI Team", format: (v) => v || "-" }] : []),
     { key: "date", label: "Booking Date", format: exportDate },
     { key: "poNumber", label: "PO Number", format: poNumberValue },
   ];
@@ -168,6 +175,7 @@ export const OrderHistoryTable = () => {
               <th className="px-5 py-3 border-b border-slate-200">Booking ID</th>
               {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Customer Name</th>}
               {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Company Name</th>}
+              {showSiTeam && <th className="px-5 py-3 border-b border-slate-200">SI Team</th>}
               <th className="px-5 py-3 border-b border-slate-200">PO Number</th>
               <th
                 className="px-5 py-3 border-b border-slate-200 cursor-pointer hover:bg-slate-100"
@@ -185,9 +193,9 @@ export const OrderHistoryTable = () => {
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
             {loading ? (
-              <TableSkeleton rows={8} columns={isAdmin ? 8 : 6} cellClass="px-5 py-4" />
+              <TableSkeleton rows={8} columns={columnCount} cellClass="px-5 py-4" />
             ) : searching ? (
-              <TableSearchingRow columns={isAdmin ? 8 : 6} label="Searching bookings..." />
+              <TableSearchingRow columns={columnCount} label="Searching bookings..." />
             ) : currentOrders.length > 0 ? (
               currentOrders.map((order) => (
                 <tr
@@ -271,6 +279,18 @@ export const OrderHistoryTable = () => {
                       </div>
                     </td>
                   )}
+                  {showSiTeam && (
+                    /* Who placed the booking for the customer, as stored on
+                       it when it was made. A dash is the customer's own. */
+                    <td className="px-5 py-4 max-w-[180px]">
+                      <div
+                        className="text-slate-600 truncate"
+                        title={order.siTeam ? `${order.siTeam}${order.siTeamRole ? ` (${order.siTeamRole})` : ''}` : 'Placed by the customer'}
+                      >
+                        {order.siTeam || <span className="text-slate-400">—</span>}
+                      </div>
+                    </td>
+                  )}
                   <td className="px-5 py-4 font-medium text-slate-600">
                     {order.poNumber || "-"}
                   </td>
@@ -323,7 +343,7 @@ export const OrderHistoryTable = () => {
             ) : (
               <tr>
                 <td
-                  colSpan={isAdmin ? 8 : 6}
+                  colSpan={columnCount}
                   className="px-5 py-10 text-center text-slate-400"
                 >
                   No bookings found matching your criteria.

@@ -90,6 +90,13 @@ export const mapOrder = (order) => {
      * (legal / trading name), `user` is "Contact name", `company` is "Company".
      */
     customerName: customerProfile?.customerName || customerProfile?.contactName || null,
+    /**
+     * The SI Team: the Sales Person or Admin who placed this booking on the
+     * customer's behalf, as stored on the booking row (never inferred from
+     * who is looking). Null when the customer placed it themselves.
+     */
+    siTeam: order.createdByName || null,
+    siTeamRole: order.createdByRole || null,
     // Contact pair for display. The profile is the customer's registered pair;
     // the booking's own snapshot is the fallback and is what a raised PO used.
     customerPhone: customerProfile?.phone || order.phoneNumber || null,

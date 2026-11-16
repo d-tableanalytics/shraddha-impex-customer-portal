@@ -33,6 +33,7 @@ import { io } from '../../server.js';
 import { notifyUser, notifyAdmins } from '../../utils/notify.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { sendBookingStatusMail } from '../../utils/bookingStatusMail.js';
+import { creatorEmails } from '../../utils/bookingRecipients.js';
 import { buildBookingJourney, journeyTablesHtml } from '../../utils/bookingJourney.js';
 import {
   bookingStatusOf, stageOf, stageLabel, isNotifiableStage, normalizeStatus,
@@ -130,6 +131,8 @@ const notifyCustomer = async ({ event, orderId, status, previousStatus, rows, ch
     poNumber: rows[0]?.poNumber,
     lines: lineSummary(rows),
     journeyHtml,
+    // The staff member who placed the booking for the customer, if the desk did.
+    extraCc: creatorEmails(rows),
   });
 
   const notification = {

@@ -25,10 +25,11 @@ import { queryClient } from "../../lib/queryClient";
 // The Booking History panel the Action button opens reads through TanStack Query.
 const render = (ui) => rtlRender(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
 
-const booking = (orderId, customerName, company) => ({
+const booking = (orderId, customerName, company, createdBy = null) => ({
   orderId,
   customer: company,
   customerProfile: { customerName, company },
+  createdBy,
   date: "2026-11-01",
   locked: false,
   poNumber: null,
@@ -36,7 +37,7 @@ const booking = (orderId, customerName, company) => ({
   totalQuantity: 5,
 });
 const ALL = [
-  booking("BO-2026-000101", "Sharma Auto Parts", "Sharma Group"),
+  booking("BO-2026-000101", "Sharma Auto Parts", "Sharma Group", { id: "s1", name: "Sales Person A", role: "Sales" }),
   booking("BO-2026-000102", "Nikita Traders", "NT Pvt Ltd"),
 ];
 
@@ -69,6 +70,16 @@ describe("Sales Desk search", () => {
     await waitFor(() => expect(screen.queryByText("Nikita Traders")).toBeNull());
     expect(screen.getByText("Sharma Auto Parts")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toBe("1 booking match “sharma”");
+  });
+
+  test("the SI Team column names who placed the booking, as stored on it", async () => {
+    render(<SalesDesk />);
+    await screen.findByText("Nikita Traders");
+    expect(screen.getByText("SI Team")).toBeTruthy();
+    const rowOf = (text) => screen.getByText(text).closest("tr");
+    expect(within(rowOf("Sharma Auto Parts")).getByText("Sales Person A")).toBeTruthy();
+    // The customer's own booking: a dash, never the signed-in user.
+    expect(within(rowOf("Nikita Traders")).getByTitle("Placed by the customer").textContent).toBe("—");
   });
 
   test("partial, any-case names reach the server unchanged", async () => {
@@ -141,18 +152,28 @@ describe("Sales Desk Action", () => {
     }));
   });
 
-  test("the Review column is now Action, one button per booking", async () => {
+  test("the Action column has two icons per booking: View Details and View History", async () => {
     render(<SalesDesk />);
     await screen.findByText("Nikita Traders");
     expect(screen.getByRole("columnheader", { name: "Action" })).toBeTruthy();
     expect(screen.queryByRole("columnheader", { name: "Review" })).toBeNull();
-    expect(screen.getAllByRole("button", { name: /^Action: booking history for/ })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /^View details for/ })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /^View history for/ })).toHaveLength(2);
   });
 
-  test("Action opens that booking's history, not the review drawer", async () => {
+  test("View Details opens the booking for review, not its history", async () => {
     render(<SalesDesk />);
     await screen.findByText("Nikita Traders");
-    fireEvent.click(screen.getByRole("button", { name: "Action: booking history for BO-2026-000102" }));
+    fireEvent.click(screen.getByRole("button", { name: "View details for BO-2026-000102" }));
+    expect(useSalesStore.getState().selected?.orderId).toBe("BO-2026-000102");
+    expect(useSalesStore.getState().historyFor).toBeNull();
+    expect(api.getHistory).not.toHaveBeenCalled();
+  });
+
+  test("View History opens that booking's history, not the review drawer", async () => {
+    render(<SalesDesk />);
+    await screen.findByText("Nikita Traders");
+    fireEvent.click(screen.getByRole("button", { name: "View history for BO-2026-000102" }));
 
     await waitFor(() => expect(api.getHistory).toHaveBeenCalledWith("BO-2026-000102"));
     const summary = await screen.findByRole("region", { name: "Booking summary" });

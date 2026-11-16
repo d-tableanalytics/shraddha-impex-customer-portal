@@ -140,6 +140,12 @@ const Summary = ({ booking }) => {
           <Fact label="Booking Number"><span className="font-mono">{booking.orderId}</span></Fact>
           <Fact label="Customer Name">{booking.customerName || <Dash title="No customer name on this account" />}</Fact>
           <Fact label="Company Name">{booking.company || <Dash />}</Fact>
+          {/* Stored on the booking when it was placed — not the viewer. */}
+          <Fact label="SI Team">
+            {booking.siTeam?.name
+              ? <span title={booking.siTeam.role ? `${booking.siTeam.name} (${booking.siTeam.role})` : booking.siTeam.name}>{booking.siTeam.name}</span>
+              : <Dash title="Placed by the customer" />}
+          </Fact>
           <Fact label="PO Number">
             {booking.poNumber ? <span className="font-mono">{booking.poNumber}</span> : <Dash title="No PO raised yet" />}
           </Fact>

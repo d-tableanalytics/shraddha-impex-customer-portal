@@ -41,7 +41,7 @@ import { useUIStore } from "../../store/uiStore";
 import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
 import { homePathFor } from "../../utils/permissions";
-import { buildNavigation } from "../../utils/navigation";
+import { buildNavigation, navPathFor } from "../../utils/navigation";
 import { useUserStore as useFmsUserStore } from "../../fms/store/userStore";
 import { fmsNavGroup, withFmsGroup } from "../../fms/navigation";
 
@@ -231,18 +231,26 @@ export const Sidebar = () => {
    *
    * The match is on a SEGMENT boundary, so "/inventory" claims
    * "/inventory/master" but never "/inventory-config".
+   *
+   * A page with no entry of its own (Inventory Health, Brands) is first
+   * resolved to the entry it belongs to — see navPathFor in utils/navigation.js
+   * — so it highlights Inventory Master rather than falling through to the
+   * Product Catalogue's "/inventory". null means highlight nothing.
    */
+  const allItems = groups.flatMap((g) => g.items);
+  const navPath = navPathFor(location.pathname, allItems);
+
   const matches = (item) => {
+    if (navPath === null) return false;
     const [basePath, searchStr] = item.path.split("?");
-    if (item.path === "/") return location.pathname === "/";
-    if (searchStr) return location.pathname === basePath && location.search.includes(searchStr);
+    if (item.path === "/") return navPath === "/";
+    if (searchStr) return navPath === basePath && location.search.includes(searchStr);
     // Booking History and Indent History share a path and differ by query
     // string, so the bare path must not claim a filtered view.
-    if (item.path === "/orders/history") return location.pathname === basePath && !location.search;
-    return location.pathname === basePath || location.pathname.startsWith(`${basePath}/`);
+    if (item.path === "/orders/history") return navPath === basePath && !location.search;
+    return navPath === basePath || navPath.startsWith(`${basePath}/`);
   };
 
-  const allItems = groups.flatMap((g) => g.items);
   const activeItem = allItems.reduce((best, item) => {
     if (!matches(item)) return best;
     const len = item.path.split("?")[0].length;
