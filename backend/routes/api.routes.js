@@ -36,7 +36,7 @@ const getProductModel = (brand) => {
 };
 
 // 1. GET /api/products/:brand - list products with category filter and search on skuCode
-router.get('/products/:brand', protect, async (req, res, next) => {
+router.get('/products/:brand', protect, authorize('view_catalogue', 'view_inventory', 'create_order', 'view_all_bookings'), async (req, res, next) => {
   try {
     const { brand } = req.params;
     const { category, search, limit } = req.query;
@@ -71,7 +71,7 @@ router.get('/products/:brand', protect, async (req, res, next) => {
 });
 
 // 2. GET /api/products/:brand/:skuCode - single product lookup
-router.get('/products/:brand/:skuCode', protect, async (req, res, next) => {
+router.get('/products/:brand/:skuCode', protect, authorize('view_catalogue', 'view_inventory', 'create_order', 'view_all_bookings'), async (req, res, next) => {
   try {
     const { brand, skuCode } = req.params;
     const Model = getProductModel(brand);
@@ -232,7 +232,7 @@ router.get('/orders', protect, authorize(PERMISSIONS.VIEW_ALL_BOOKINGS), async (
 router.post('/auth/login', loginLimiter, login);
 
 // 6. GET /api/dashboard/stats - real KPIs for the dashboard
-router.get('/dashboard/stats', protect, async (req, res, next) => {
+router.get('/dashboard/stats', protect, authorize('view_dashboard'), async (req, res, next) => {
   try {
     let orderQuery = {};
     if (req.user && !isSuperAdmin(req.user)) {

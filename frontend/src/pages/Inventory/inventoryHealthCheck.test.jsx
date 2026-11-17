@@ -25,11 +25,23 @@ import { resetSessionStores } from "../../store/sessionReset";
 
 const ADMIN = { _id: "a1", role: "Admin", permissions: ["*"], brandAccess: { koken: true } };
 const WITH_HEALTH = {
-  _id: "i1", role: "Inventory Manager", permissions: ["view_inventory", "manage_inventory_master"],
-  grants: [{ module: "inventory", submodule: "health", actions: ["view"] }, { module: "inventory", submodule: "master", actions: ["view"] }],
+  _id: "i1", role: "Inventory Manager", permissions: ["view_inventory", "manage_inventory_master", "export_inventory"],
+  // The server derives a grant for every cell the permissions satisfy, so
+  // export_inventory comes with the inventory.exports cell (ExportButton asks it).
+  grants: [
+    { module: "inventory", submodule: "health", actions: ["view"] },
+    { module: "inventory", submodule: "master", actions: ["view"] },
+    { module: "inventory", submodule: "exports", actions: ["view"] },
+  ],
   brandAccess: { koken: true },
 };
-const WITHOUT_HEALTH = { ...WITH_HEALTH, grants: [{ module: "inventory", submodule: "master", actions: ["view"] }] };
+const WITHOUT_HEALTH = {
+  ...WITH_HEALTH,
+  grants: [
+    { module: "inventory", submodule: "master", actions: ["view"] },
+    { module: "inventory", submodule: "exports", actions: ["view"] },
+  ],
+};
 
 const renderMaster = (user) => {
   useUserStore.setState({ user, loading: false });

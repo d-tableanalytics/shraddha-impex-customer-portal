@@ -43,4 +43,44 @@ export const siTeamLabelOf = (booking) => {
   return role ? `${name} (${role})` : name;
 };
 
-export default { customerNameOf, companyNameOf, siTeamOf, siTeamLabelOf };
+/**
+ * The customer a booking belongs to, in the shape Select Customer shows
+ * (components/booking/CustomerSelect). Null when the account no longer exists.
+ */
+export const bookingOwnerOf = (booking) => {
+  const id = booking?.user?._id || booking?.user;
+  const p = booking?.customerProfile;
+  if (!id || !p) return null;
+  return {
+    _id: String(id),
+    customerName: p.customerName || null,
+    user: p.contactName || null,
+    company: p.company || null,
+    email: p.email || null,
+    customerCategory: p.customerCategory || null,
+  };
+};
+
+/**
+ * The booking's customer details, filled from a customer record: what Edit
+ * Details puts in its fields when a different customer is selected.
+ *
+ * Mirrors CUSTOMER_SNAPSHOT_FIELDS in backend/utils/bookingFields.js, which is
+ * the same eight fields booking creation stamps. "Customer Name" on the form
+ * is the company column, as it always was. Vendor Code is not here: creation
+ * takes it from the product, not the customer.
+ */
+export const bookingDetailsFromCustomer = (c) => ({
+  customerName: c?.company || c?.customerName || "",
+  emailId: c?.email || "",
+  phoneNumber: c?.phone || "",
+  location: c?.location || "",
+  shopNumber: c?.shopNumber || "",
+  gstCode: c?.gstNumber || "",
+  shippingAddress: c?.shippingAddress || "",
+  billingAddress: c?.billingAddress || "",
+});
+
+export default {
+  customerNameOf, companyNameOf, siTeamOf, siTeamLabelOf, bookingOwnerOf, bookingDetailsFromCustomer,
+};

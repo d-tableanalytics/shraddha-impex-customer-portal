@@ -33,7 +33,7 @@
     },
     "src/fms/components/o2d/O2dProtectedRoute.jsx": {
       "from": "src/components/o2d/O2dProtectedRoute.jsx",
-      "sha256": "089c3c018fc57dff3a99ff1ebe45b0456726208a11223b394426acbf4cf23a9c"
+      "sha256": "43a40c33a7df62c37bc100f87d4d742f366e91d64b23979782f1770c861e23d4"
     },
     "src/fms/components/ui/Badge.jsx": {
       "from": "src/components/ui/Badge.jsx",
@@ -157,7 +157,11 @@
     },
     "src/fms/utils/permissions.js": {
       "from": "src/utils/permissions.js",
-      "sha256": "873790f2a7ae9d3e4a3c4c143373d107fcd29417e18ada988c9ad9acee7a7ca4"
+      "sha256": "1ed9b3d47487761b616c15eba5ec86d23377c42f270b7d4637a836c2edf73246"
+    },
+    "src/fms/components/common/Unauthorized.jsx": {
+      "from": "src/components/common/Unauthorized.jsx",
+      "sha256": "c8eb4b0417ef1ef7d181d351cc6f99418f92628f13f18fcb69ad0ad77c02907d"
     }
   }
 }

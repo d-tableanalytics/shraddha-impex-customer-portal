@@ -67,7 +67,7 @@ router.get('/', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), list);
  * Brand isolation still applies, inside the service: a SKU outside the user's
  * brands reports as not in the catalogue rather than revealing that it exists.
  */
-router.get('/:skuCode', getOne);
+router.get('/:skuCode', authorize('view_catalogue', 'view_inventory', 'create_order', 'view_all_bookings'), getOne);
 
 router.put('/:skuCode', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), save);
 

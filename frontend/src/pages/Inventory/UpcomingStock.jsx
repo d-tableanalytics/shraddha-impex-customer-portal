@@ -22,6 +22,7 @@ import { queryKeys, STALE } from '../../lib/queryKeys';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import { hasPermission, PERMISSIONS } from '../../utils/permissions';
+import { canCell } from '../../utils/cellKeys';
 import { exportToExcel } from '../../utils/exportUtils';
 import {
   STATUS, STATUS_ORDER, STATUS_HELP, formatDate, formatDateTime, relativeArrival, daysUntil,
@@ -740,9 +741,13 @@ export const UpcomingStock = () => {
                 <Upload size={15} className="mr-2" />Import Upcoming Stock
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={handleExport} disabled={filtered.length === 0}>
-              <Download size={15} className="mr-2" />Export
-            </Button>
+            {/* The file is built client-side, so this is the only gate on the
+                export cell (inventory.exports.view = export_inventory). */}
+            {canCell(user, 'inventory', 'exports', 'view') && (
+              <Button variant="outline" size="sm" onClick={handleExport} disabled={filtered.length === 0}>
+                <Download size={15} className="mr-2" />Export
+              </Button>
+            )}
           </div>
         )}
       />

@@ -1,7 +1,8 @@
-import { Navigate, Outlet } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 
 import { useUserStore } from '../../store/userStore';
-import { canUseOrdering, homePathFor } from '../../utils/permissions';
+import { canUseOrdering } from '../../utils/permissions';
+import { Unauthorized } from '../common/Unauthorized';
 
 /**
  * Gate for the ordering screens — bookings, the selection list, bulk upload,
@@ -15,9 +16,9 @@ import { canUseOrdering, homePathFor } from '../../utils/permissions';
  * Team account with a bookmarked URL, or a browser restoring yesterday's tabs,
  * would land on a booking screen the menu never offered.
  *
- * It sends people home rather than showing "denied", because a role that has no
- * ordering permission was never refused anything: these screens are simply not
- * part of their portal, and an error page implies they took a wrong turn.
+ * A refusal renders <Unauthorized/> (2026-11-17). It used to send people home
+ * silently, but a user who followed a link, or lost ordering mid-session, was
+ * left on Home with no idea why; the panel says so and links to their home.
  *
  * NOT THE ENFORCEMENT POINT. Every booking write path re-checks server-side —
  * see MAY_BOOK in backend/modules/reservations/reservation.routes.js and the
@@ -33,9 +34,8 @@ export const OrderingRoute = () => {
   // every hard refresh.
   if (loading || !user) return null;
 
-  // Sent HOME, wherever home is for them — for a role whose home is not "/"
-  // this saves a second redirect through a screen they never see.
-  if (!canUseOrdering(user)) return <Navigate to={homePathFor(user)} replace />;
+  // The panel's link goes HOME, wherever home is for them (homePathFor).
+  if (!canUseOrdering(user)) return <Unauthorized />;
 
   return <Outlet />;
 };

@@ -10,7 +10,7 @@ import {
   CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
 } from "../../utils/historyExportColumns";
 
-import { isSuperAdmin } from "../../utils/permissions";
+import { canUseSalesDesk } from "../../utils/permissions";
 export const IndentHistoryTable = () => {
   const {
     indents,
@@ -29,7 +29,9 @@ export const IndentHistoryTable = () => {
   } = useIndentHistoryStore();
   const { run: runRow, isBusy: isRowBusy } = useBusyAction();
 
-  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
+  // Customer columns/filters/cards follow the sales-desk cell (view_all_bookings),
+  // not the Super Admin role name: staff granted every booking need to see whose it is.
+  const seesCustomers = useUserStore((s) => canUseSalesDesk(s.user));
 
   const totalPages = Math.max(1, Math.ceil(indents.length / limit));
   const currentPage = Math.min(page, totalPages);
@@ -101,7 +103,7 @@ export const IndentHistoryTable = () => {
     );
   };
 
-  const colCount = isAdmin ? 9 : 7;
+  const colCount = seesCustomers ? 9 : 7;
 
   return (
     <div className="flex flex-col gap-4">
@@ -122,8 +124,8 @@ export const IndentHistoryTable = () => {
               </th>
               <th className="px-5 py-3 border-b border-slate-200">Indent No</th>
               <th className="px-5 py-3 border-b border-slate-200">Booking ID</th>
-              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Customer Name</th>}
-              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Company Name</th>}
+              {seesCustomers && <th className="px-5 py-3 border-b border-slate-200">Customer Name</th>}
+              {seesCustomers && <th className="px-5 py-3 border-b border-slate-200">Company Name</th>}
               <th
                 className="px-5 py-3 border-b border-slate-200 cursor-pointer hover:bg-slate-100"
                 onClick={() => handleSort("date")}
@@ -187,7 +189,7 @@ export const IndentHistoryTable = () => {
                       </span>
                     )}
                   </td>
-                  {isAdmin && (
+                  {seesCustomers && (
                     /* WHO the customer is — the same two columns, in the same
                        order, that Booking History settled on. This used to be a
                        single "Customer" cell showing a string that falls back
@@ -225,7 +227,7 @@ export const IndentHistoryTable = () => {
                       )}
                     </td>
                   )}
-                  {isAdmin && (
+                  {seesCustomers && (
                     /* Shown even when it matches the customer name: a blank here
                        would read as "no company recorded" rather than "same as
                        the name", and the admin cannot tell those apart. */

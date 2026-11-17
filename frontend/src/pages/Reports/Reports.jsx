@@ -1,8 +1,9 @@
-import { Navigate } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 import { Card, CardContent } from '../../components/ui/Card';
 import { TrendingUp, Package } from 'lucide-react';
 import { useUserStore } from '../../store/userStore';
 import { isSuperAdmin } from '../../utils/permissions';
+import { ModuleInfoButton } from "../../components/common/ModuleInfoButton";
 
 export const Reports = () => {
   const { user } = useUserStore();
@@ -16,7 +17,7 @@ export const Reports = () => {
   // sub-module is registered as `hidden` in the module registry for the same
   // reason, so it stays out of the sidebar until the screen is real.
   if (user && !isSuperAdmin(user)) {
-    return <Navigate to="/" replace />;
+    return <Unauthorized />;
   }
 
   const topProducts = [
@@ -30,7 +31,10 @@ export const Reports = () => {
     <div className="flex flex-col gap-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-xl font-bold text-slate-800 tracking-tight">System Reports</h2>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-xl font-bold text-slate-800 tracking-tight">System Reports</h2>
+            <ModuleInfoButton />
+          </div>
           <p className="text-sm text-slate-500 mt-1">Analytics and performance metrics.</p>
         </div>
       </div>

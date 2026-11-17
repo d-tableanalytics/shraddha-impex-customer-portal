@@ -1,6 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render as rtlRender, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, useLocation } from "react-router-dom";
 
 /**
  * The Sales Desk search box.
@@ -10,7 +11,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
  * through the store's debounce, and a list that says what it was fetched for.
  */
 
-const api = vi.hoisted(() => ({ getBookings: vi.fn(), getHistory: vi.fn() }));
+const api = vi.hoisted(() => ({ getBookings: vi.fn(), getHistory: vi.fn(), getBooking: vi.fn() }));
 vi.mock("../../services/sales", () => ({ salesApi: api }));
 vi.mock("../../store/userStore", () => ({
   useUserStore: () => ({ user: { role: "Sales", permissions: ["view_all_bookings"] } }),
@@ -23,7 +24,12 @@ import { useSalesStore } from "../../store/salesStore";
 import { queryClient } from "../../lib/queryClient";
 
 // The Booking History panel the Action button opens reads through TanStack Query.
-const render = (ui) => rtlRender(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+// The desk reads `?booking=` links, so it renders inside a router.
+const render = (ui, at = "/sales-desk") => rtlRender(
+  <QueryClientProvider client={queryClient}>
+    <MemoryRouter initialEntries={[at]}>{ui}</MemoryRouter>
+  </QueryClientProvider>,
+);
 
 const booking = (orderId, customerName, company, createdBy = null) => ({
   orderId,
@@ -188,5 +194,38 @@ describe("Sales Desk Action", () => {
     expect(useSalesStore.getState().selected?.orderId).toBe("BO-2026-000102");
     expect(useSalesStore.getState().historyFor).toBeNull();
     expect(api.getHistory).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * "+ Add Customer" in Edit Details leaves the desk for Customer Management and
+ * comes back to `?booking=<id>&editDetails=1&customer=<new id>`.
+ */
+describe("Sales Desk booking links", () => {
+  let search = null;
+  const Where = () => { search = useLocation().search; return null; };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queryClient.clear();
+    useSalesStore.getState().reset();
+    api.getBookings.mockImplementation(respond);
+    api.getBooking.mockImplementation(async (orderId) => ({ ...ALL[0], orderId, indent: { lines: [] } }));
+  });
+
+  test("reopens the booking and asks the drawer for Edit Details with the new customer", async () => {
+    render(<><SalesDesk /><Where /></>, "/sales-desk?booking=BO-2026-000101&editDetails=1&customer=c9");
+
+    await waitFor(() => expect(useSalesStore.getState().selected?.orderId).toBe("BO-2026-000101"));
+    expect(api.getBooking).toHaveBeenCalledWith("BO-2026-000101");
+    expect(useSalesStore.getState().detailsIntent).toEqual({ orderId: "BO-2026-000101", customerId: "c9" });
+    // Read once: a reload does not reopen it.
+    await waitFor(() => expect(search).toBe(""));
+  });
+
+  test("a plain booking link opens the booking without the form", async () => {
+    render(<SalesDesk />, "/sales-desk?booking=BO-2026-000102");
+    await waitFor(() => expect(useSalesStore.getState().selected?.orderId).toBe("BO-2026-000102"));
+    expect(useSalesStore.getState().detailsIntent).toBeNull();
   });
 });

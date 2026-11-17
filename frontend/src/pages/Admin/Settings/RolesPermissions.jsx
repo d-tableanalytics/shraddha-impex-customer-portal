@@ -17,6 +17,7 @@ import { ACTION_LABELS } from "../../../utils/grants";
 import {
   isFullAccessRole, initialDraft, servedIdsOf, draftToGrants, isDirty, cellState, toggle, setCell, fullDraft,
 } from "../../../utils/roleMatrix";
+import { ModuleInfoButton } from "../../../components/common/ModuleInfoButton";
 
 /**
  * Roles & Permissions — the Customer Portal's modules only.
@@ -313,7 +314,10 @@ export const RolesPermissions = () => {
           Administration <span className="mx-1 text-slate-300">/</span>
           <span className="text-slate-600">Roles &amp; Permissions</span>
         </nav>
-        <h2 className="text-xl font-bold text-slate-900">Roles &amp; Permissions</h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-xl font-bold text-slate-900">Roles &amp; Permissions</h2>
+          <ModuleInfoButton />
+        </div>
         <p className="text-sm text-slate-500 mt-0.5">
           Create and manage roles, and set access to Customer Portal modules and sub-modules. FMS, Work Queue and
           HRMS access is managed in the Employee Portal and is never changed from here.

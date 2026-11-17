@@ -3,7 +3,8 @@ import { motion } from 'framer-motion';
 import { Package, Clock, AlertTriangle, Users, PackageX, Layers, ArrowUpRight } from 'lucide-react';
 import { useDashboardStats } from '../../store/homeDashboardStore';
 import { useUserStore } from '../../store/userStore';
-import { canUseOrdering, isSuperAdmin} from '../../utils/permissions';
+import { canUseOrdering } from '../../utils/permissions';
+import { canCell } from '../../utils/cellKeys';
 import { SkeletonLoader } from '../ui/SkeletonLoader';
 import { accentStyle } from './dashboardPalette';
 
@@ -51,7 +52,9 @@ export const KPIStats = () => {
       icon: Clock, color: 'warning',
       path: '/orders/history',
     }] : []),
-    ...(isSuperAdmin(user) ? [{
+    // Tiles follow the matrix cell of the screen they summarise, not the
+    // Super Admin role name.
+    ...(canCell(user, 'inventory', 'dashboard', 'view') ? [{
       id: 5, title: 'Low Stock SKUs',
       value: stats?.lowStockAlerts?.toLocaleString() ?? '—',
       sub: 'Available for sale ≤ 0',
@@ -86,7 +89,7 @@ export const KPIStats = () => {
         path: '/orders/indent-history',
       },
     ] : []),
-    ...(isSuperAdmin(user) ? [{
+    ...(canCell(user, 'administration', 'users', 'view') ? [{
       id: 6, title: 'Active Users',
       value: stats?.activeUsers?.toLocaleString() ?? '—',
       sub: 'Registered customers',

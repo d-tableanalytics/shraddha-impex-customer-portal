@@ -30,7 +30,14 @@ const earliestScheduledDate = (booking) => {
     .map((d) => new Date(d))
     .filter((d) => !Number.isNaN(d.getTime()));
   if (!dates.length) return "";
-  return toYmd(new Date(Math.min(...dates)));
+  /*
+   * Booked lines now carry a default dispatch date (3 days after booking), so a
+   * PO raised later than that would arrive pre-filled with a date already gone,
+   * and the server refuses a past date - the desk would be blocked by a value
+   * they never typed. A past date is left out instead; the field starts empty.
+   */
+  const earliest = toYmd(new Date(Math.min(...dates)));
+  return earliest >= todayYmd() ? earliest : "";
 };
 
 export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoNumber, saving }) => {
@@ -371,7 +378,7 @@ export const PoConfirmModal = ({ isOpen, onClose, onConfirm, booking, initialPoN
                   cheapest place to catch it. */}
               <div className="md:col-span-2">
                 <label className={labelClass}>
-                  <CalendarClock size={14} className="text-primary-600" /> Delivery Schedule Date
+                  <CalendarClock size={14} className="text-primary-600" /> Dispatch Date
                   <span className="ml-1 font-normal normal-case text-[10px] text-slate-400">optional</span>
                 </label>
                 <input

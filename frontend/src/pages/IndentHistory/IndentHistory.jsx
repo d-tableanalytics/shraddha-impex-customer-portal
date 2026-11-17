@@ -7,10 +7,12 @@ import { IndentDrawer } from "../../components/drawer/IndentDrawer";
 import { useIndentHistoryStore } from "../../store/indentHistoryStore";
 import { useUserStore } from "../../store/userStore";
 
-import { isSuperAdmin } from "../../utils/permissions";
+import { canUseSalesDesk } from "../../utils/permissions";
 export const IndentHistory = () => {
   const { fetchIndents } = useIndentHistoryStore();
-  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
+  // Customer columns/filters/cards follow the sales-desk cell (view_all_bookings),
+  // not the Super Admin role name: staff granted every booking need to see whose it is.
+  const seesCustomers = useUserStore((s) => canUseSalesDesk(s.user));
 
   useEffect(() => {
     fetchIndents();
@@ -20,7 +22,7 @@ export const IndentHistory = () => {
     <div className="flex flex-col gap-6 relative">
       <PageHeader title="Indent History" />
       <p className="text-slate-600 -mt-2 text-sm">
-        {isAdmin
+        {seesCustomers
           ? "Track, search and manage unfulfilled quantities across all customers."
           : "Track and search your unfulfilled quantities, awaiting fresh stock."}
       </p>

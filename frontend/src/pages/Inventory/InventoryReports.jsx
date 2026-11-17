@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 import {
   FileBarChart, Camera, GitCompareArrows, RotateCcw,
   ArrowUpRight, ArrowDownRight, CheckCircle2, AlertTriangle,
@@ -16,7 +16,7 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { useReportStore } from '../../store/reportStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
-import { hasPermission, canUseInventoryMaster, canConfigureInventory, PERMISSIONS } from '../../utils/permissions';
+import { canUseInventoryMaster, canConfigureInventory } from '../../utils/permissions';
 import { formatAvailablePercent, bandLabel } from '../../utils/inventoryFormat';
 
 /**
@@ -97,8 +97,8 @@ export const InventoryReports = () => {
   useEffect(() => { fetchReport(); }, [fetchReport]);
   useEffect(() => { fetchSnapshots(); }, [fetchSnapshots]);
 
-  if (user && !(hasPermission(user, PERMISSIONS.VIEW_INVENTORY) && canUseInventoryMaster(user))) {
-    return <Navigate to="/" replace />;
+  if (user && !canUseInventoryMaster(user)) {
+    return <Unauthorized />;
   }
 
   const brands = allowedBrands(user);

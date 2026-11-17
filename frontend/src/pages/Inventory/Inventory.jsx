@@ -6,7 +6,8 @@ import { onStockUpdated } from '../../services/socketService';
 import { useUserStore } from '../../store/userStore';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
 import { allowedBrands } from '../../utils/brandAccess';
-import { canViewBoxNo, isSuperAdmin} from '../../utils/permissions';
+import { canViewBoxNo } from '../../utils/permissions';
+import { canCell } from '../../utils/cellKeys';
 import { Pagination } from '../../components/ui/Pagination';
 import { TableSkeleton } from '../../components/ui/TableSkeleton';
 import { SkuLookupModal } from '../../components/inventory/SkuLookupModal';
@@ -14,13 +15,15 @@ import DetailsDrawer from '../../components/inventory/DetailsDrawer';
 import { productsApi } from '../../services/products';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { ModuleInfoButton } from "../../components/common/ModuleInfoButton";
 
 const PAGE_SIZE = 12;
 
 export const Inventory = () => {
   const { inventory, inventoryLoading, fetchInventory, exportInventory } = useProductStore();
   const { user } = useUserStore();
-  const isAdmin = isSuperAdmin(user);
+  // The low-stock card follows the inventory dashboard cell, not the role name.
+  const seesLowStock = Boolean(canCell(user, 'inventory', 'dashboard', 'view'));
   const showMsilCode = useShowMsilCode();
   // This screen serves customers as well as staff. A box number is an internal
   // picking location, so it is shown to the people who pick and quote against
@@ -133,14 +136,17 @@ export const Inventory = () => {
     <div className="flex flex-col gap-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-xl font-bold text-slate-800 tracking-tight">Inventory Dashboard</h2>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-xl font-bold text-slate-800 tracking-tight">Inventory Dashboard</h2>
+            <ModuleInfoButton />
+          </div>
           <p className="text-sm text-slate-500 mt-1">Manage products, track stock levels, and monitor warehouse assets.</p>
         </div>
       </div>
 
       {/* KPIs — Low Stock is an internal supply signal, so it is Admin-only.
           Customers see the SKU count on its own, full width. */}
-      <div className={`grid grid-cols-1 gap-6 ${isAdmin ? "md:grid-cols-2" : ""}`}>
+      <div className={`grid grid-cols-1 gap-6 ${seesLowStock ? "md:grid-cols-2" : ""}`}>
         <Card className="bg-white border-slate-200">
           <CardContent className="p-6 flex items-center gap-4">
             <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
@@ -153,7 +159,7 @@ export const Inventory = () => {
           </CardContent>
         </Card>
 
-        {isAdmin && (
+        {seesLowStock && (
           <Card className="bg-white border-slate-200">
             <CardContent className="p-6 flex items-center gap-4">
               <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-600">

@@ -5,6 +5,8 @@ import { Card, CardHeader, CardTitle } from "../../components/ui/Card";
 import { Badge } from "../../components/ui/Badge";
 import { useUserStore } from "../../store/userStore";
 import { canManageRoles } from "../../utils/permissions";
+import { canCell } from "../../utils/cellKeys";
+import { ModuleInfoButton } from "../../components/common/ModuleInfoButton";
 
 export const Admin = () => {
   const navigate = useNavigate();
@@ -15,12 +17,14 @@ export const Admin = () => {
       desc: "Add customers and set/change their category (MSIL / Customer).",
       icon: Store,
       path: "/admin/customers",
+      cell: ["administration", "customers"],
     },
     {
       name: "Internal User Management",
       desc: "Create and maintain staff accounts. These people work across both portals.",
       icon: Users,
       path: "/admin/users",
+      cell: ["administration", "users"],
     },
     /*
      * Roles & Permissions — this portal's modules only. The server keeps every
@@ -40,14 +44,19 @@ export const Admin = () => {
       desc: "Descriptions, product images and videos, by SKU.",
       icon: ImageIcon,
       path: "/admin/product-details",
+      cell: ["inventory", "product_content"],
     },
     {
       name: "Inventory",
       desc: "Browse live stock across all brands.",
       icon: Boxes,
       path: "/inventory",
+      cell: ["customer_portal", "catalogue"],
     },
-  ];
+  ]
+    // Each card shows only when its screen's View cell is held, so a card never
+    // leads to a refusal (audit F14). Cards without a cell are gated above.
+    .filter((card) => !card.cell || canCell(user, card.cell[0], card.cell[1], "view") !== false);
 
   return (
     <motion.div
@@ -59,6 +68,7 @@ export const Admin = () => {
         <h1 className="text-xl font-bold text-slate-900">
           Admin Control Panel
         </h1>
+        <ModuleInfoButton />
         <Badge variant="primary">{user?.user || user?.company || user?.email || user?.role || "Admin"}</Badge>
       </div>
 

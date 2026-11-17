@@ -30,12 +30,15 @@ env:
   # Baked into the bundle at build time; must equal the origin the SPA is served
   # from, or every API call becomes cross-origin and CORS rejects it.
   VITE_API_URL: https://erp.shraddhaimpex.net
-  # The Employee Portal API the FMS screens call (src/fms/). A repository
-  # VARIABLE (Settings → Secrets and variables → Actions → Variables), because
-  # it is an origin, not a secret. Unset builds a bundle with FMS hidden — the
-  # rest of the portal is unaffected. That API must also list SITE_URL in its
-  # CORS_ORIGINS.
-  VITE_EMPLOYEE_API_URL: ${{ vars.EMPLOYEE_API_URL }}
+  # The Employee Portal API the FMS screens call (src/fms/). The Employee Portal
+  # is live at app.shraddhaimpex.net (one origin for its SPA and API; nginx
+  # proxies /api there). It is a public fact, so like VITE_API_URL it is a
+  # literal here. It used to come from a repository variable that was never set,
+  # and that shipped a bundle with FMS silently hidden. The repository variable
+  # EMPLOYEE_API_URL still overrides it when set. That API must list SITE_URL in
+  # its CORS_ORIGINS; the "Cross-portal link" step below checks this.
+  EMPLOYEE_API_URL: ${{ vars.EMPLOYEE_API_URL || 'https://app.shraddhaimpex.net' }}
+  VITE_EMPLOYEE_API_URL: ${{ vars.EMPLOYEE_API_URL || 'https://app.shraddhaimpex.net' }}
 
 jobs:
   deploy:
@@ -162,6 +165,23 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$EC2_USER@$EC2_HOST" \
             "pm2 logs shraddha-backend --lines 40 --nostream" || true
           exit 1
+
+      # FMS in this portal calls the Employee API from the browser, so that API
+      # must answer this origin with Access-Control-Allow-Origin. If it doesn't,
+      # FMS quietly disappears from the menu and nothing else complains. A
+      # warning, not a failure: the setting lives on the other server
+      # (CORS_ORIGINS in /var/www/shraddha-employee-portal/.env), and this
+      # portal itself deployed fine.
+      - name: Cross-portal link (Employee API allows this origin)
+        run: |
+          headers=$(curl -sS -m 15 -o /dev/null -D - \
+            -H "Origin: $SITE_URL" "$EMPLOYEE_API_URL/api/v1/auth/me" || true)
+          if printf '%s' "$headers" | tr -d '\r' | grep -qi "^access-control-allow-origin: $SITE_URL\$"; then
+            echo "Employee API at $EMPLOYEE_API_URL allows $SITE_URL: FMS is reachable"
+          else
+            echo "::warning::$EMPLOYEE_API_URL does not allow $SITE_URL (CORS), so FMS stays hidden in this portal." \
+                 "Add $SITE_URL to CORS_ORIGINS in the Employee Portal's .env and pm2 reload it with --update-env."
+          fi
 
       - name: Confirm what landed
         if: always()

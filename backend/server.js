@@ -9,7 +9,7 @@ import { describePortal } from './config/portal.js';
 import { runReservationExpiryChecks } from './modules/reservations/reservationExpiryJob.js';
 import { runPoSettlement } from './modules/orders/poExpiryJob.js';
 import { seedDefaultRoles } from './config/seedRoles.js';
-import { loadRoles } from './utils/roleResolver.js';
+import { startRoleSync, resolveUserPermissions } from './utils/roleResolver.js';
 import { seedBrands, loadBrands } from './utils/brandRegistry.js';
 // Imported for its side effect: registers a product model per brand as the
 // brand list loads, before anything asks for one.
@@ -55,10 +55,16 @@ io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next();
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('role status');
+    // An access token only, as middlewares/auth.js requires for the REST API.
+    if (decoded.type && decoded.type !== 'access') return next();
+    const user = await User.findById(decoded.id).select('role status extraGrants');
     if (user && user.status === 'Active') {
       socket.data.userId = String(user._id);
       socket.data.role = user.role;
+      // Decided once per connection; the browser reconnects when its access
+      // changes (frontend services/accessSync.js).
+      const perms = resolveUserPermissions(user);
+      socket.data.desk = perms.includes('*') || perms.includes('view_all_bookings');
     }
   } catch {
     // Invalid/expired token → connect as anonymous (no rooms).
@@ -77,12 +83,40 @@ io.on('connection', (socket) => {
     // rather than the role string so 'Super Admin' and any custom full-access
     // role join it too.
     if (isSuperAdmin({ role })) socket.join('admins');
+    socket.join('authenticated');
+    if (socket.data.desk) socket.join('desk');
   }
 
   socket.on('disconnect', () => {
     console.log(`[Socket] Client disconnected: ${socket.id}`);
   });
 });
+
+/**
+ * WHO HEARS A BROADCAST.
+ *
+ * Controllers announce changes with `io.emit(event, payload)`. That used to
+ * reach every connected browser - including ones that never signed in, and
+ * every customer - so booking ids, PO numbers and customer ids of all bookings
+ * went to anyone holding a socket. Rather than edit every call site, a plain
+ * broadcast is routed here, by event:
+ *
+ *   - stock, brand and upcoming-stock refresh signals go to signed-in users
+ *     (the catalogue a customer browses listens for them);
+ *   - everything else (bookings, orders, indents, POs) goes to the booking
+ *     desk only: users who may see all bookings.
+ *
+ * Targeted sends (`io.to(room).emit`) are unaffected; they never came here.
+ */
+const SIGNED_IN_EVENTS = new Set([
+  'inventory:stock-updated', 'inventory:upcoming-updated', 'brands:updated',
+]);
+const broadcast = io.emit.bind(io);
+io.emit = (event, ...args) => {
+  if (event === 'connection' || event === 'connect') return broadcast(event, ...args);
+  const room = SIGNED_IN_EVENTS.has(event) ? 'authenticated' : 'desk';
+  return io.to(room).emit(event, ...args);
+};
 
 /**
  * Alert → socket bridge (Module M8).
@@ -118,11 +152,11 @@ const startServer = async () => {
    * and after this process's own role saves. The Employee Portal writes the
    * same collection from its own Roles & Permissions screen, and
    * `npm run roles:baseline:apply` writes it directly — neither reached this
-   * process until a restart. A dozen small documents every minute is the cheap
-   * answer; loadRoles() never throws and keeps its last snapshot on failure.
+   * process until a restart. startRoleSync() checks a two-field fingerprint
+   * every few seconds and reloads only on a change (utils/roleResolver.js), so
+   * a revoked permission stops working here within seconds of any save.
    */
-  const ROLE_REFRESH_MS = Number(process.env.ROLE_CACHE_REFRESH_MS) || 60_000;
-  setInterval(() => { loadRoles(); }, ROLE_REFRESH_MS).unref();
+  await startRoleSync();
 
   /*
    * The brand list (utils/brandRegistry.js), on the same terms: the built-in
@@ -131,7 +165,7 @@ const startServer = async () => {
    * Portal reaches every brand dropdown here within a minute.
    */
   await seedBrands();
-  setInterval(() => { loadBrands(); }, ROLE_REFRESH_MS).unref();
+  setInterval(() => { loadBrands(); }, Number(process.env.BRAND_CACHE_REFRESH_MS) || 60_000).unref();
 
   // Seed the IMS master data (default stock location, global inventory
   // configuration). Idempotent — only fires when the collections are empty.

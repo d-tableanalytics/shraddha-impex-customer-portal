@@ -23,6 +23,7 @@ import {
   resolveBookingCustomer, loadBookingCustomer, creatorStamp, actorName, customerLabel,
 } from '../../utils/bookingActor.js';
 import { creatorEmails } from '../../utils/bookingRecipients.js';
+import { defaultDispatchDate } from '../../utils/dispatchDate.js';
 
 /**
  * ── Booking on a customer's behalf ─────────────────────────────────────────
@@ -1088,6 +1089,9 @@ const runConfirmBooking = async (req, session, { items = null, customer, onBehal
   const summary = [];
   const audits = [];
   const dateNow = new Date();
+  // Every line booked from stock is due to dispatch 3 days after booking
+  // (utils/dispatchDate.js). Indent-only lines get no date: nothing is in hand.
+  const dispatchDate = defaultDispatchDate(dateNow);
 
   // `entries()` rather than a bare for..of so each line keeps the position it
   // held in the customer's request. See the note on `lineSeq` in models/Order.js.
@@ -1155,7 +1159,12 @@ const runConfirmBooking = async (req, session, { items = null, customer, onBehal
         // The delivery location chosen at checkout, falling back to the
         // customer's profile location. Stamped so the pick list can carry the
         // location and its phone number without a second lookup.
-        location: req.body.deliveryLocation || customer.location || null
+        location: req.body.deliveryLocation || customer.location || null,
+        // The default dispatch date, on the per-line field the Sales Desk edits
+        // and the delivery schedule email reads. scheduledBy stays null: the
+        // system set it, not a person.
+        scheduledDate: dispatchDate,
+        scheduledAt: dateNow,
       });
     }
 
@@ -1224,6 +1233,8 @@ const runConfirmBooking = async (req, session, { items = null, customer, onBehal
     // told, read from the same value the reservations were stamped with rather
     // than from a second `new Date()` in the mail builder.
     confirmedAt: dateNow,
+    // The default dispatch date stamped on the booked lines, for the mail.
+    dispatchDate,
   };
 };
 
@@ -1262,7 +1273,7 @@ const runConfirmationRequest = async (req, res, next, { items = null } = {}) => 
 
     const {
       orderNumber, poNumber, indentId, createdOrders, summary,
-      totalConfirmed, totalPending, confirmedAt,
+      totalConfirmed, totalPending, confirmedAt, dispatchDate,
     } = result;
 
     // WHAT WAS ACTUALLY CREATED. A confirmation produces one of three outcomes,
@@ -1354,6 +1365,9 @@ const runConfirmationRequest = async (req, res, next, { items = null } = {}) => 
           orderNumber,
           indentId,
           bookingDate: confirmedAt,
+          // Only when something was booked from stock; an all-indent booking has
+          // nothing to dispatch yet.
+          dispatchDate: createdOrders.length ? dispatchDate : null,
           summary,
           totalConfirmed,
           totalPending,

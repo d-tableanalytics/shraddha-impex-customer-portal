@@ -20,8 +20,15 @@ import { auditLogger } from '../../middlewares/auditLogger.js';
 
 const router = express.Router();
 
+/*
+ * Reading bookings is Booking History's View cell (view_orders) - or the desk's
+ * (view_all_bookings). Unticking both in Roles & Permissions now blocks the API,
+ * not only the menu. Which bookings come back is still scoped per user below.
+ */
+const canReadOrders = authorize('view_orders', 'view_all_bookings');
+
 router.route('/')
-  .get(protect, getOrders)
+  .get(protect, canReadOrders, getOrders)
   .post(protect, authorize('create_order'), auditLogger('Create Order'), createOrder);
 
 // Booking-level routes are declared BEFORE '/:id' so 'booking' is never taken
@@ -50,11 +57,11 @@ router.put(
 
 // The customer's own lifecycle timeline. Not behind manage_orders — the
 // handler applies the ownership rule and gives staff the notification log.
-router.get('/booking/:orderId/timeline', protect, getBookingStatusTimeline);
+router.get('/booking/:orderId/timeline', protect, canReadOrders, getBookingStatusTimeline);
 
 // Who changed the quantities, when, and to what. Same ownership rule as the
 // timeline above — the handler applies it.
-router.get('/booking/:orderId/quantity-history', protect, getBookingQuantityHistory);
+router.get('/booking/:orderId/quantity-history', protect, canReadOrders, getBookingQuantityHistory);
 
 /*
  * Set the expected availability date on a booking's SKU lines, and email the
@@ -107,7 +114,7 @@ router.post(
   resendBookingStatusEmail,
 );
 
-router.get('/:id', protect, getOrderById);
+router.get('/:id', protect, canReadOrders, getOrderById);
 
 // Cancellation is staff-only (customers lost it 2026-10-27). The handler
 // checks for manage_orders itself, so a customer is told to contact support
@@ -115,6 +122,9 @@ router.get('/:id', protect, getOrderById);
 router.post('/:orderId/cancel', protect, auditLogger('Cancel Booking'), cancelBooking);
 
 router.put('/:id/status', protect, authorize('manage_orders'), updateOrderStatus);
-router.put('/:orderId/po', protect, authorize('manage_orders'), updateOrderPO);
+// Setting a PO number raises the PO, so it also needs Raise PO (the Sales
+// Desk's Approve cell) - unticking that cell must stop it here as it does on
+// POST /sales/bookings/:orderId/po.
+router.put('/:orderId/po', protect, authorize('manage_orders'), authorize('raise_po'), updateOrderPO);
 
 export default router;

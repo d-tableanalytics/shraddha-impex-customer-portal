@@ -3,13 +3,22 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, FileText, Package, ShoppingCart, LayoutDashboard, Command } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
+import { useUserStore } from '../../store/userStore';
+import { canUseOrdering } from '../../utils/permissions';
+import { canCell } from '../../utils/cellKeys';
 
 const COMMANDS = [
-  { id: 1, name: 'Dashboard', icon: LayoutDashboard, path: '/' },
-  { id: 2, name: 'Create Booking', icon: ShoppingCart, path: '/orders/new' },
-  { id: 3, name: 'Booking History', icon: FileText, path: '/orders/history' },
-  { id: 4, name: 'Bulk Upload', icon: Package, path: '/orders/bulk-upload' },
+  { id: 1, name: 'Dashboard', icon: LayoutDashboard, path: '/', cell: ['customer_portal', 'dashboard'] },
+  { id: 2, name: 'Create Booking', icon: ShoppingCart, path: '/orders/new', cell: ['customer_portal', 'create_booking'], ordering: true },
+  { id: 3, name: 'Booking History', icon: FileText, path: '/orders/history', cell: ['customer_portal', 'booking_history'], ordering: true },
+  { id: 4, name: 'Bulk Upload', icon: Package, path: '/orders/bulk-upload', cell: ['customer_portal', 'bulk_upload'], ordering: true },
 ];
+
+// Offer only what the routes would open: the same cell ModuleRoute asks, plus
+// OrderingRoute's rule for the ordering screens.
+const mayOpen = (user, cmd) =>
+  canCell(user, cmd.cell[0], cmd.cell[1], 'view') !== false
+  && (!cmd.ordering || canUseOrdering(user));
 
 export const CommandPalette = () => {
   const { commandPaletteOpen, setCommandPaletteOpen } = useUIStore();
@@ -17,6 +26,7 @@ export const CommandPalette = () => {
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef(null);
   const navigate = useNavigate();
+  const user = useUserStore((s) => s.user);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -37,7 +47,7 @@ export const CommandPalette = () => {
     }
   }, [commandPaletteOpen]);
 
-  const filteredCommands = COMMANDS.filter(cmd =>
+  const filteredCommands = COMMANDS.filter((cmd) => mayOpen(user, cmd)).filter(cmd =>
     cmd.name.toLowerCase().includes(query.toLowerCase())
   );
 

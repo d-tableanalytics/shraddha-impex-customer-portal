@@ -148,7 +148,12 @@ const withDerived = (stored, incoming) => {
 export const normaliseRoleSave = ({ storedGrants = [], storedPermissions = [], incomingGrants = [] }, portal = currentPortal()) => {
   const served = servedCellKeys(portal);
   const servedIncoming = (incomingGrants || []).filter((g) => served.has(cellKey(g)));
-  const narrowedKeys = new Set(Object.values(NARROWED_CELLS).map((n) => n.key));
+  // Only the narrowed cells THIS portal shows are decided by this save. The
+  // Employee Portal does not show Customer Management, so a save there must
+  // keep `manage_customer_users` as stored rather than strip it from Sales.
+  const narrowedKeys = new Set(Object.entries(NARROWED_CELLS)
+    .filter(([cell]) => served.has(cell))
+    .map(([, n]) => n.key));
 
   const flat = new Set((storedPermissions || []).filter((k) => !narrowedKeys.has(k)));
   const cells = [];

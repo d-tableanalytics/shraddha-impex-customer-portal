@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 
 import { Card, CardContent } from '../../components/ui/Card';
 import { PageHeader } from '../../components/common/PageHeader';
@@ -18,7 +18,7 @@ export const InventoryBrands = () => {
   const { user } = useUserStore();
   // The route and every request are guarded server-side; this only avoids
   // rendering a screen the user could not use.
-  if (user && !canConfigureInventory(user)) return <Navigate to="/" replace />;
+  if (user && !canConfigureInventory(user)) return <Unauthorized />;
 
   return (
     <div className="flex flex-col gap-6">

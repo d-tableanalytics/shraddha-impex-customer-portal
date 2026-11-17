@@ -31,6 +31,7 @@
  * Super Admin can now widen.
  */
 
+import { recordDenied } from '../utils/deniedAccess.js';
 import {
   PERMISSIONS,
   INVENTORY_ROLES,
@@ -96,6 +97,7 @@ export const authorize = (...requiredPermissions) => {
 
     const ok = requiredPermissions.some((p) => hasPermission(req.user, p));
     if (!ok) {
+      recordDenied(req, requiredPermissions);
       return res.status(403).json({
         success: false,
         message: 'Forbidden. Insufficient permissions.',
@@ -127,6 +129,7 @@ export const authorizeModule = (moduleKey, submoduleKey, action) => {
     }
 
     if (!can(req.user, moduleKey, submoduleKey, action)) {
+      recordDenied(req, `${moduleKey}.${submoduleKey}.${action}`);
       return res.status(403).json({
         success: false,
         message: 'Forbidden. Insufficient permissions.',

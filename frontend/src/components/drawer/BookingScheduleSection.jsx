@@ -7,7 +7,11 @@ import { toYmd, todayYmd, formatDisplayDate } from "../../utils/dateValue";
 import { ordersApi } from "../../services/orders";
 
 /**
- * Schedule when each booked SKU is expected to become available.
+ * Schedule when each booked SKU will be DISPATCHED. Lines booked from stock
+ * arrive with a default of 3 days after booking (backend utils/dispatchDate.js);
+ * this is where the desk changes it. Labelled "Dispatch date", as the customer's
+ * emails are: the stock is already committed, so the date is a dispatch, not an
+ * availability (that is the indent side's meaning).
  *
  * ---------------------------------------------------------------------------
  * DELIBERATELY THE TWIN OF IndentScheduleSection
@@ -118,7 +122,7 @@ export const BookingScheduleSection = ({ orderId, lines, onSaved }) => {
             <tr>
               <th className="px-5 py-2.5">SKU</th>
               <th className="px-5 py-2.5 text-center">Qty</th>
-              <th className="px-5 py-2.5">Available from</th>
+              <th className="px-5 py-2.5">Dispatch date</th>
               <th className="px-5 py-2.5">Currently</th>
             </tr>
           </thead>

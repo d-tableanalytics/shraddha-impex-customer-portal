@@ -4,6 +4,8 @@ import toast from 'react-hot-toast';
 
 import { Button } from '../ui/Button';
 import { inventoryApi } from '../../services/inventory';
+import { useUserStore } from '../../store/userStore';
+import { canCell } from '../../utils/cellKeys';
 
 /**
  * Export the table, or just the rows picked out of it.
@@ -23,6 +25,10 @@ export const ExportButton = ({
 }) => {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  // Every export is refused by the server without export_inventory (the
+  // inventory.exports View cell), so the button is not offered without it.
+  // Checked here so every page that drops an ExportButton in is covered.
+  const mayExport = useUserStore((s) => Boolean(canCell(s.user, 'inventory', 'exports', 'view')));
 
   const run = async (onlySelected) => {
     setOpen(false);
@@ -51,6 +57,8 @@ export const ExportButton = ({
   };
 
   const hasSelection = selected.length > 0;
+
+  if (!mayExport) return null;
 
   return (
     <div className="relative">

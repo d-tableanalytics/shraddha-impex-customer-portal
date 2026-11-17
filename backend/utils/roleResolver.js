@@ -84,7 +84,18 @@ const keysOf = (modules) => {
  * Both are computed from the registry rather than listed by hand, so a
  * sub-module added later lands inside or outside each fence automatically.
  */
-const CUSTOMER_MODULE_KEYS = keysOf(MODULES.filter((m) => m.key === 'customer_portal'));
+/*
+ * Minus the DESK keys that live in customer_portal cells for the staff who work
+ * those screens: seeing every customer's bookings, editing a booking before its
+ * PO, and moving its status / cancelling it. They are customer_portal keys only
+ * by location; on a customer they would mean "act on everybody's bookings". The
+ * built-in Customer role holds none of them, so ticking e.g. Booking History >
+ * Delete on a portal-only role can no longer hand them to every customer.
+ */
+const DESK_ONLY_KEYS = new Set(['view_all_bookings', 'edit_booking_pre_po', 'manage_orders']);
+const CUSTOMER_MODULE_KEYS = new Set(
+  [...keysOf(MODULES.filter((m) => m.key === 'customer_portal'))].filter((key) => !DESK_ONLY_KEYS.has(key)),
+);
 
 /**
  * Every flat key this DEPLOYMENT's portal is allowed to serve, per portal.
@@ -142,12 +153,91 @@ export const loadRoles = async () => {
     rolesById = byId;
     resolvedByName = new Map(); // recompute lazily against the new snapshot
     loadedAt = new Date();
+    // A save in THIS process reloads directly; tell listeners (live sessions)
+    // now rather than at the next sync tick. The sync then sees no change.
+    if (lastFingerprint !== null) {
+      fingerprint().then((fp) => {
+        if (fp !== lastFingerprint) { lastFingerprint = fp; announce(); }
+      }).catch(() => {});
+    }
     return roles.length;
   } catch (error) {
     console.error(`[RBAC] Could not refresh the role cache: ${error.message}`);
     console.error('[RBAC] Continuing on the previous snapshot; baseline permissions are unaffected.');
     return null;
   }
+};
+
+// ── Keeping the cache in step across processes ─────────────────────────────
+
+/**
+ * What changed, cheaply: the number of roles and the newest `updatedAt`.
+ *
+ * Both portals run their own server over ONE `roles` collection, and each
+ * answers from its own in-memory copy. A save on one server reloads that
+ * server only, so the other kept the old answer - for up to a minute on the
+ * Customer Portal and until a restart on the Employee Portal, which never
+ * loaded roles at boot at all. A revoked permission has to stop working
+ * promptly on BOTH, without a restart and without the user signing out.
+ *
+ * Re-reading every role every few seconds would be wasteful, so the check is a
+ * count plus one indexed-by-default sort on a dozen documents: a create,
+ * delete or any save moves one of the two. Only a change triggers loadRoles().
+ */
+let lastFingerprint = null;
+const roleListeners = new Set();
+
+const fingerprint = async () => {
+  const [count, newest] = await Promise.all([
+    Role.countDocuments(),
+    Role.findOne({}, { updatedAt: 1 }).sort({ updatedAt: -1 }).lean(),
+  ]);
+  return `${count}:${newest?.updatedAt ? new Date(newest.updatedAt).getTime() : 0}`;
+};
+
+/**
+ * Be told when the role set changes (a save here, or one seen by the sync).
+ * Returns an unsubscribe function. Listeners must not throw; errors are logged.
+ */
+export const onRolesChanged = (listener) => {
+  roleListeners.add(listener);
+  return () => roleListeners.delete(listener);
+};
+
+const announce = () => {
+  for (const listener of roleListeners) {
+    try { listener(); } catch (error) { console.error(`[RBAC] Role change listener failed: ${error.message}`); }
+  }
+};
+
+/**
+ * Reload when the stored roles differ from the last snapshot. Never throws.
+ * @returns {Promise<boolean>} whether a reload happened.
+ */
+export const syncRoles = async () => {
+  try {
+    const now = await fingerprint();
+    if (now === lastFingerprint) return false;
+    const first = lastFingerprint === null;
+    lastFingerprint = now;
+    await loadRoles();
+    if (!first) announce();
+    return true;
+  } catch (error) {
+    console.error(`[RBAC] Role sync check failed: ${error.message}`);
+    return false;
+  }
+};
+
+/**
+ * Load the roles now and keep checking for changes made by any process.
+ * Call once at server start, after the database is connected.
+ */
+export const startRoleSync = async ({ intervalMs = Number(process.env.ROLE_SYNC_INTERVAL_MS) || 5_000 } = {}) => {
+  await syncRoles();
+  const timer = setInterval(() => { syncRoles(); }, intervalMs);
+  timer.unref?.();
+  return timer;
 };
 
 /** Drop the computed sets without re-reading the database. */
@@ -469,6 +559,9 @@ export const grantsForUser = (user) => {
 };
 
 export default {
+  syncRoles,
+  startRoleSync,
+  onRolesChanged,
   loadRoles,
   invalidateResolved,
   cacheStatus,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 import {
   BellOff, Loader2, CheckCircle2, Eye, Archive, SlidersHorizontal,
   AlertTriangle, AlertOctagon, Info, X, Repeat,
@@ -15,7 +15,8 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { useAlertStore } from '../../store/alertStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
-import { hasPermission, canUseInventoryMaster, PERMISSIONS } from '../../utils/permissions';
+import { hasPermission, PERMISSIONS } from '../../utils/permissions';
+import { canCell } from '../../utils/cellKeys';
 import { formatAvailablePercent } from '../../utils/inventoryFormat';
 
 /**
@@ -110,8 +111,8 @@ export const InventoryAlerts = () => {
   useEffect(() => { fetchAlerts(); }, [fetchAlerts]);
   useEffect(() => { if (error) { toast.error(error); clearError(); } }, [error, clearError]);
 
-  if (user && !(hasPermission(user, PERMISSIONS.VIEW_INVENTORY) && canUseInventoryMaster(user))) {
-    return <Navigate to="/" replace />;
+  if (user && !canCell(user, 'inventory', 'alerts', 'view')) {
+    return <Unauthorized />;
   }
 
   const brands = allowedBrands(user);

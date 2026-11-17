@@ -20,6 +20,7 @@ import {
   MAX_REFRESH_SESSIONS,
 } from '../../utils/tokens.js';
 import { recordAudit } from '../../utils/auditLog.js';
+import { createHash } from 'node:crypto';
 import { AUDIT_ACTIONS } from '../../shared/constants/hrms.js';
 // The portal's authorization payload for /auth/me. `jwt` and `bcrypt` are NOT
 // imported alongside these any more: token signing moved to utils/tokens.js and
@@ -448,6 +449,41 @@ export const logout = async (req, res, next) => {
  * decides for itself which links to show is a frontend that can disagree with
  * the server, and every such disagreement is either a dead link or a leak.
  */
+/**
+ * A short fingerprint of everything that decides what this user may do: role,
+ * status, the resolved permission keys, the matrix grants and the menu.
+ *
+ * The browser reads the full access once (GET /auth/me) and then only asks for
+ * this (GET /auth/access-version) every few seconds and after any 403. When the
+ * fingerprint moves - an Admin changed the role, the account's role or its
+ * extra access - the browser re-reads /auth/me, so the sidebar, routes and
+ * buttons follow the change without the user signing out. The server enforces
+ * the new access on the very next request regardless; this keeps the screen
+ * honest about it.
+ */
+export const accessVersionOf = (user) => createHash('sha1')
+  .update(JSON.stringify({
+    role: user.role,
+    status: user.status,
+    permissions: [...resolveUserPermissions(user)].sort(),
+    grants: grantsForUser(user),
+    menu: menuFor(user),
+  }))
+  .digest('hex')
+  .slice(0, 16);
+
+/** GET /auth/access-version - the fingerprint alone, for cheap polling. */
+export const getAccessVersion = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id || req.user._id).select('role status extraGrants').lean();
+    if (!user) return res.status(401).json({ success: false, message: 'User not found' });
+    res.set('Cache-Control', 'no-store');
+    res.status(200).json({ success: true, data: { accessVersion: accessVersionOf(user) } });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getMe = async (req, res, next) => {
   try {
     // .lean() so the permission fields can be attached without fighting a
@@ -463,6 +499,7 @@ export const getMe = async (req, res, next) => {
       data: {
         ...user,
         permissions: resolveUserPermissions(user),
+        accessVersion: accessVersionOf(user),
         grants: grantsForUser(user),
         menu: menuFor(user),
         /**

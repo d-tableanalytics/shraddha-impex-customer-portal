@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { initSocket, onBrandsUpdated } from "./services/socketService";
 import { useUserStore } from "./store/userStore";
 import { useThemeStore } from "./store/themeStore";
+import { startAccessSync } from "./services/accessSync";
 
 
 
@@ -24,6 +25,10 @@ function App() {
   // A brand created anywhere appears in every brand list on this screen
   // without a reload.
   useEffect(() => onBrandsUpdated(() => refreshSession()), [refreshSession]);
+
+  // Follow access changes made by an Admin while this tab is open: the
+  // sidebar, routes and buttons update without signing out.
+  useEffect(() => startAccessSync(), []);
 
   return (
     <QueryClientProvider client={queryClient}>

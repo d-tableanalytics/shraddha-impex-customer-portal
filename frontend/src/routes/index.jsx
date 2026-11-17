@@ -4,6 +4,9 @@ import { ProtectedRoute } from "../components/layout/ProtectedRoute";
 import { OrderingRoute } from "../components/layout/OrderingRoute";
 import { HomeRoute } from "../components/layout/HomeRoute";
 import { ModuleRoute } from "../components/layout/ModuleRoute";
+import { PredicateRoute } from "../components/layout/PredicateRoute";
+import { NotFound } from "../components/common/NotFound";
+import { canManageRoles, PERMISSIONS } from "../utils/permissions";
 import { lazy } from 'react';
 // One loader per page, shared with route prefetching — see routeChunks.js.
 import { lazyPage } from './routeChunks';
@@ -133,7 +136,10 @@ export const router = createBrowserRouter([
           },
           {
             path: "admin/permissions",
-            element: <RolesPermissions />,
+            // No Customer Portal cell exists for this screen (registry
+            // administration.roles is Employee-only), so it is guarded by the
+            // same helper the page and sidebar use: manage_roles.
+            element: <PredicateRoute allow={canManageRoles}><RolesPermissions /></PredicateRoute>,
           },
           {
             path: "admin/product-details",
@@ -207,10 +213,18 @@ export const router = createBrowserRouter([
             element: <O2dProtectedRoute />,
             children: [
               { index: true, element: <Navigate to="/fms/o2d/tasks" replace /> },
-              { path: "orders/new", element: <O2dNewOrderPage /> },
+              {
+                // The intake form needs create_o2d_order, as in the Employee
+                // Portal; view_o2d alone only reaches the lists (audit F10).
+                element: <O2dProtectedRoute permission={PERMISSIONS.CREATE_O2D_ORDER} />,
+                children: [{ path: "orders/new", element: <O2dNewOrderPage /> }],
+              },
               { path: ":tab", element: <O2dPage /> },
             ],
           },
+          // Any path the router does not know: a "not found" screen inside the
+          // layout, instead of React Router's bare default error page.
+          { path: "*", element: <NotFound /> },
         ],
       }
     ]

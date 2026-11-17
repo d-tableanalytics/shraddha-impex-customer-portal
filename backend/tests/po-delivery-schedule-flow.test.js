@@ -204,9 +204,9 @@ describe('raising a PO with a delivery schedule date', () => {
     assert.ok(await waitForMail(1));
     assert.equal(sent[0].attachments.length, 2);
     // The schedule table is still in the body; there is simply no date to put
-    // in the "Delivery scheduled from" line above it.
+    // in the "Dispatch Date" line above it.
     assert.match(sent[0].html, /FULL ORDER/);
-    assert.doesNotMatch(sent[0].html, /Delivery scheduled from/);
+    assert.doesNotMatch(sent[0].html, /Dispatch Date:/);
   });
 
   test('a date in the past is refused before anything is written', async () => {

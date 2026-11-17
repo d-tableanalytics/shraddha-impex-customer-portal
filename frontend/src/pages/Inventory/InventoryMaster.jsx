@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 import {
   Boxes, Search, AlertCircle, X, Save, Loader2, Layers, PackagePlus, Upload, Trash2,
   Pencil, Check, Activity, Tags,
@@ -25,7 +26,7 @@ import { useInventoryStore } from '../../store/inventoryStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import {
-  canUseInventoryMaster, canEditPlanning, canEditBoxNo, canAdjustStock, canManagePricing,
+  canOpenInventoryMaster, canEditPlanning, canEditBoxNo, canAdjustStock, canManagePricing,
   hasPermission, PERMISSIONS, canAction,
 } from '../../utils/permissions';
 
@@ -474,10 +475,9 @@ export const InventoryMaster = () => {
 
   // The route is also guarded server-side on every request; this only avoids
   // rendering a screen the user could not populate.
-  // Pricing holders reach this screen for the Update Stock → Pricing tab even
-  // when their role does not use the inventory master otherwise (Sales). What
-  // they can do here is still decided per action below.
-  if (user && !canUseInventoryMaster(user) && !canManagePricing(user)) return <Navigate to="/" replace />;
+  // Anyone the route admits (View Inventory) opens it, Sales included; see
+  // canOpenInventoryMaster. What they can do here is decided per action below.
+  if (user && !canOpenInventoryMaster(user)) return <Unauthorized />;
 
   const canEdit = canEditPlanning(user);
   // Narrower than canEdit on purpose — an Inventory Manager maintains planning
@@ -491,6 +491,7 @@ export const InventoryMaster = () => {
   // Admin only, and narrower than editing on purpose: a SKU code is a
   // business key other records name, so removing one is not maintenance.
   const canDelete = hasPermission(user, PERMISSIONS.DELETE_SKU);
+  const canExport = hasPermission(user, PERMISSIONS.EXPORT_INVENTORY);
   const brands = allowedBrands(user);
   const missingInputs = items.filter((i) => !i.hasPlanningInputs).length;
 
@@ -664,6 +665,9 @@ export const InventoryMaster = () => {
               {/* Export sits with the filters it exports: the current search,
                   brand and status, or the ticked SKUs. Same component and
                   props it had in the header — only its position changed. */}
+              {/* Only for roles the export endpoint serves (Export Inventory);
+                  a View Inventory user such as Sales would get a refusal. */}
+              {canExport && (
               <ExportButton
                 exportType="inventory-master"
                 filters={{
@@ -672,6 +676,7 @@ export const InventoryMaster = () => {
                 }}
                 selected={[...picked]}
               />
+              )}
             </div>
           </div>
 

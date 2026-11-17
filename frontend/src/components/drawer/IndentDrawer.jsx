@@ -22,14 +22,16 @@ import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
 import { IndentScheduleSection } from "./IndentScheduleSection";
 
-import { isSuperAdmin, canCancelBookings } from "../../utils/permissions";
+import { isSuperAdmin, canCancelBookings, canUseSalesDesk } from "../../utils/permissions";
 const PAGE_SIZE = 10;
 
 export const IndentDrawer = () => {
   const { selectedIndent, setSelectedIndent, fetchIndents } = useIndentHistoryStore();
   const { user } = useUserStore();
   const showMsilCode = useShowMsilCode();
-  const isAdmin = isSuperAdmin(user);
+  // Customer columns/filters/cards follow the sales-desk cell (view_all_bookings),
+  // not the Super Admin role name: staff granted every booking need to see whose it is.
+  const seesCustomers = canUseSalesDesk(user);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const { run: runExport, isBusy: isExporting } = useBusyAction();
   const [busy, setBusy] = useState(false);
@@ -164,7 +166,7 @@ export const IndentDrawer = () => {
           <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-8">
             {/* Top Info Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {isAdmin && (
+              {seesCustomers && (
                 <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
                   <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
                     <User size={16} className="text-blue-600" />
@@ -279,7 +281,9 @@ export const IndentDrawer = () => {
 
                 {/* Scheduling — admin only, and it sits under the lines because
                     it is about those lines. */}
-                {isAdmin && <IndentScheduleSection lines={lines} />}
+                {/* Super Admin, not the desk cell: the server's scheduleIndent
+                    refuses anyone else (reservation.controller.js). */}
+                {isSuperAdmin(user) && <IndentScheduleSection lines={lines} />}
               </div>
 
               {/* Sidebar */}
@@ -336,7 +340,7 @@ export const IndentDrawer = () => {
             {/* Reports stock position only. It used to say lines "can be
                 restored now", which described the manual action that has been
                 removed — the move to the selection list is automatic. */}
-            {isAdmin && (
+            {seesCustomers && (
               <span className="text-xs font-bold text-slate-500">
                 {readyCount === 0
                   ? "Awaiting stock for every line"

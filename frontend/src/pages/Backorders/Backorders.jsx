@@ -9,14 +9,16 @@ import { BackordersTable, groupByIndent } from "../../components/backorders/Back
 import { Pagination } from "../../components/ui/Pagination";
 import { SkeletonLoader } from "../../components/ui/SkeletonLoader";
 
-import { isSuperAdmin } from "../../utils/permissions";
+import { canUseSalesDesk } from "../../utils/permissions";
 const PAGE_SIZE = 10;
 
 export const Backorders = () => {
   const { run: runExport, isBusy: isExporting } = useBusyAction();
   const { pendingItems, pendingLoading, fetchPendingReservations } = useCartStore();
   const { user } = useUserStore();
-  const isAdmin = isSuperAdmin(user);
+  // Customer columns/filters/cards follow the sales-desk cell (view_all_bookings),
+  // not the Super Admin role name: staff granted every booking need to see whose it is.
+  const seesCustomers = canUseSalesDesk(user);
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState([]);
 
@@ -56,7 +58,7 @@ export const Backorders = () => {
         { key: "indentNo", label: "Indent No" },
         { key: "date", label: "Date" },
         { key: "sku", label: "SKU Code" },
-        ...(isAdmin ? [{ key: "customer", label: "Customer" }] : []),
+        ...(seesCustomers ? [{ key: "customer", label: "Customer" }] : []),
         { key: "pendingQty", label: "Qty" },
         { key: "stock", label: "Current Stock" },
         { key: "status", label: "Status" },
@@ -130,7 +132,7 @@ export const Backorders = () => {
         }
       />
       <p className="text-slate-500 text-sm font-medium -mt-2">
-        {isAdmin
+        {seesCustomers
           ? "Unfulfilled quantities across all customers, awaiting fresh stock."
           : "Your unfulfilled quantities, awaiting fresh stock."}
       </p>
@@ -178,7 +180,7 @@ export const Backorders = () => {
         <BackordersTable
           items={pageItems}
           loading={pendingLoading}
-          showCustomer={isAdmin}
+          showCustomer={seesCustomers}
           selectedIds={selectedIds}
           toggleSelectId={toggleSelectId}
           toggleSelectAll={toggleSelectAll}

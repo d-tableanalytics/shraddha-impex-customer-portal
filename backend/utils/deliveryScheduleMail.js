@@ -82,8 +82,16 @@ const HEAD = 'padding:8px 12px;text-align:left;';
  *            quantity: number, scheduledDate: Date, note: string|null}} ScheduleLine
  */
 
-/** One `<table>` of lines, with the reference column only when it varies. */
-const tableFor = (lines) => {
+/**
+ * One `<table>` of lines, with the reference column only when it varies.
+ *
+ * `dateLabel` names the date column for what the date MEANS. A booking line's
+ * date is when it will be DISPATCHED (the stock is already committed to it); an
+ * indent line's is when stock is expected, i.e. when it becomes AVAILABLE. Both
+ * used to print "Available From", so a booking's dispatch date reached the
+ * customer under the wrong heading.
+ */
+const tableFor = (lines, { dateLabel = 'Available From' } = {}) => {
   // A single reference across every row is stated once above the table instead
   // of repeated down a column that never changes.
   const refs = [...new Set(lines.map((l) => l.reference).filter(Boolean))];
@@ -95,7 +103,7 @@ const tableFor = (lines) => {
     `<th style="${HEAD}">SKU</th>`,
     `<th style="${HEAD}">Product</th>`,
     '<th style="padding:8px 12px;">Quantity</th>',
-    `<th style="${HEAD}">Available From</th>`,
+    `<th style="${HEAD}">${esc(dateLabel)}</th>`,
     '</tr></thead>',
   ].join('');
 
@@ -149,7 +157,7 @@ export function buildDeliveryScheduleMail({ customer, indentLines = [], bookingL
   const sections = [];
 
   if (bookings.length) {
-    const t = tableFor(bookings);
+    const t = tableFor(bookings, { dateLabel: 'Dispatch Date' });
     /*
      * A booking whose PO has been raised IS a purchase order, and the mail has
      * to say so — the same rule the indent mail already applied. Only when every

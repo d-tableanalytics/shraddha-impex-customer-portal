@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 import {
   Download, Loader2, FileSpreadsheet, FileText, History, Filter,
 } from 'lucide-react';
@@ -12,7 +12,8 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { useExportStore } from '../../store/importStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
-import { hasPermission, canUseInventoryMaster, PERMISSIONS } from '../../utils/permissions';
+import { canUseInventoryMaster } from '../../utils/permissions';
+import { canCell } from '../../utils/cellKeys';
 
 /**
  * Export Centre — IMS Module M9.
@@ -81,11 +82,8 @@ export const InventoryExport = () => {
   useEffect(() => { fetchTypes(); fetchHistory(); }, [fetchTypes, fetchHistory]);
   useEffect(() => { if (error) { toast.error(error); clearError(); } }, [error, clearError]);
 
-  if (user && !(hasPermission(user, PERMISSIONS.VIEW_INVENTORY) && canUseInventoryMaster(user))) {
-    return <Navigate to="/" replace />;
-  }
-  if (user && !hasPermission(user, PERMISSIONS.EXPORT_INVENTORY)) {
-    return <Navigate to="/inventory/dashboard" replace />;
+  if (user && !(canUseInventoryMaster(user) && canCell(user, 'inventory', 'exports', 'view'))) {
+    return <Unauthorized />;
   }
 
   const brands = allowedBrands(user);

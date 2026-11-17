@@ -2,7 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 
 import { useUserStore } from "../../store/userStore";
-import { canAction, canUseInventoryMaster, canManagePricing } from "../../utils/permissions";
+import { canAction, canOpenInventoryMaster } from "../../utils/permissions";
 
 /**
  * "← Back to Inventory Master", for the pages Inventory Master's action
@@ -24,7 +24,7 @@ export const INVENTORY_MASTER_PATH = "/inventory/master";
 
 export const canReturnToInventoryMaster = (user) =>
   (!Array.isArray(user?.grants) || canAction(user, "inventory", "master", "view"))
-  && (canUseInventoryMaster(user) || canManagePricing(user));
+  && canOpenInventoryMaster(user);
 
 export const BackToInventoryMaster = () => {
   const navigate = useNavigate();

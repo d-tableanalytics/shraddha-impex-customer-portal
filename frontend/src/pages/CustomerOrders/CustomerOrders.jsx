@@ -16,6 +16,7 @@ import { OrderTable } from "../../components/tables/OrderTable";
 import { ProductSearchDropdown } from "../../components/ui";
 import { CodeValue } from "../../components/ui/CodeValue";
 import { Package, Hash, Tag, MessageSquare, Receipt, ArrowRight, Clock, Loader2 } from "lucide-react";
+import { ModuleInfoButton } from "../../components/common/ModuleInfoButton";
 
 const units = (n) => `${n} unit${n === 1 ? "" : "s"}`;
 
@@ -293,9 +294,12 @@ export const CustomerOrders = () => {
           <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#1a5b9e] to-[#15467a]"></div>
 
           <div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              Create Booking
-            </h1>
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+                Create Booking
+              </h1>
+              <ModuleInfoButton infoKey="customer_portal.create_booking" />
+            </div>
           </div>
 
           <form onSubmit={handleSubmit(handleAddToCart)} className="flex flex-col gap-6">

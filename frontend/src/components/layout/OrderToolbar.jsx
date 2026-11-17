@@ -14,7 +14,7 @@ import { Loader2 } from "lucide-react";
 import { useBusyAction } from "../../hooks/useBusyAction";
 import { availabilityFor, fetchExportAvailability } from "../../utils/exportAvailability";
 
-import { isSuperAdmin, canUseSalesDesk } from "../../utils/permissions";
+import { canUseSalesDesk } from "../../utils/permissions";
 export const OrderToolbar = () => {
   const { searchQuery, setSearchQuery, filters, setFilters, selectedIds, allOrders } =
     useOrderHistoryStore();
@@ -22,7 +22,9 @@ export const OrderToolbar = () => {
   // An export of the whole history builds its file in the browser after
   // loading a large library; busy until it is done — see useBusyAction.
   const { run: runExport, anyBusy: exporting } = useBusyAction();
-  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
+  // Customer columns/filters/cards follow the sales-desk cell (view_all_bookings),
+  // not the Super Admin role name: staff granted every booking need to see whose it is.
+  const seesCustomers = useUserStore((s) => canUseSalesDesk(s.user));
   // The SI Team column (who placed the booking for the customer) is exported
   // for the desk, matching the table — see OrderHistoryTable.
   const showSiTeam = useUserStore((s) => canUseSalesDesk(s.user));
@@ -123,7 +125,7 @@ export const OrderToolbar = () => {
             // screen would tell you so — a booking's SKUs are a click inside
             // the row, and a search box that does not mention them reads as one
             // that does not look at them.
-            placeholder={isAdmin ? "Search Booking No, PO No, SKU, Customer..." : "Search Booking No, PO No, SKU..."}
+            placeholder={seesCustomers ? "Search Booking No, PO No, SKU, Customer..." : "Search Booking No, PO No, SKU..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
@@ -139,7 +141,7 @@ export const OrderToolbar = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          {isAdmin && (
+          {seesCustomers && (
             <div className="relative hidden sm:block">
               <Users
                 size={16}

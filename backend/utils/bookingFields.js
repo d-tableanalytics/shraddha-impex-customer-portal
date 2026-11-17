@@ -204,3 +204,36 @@ export function coerceField(key, raw) {
   if (def.type === 'gst') return value.toUpperCase();
   return value;
 }
+
+// ---------------------------------------------------------------------------
+// The customer's details, as a booking carries them
+// ---------------------------------------------------------------------------
+
+/**
+ * Which editable booking field holds which field of the customer's record.
+ *
+ * The SAME eight fields, from the same sources, that booking creation stamps on
+ * every Order row (reservation.controller / indentAvailability.service). When
+ * the desk moves a booking to a different customer in Edit Details, these are
+ * what follow the customer; everything else on the booking is about the order
+ * itself (PO number and date, vendor code, payment term, promise date,
+ * remarks) and stays as it is.
+ *
+ * Vendor Code is deliberately absent: creation takes it from the PRODUCT, not
+ * the customer.
+ */
+export const CUSTOMER_SNAPSHOT_FIELDS = Object.freeze({
+  customerName: (c) => c?.company || c?.customerName || null,
+  emailId: (c) => c?.email || null,
+  phoneNumber: (c) => c?.phone || null,
+  location: (c) => c?.location || null,
+  shopNumber: (c) => c?.shopNumber || null,
+  gstCode: (c) => c?.gstNumber || null,
+  shippingAddress: (c) => c?.shippingAddress || null,
+  billingAddress: (c) => c?.billingAddress || null,
+});
+
+/** `{ customerName, emailId, ... }` for a customer record, nulls where it has none. */
+export const snapshotFromCustomer = (customer) => Object.fromEntries(
+  Object.entries(CUSTOMER_SNAPSHOT_FIELDS).map(([key, read]) => [key, read(customer)]),
+);

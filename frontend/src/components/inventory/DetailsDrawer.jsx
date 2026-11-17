@@ -17,7 +17,7 @@ import { ProductContentSection } from './ProductContentSection';
 import { useUserStore } from '../../store/userStore';
 import { isMsilCustomer } from '../../utils/moq';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
-import { isAdmin, isSales } from '../../utils/permissions';
+import { canUseInventoryMaster } from '../../utils/permissions';
 
 const BRAND_COLORS = {
   KOKEN: 'bg-blue-50 text-blue-700 border-blue-200',
@@ -48,7 +48,9 @@ export const DetailsDrawer = ({
   const userShowMsil = useShowMsilCode();
   const isMsilUser = isMsilCustomer(user);
   const canSeeMsilCode = showMsilCode || userShowMsil;
-  const canSeePlanning = isAdmin(user) || isSales(user);
+  // The inventory.master View cell, not Admin/Sales by name (audit F5) - which
+  // also hid planning from the Inventory Manager, the role that edits it.
+  const canSeePlanning = canUseInventoryMaster(user);
 
   useEffect(() => {
     setItem(product);

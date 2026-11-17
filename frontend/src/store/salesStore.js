@@ -53,6 +53,9 @@ export const useSalesStore = create((set, get) => ({
   search: "",
   selected: null, // the booking open in the review drawer
   historyFor: null, // the booking whose Booking History is open (the "Action" button)
+  // Reopen Edit Details on arrival: { orderId, customerId } after "+ Add Customer"
+  // in that form sends the desk back here (see SalesDesk and the drawer).
+  detailsIntent: null,
   saving: false,
 
   /**
@@ -136,7 +139,7 @@ export const useSalesStore = create((set, get) => ({
     inFlight?.abort();
     inFlight = null;
     requestSeq += 1;
-    set({ ...initialList, scope: "all", search: "", selected: null, historyFor: null, saving: false, pricing: null });
+    set({ ...initialList, scope: "all", search: "", selected: null, historyFor: null, detailsIntent: null, saving: false, pricing: null });
   },
 
   // Selecting a booking drops the previous booking's price quote — see the

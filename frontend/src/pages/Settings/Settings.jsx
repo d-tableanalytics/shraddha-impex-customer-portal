@@ -7,6 +7,7 @@ import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 
 import { isSuperAdmin } from '../../utils/permissions';
+import { ModuleInfoButton } from "../../components/common/ModuleInfoButton";
 export const Settings = () => {
   const { user, updateProfile, changePassword } = useUserStore();
   const [activeTab, setActiveTab] = useState('profile');
@@ -95,7 +96,10 @@ export const Settings = () => {
     <div className="flex flex-col gap-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-xl font-bold text-slate-800 tracking-tight">Account Settings</h2>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-xl font-bold text-slate-800 tracking-tight">Account Settings</h2>
+            <ModuleInfoButton />
+          </div>
           <p className="text-sm text-slate-500 mt-1">
             {isAdmin
               ? 'Manage your personal profile and security.'

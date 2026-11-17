@@ -79,6 +79,32 @@ export const PERMISSIONS = {
   // HRMS screen should ever ask about a key below; ask `can(module, action,
   // scope)` instead. They are here so the permission matrix and the role
   // fallback can name them.
+  // Per-action Administration keys. MIRRORS backend/config/permissions.js.
+  CREATE_USERS: "create_users",
+  EDIT_USERS: "edit_users",
+  DELETE_USERS: "delete_users",
+  CREATE_ROLES: "create_roles",
+  EDIT_ROLES: "edit_roles",
+  DELETE_ROLES: "delete_roles",
+  // Order-to-Dispatch. MIRRORS backend/config/permissions.js.
+  VIEW_O2D: "view_o2d",
+  CREATE_O2D_ORDER: "create_o2d_order",
+  WORK_O2D_STAGE: "work_o2d_stage",
+  HOLD_O2D: "hold_o2d",
+  OVERRIDE_O2D: "override_o2d",
+  EXIT_O2D: "exit_o2d",
+  VIEW_O2D_ANALYTICS: "view_o2d_analytics",
+  MANAGE_O2D_MASTERS: "manage_o2d_masters",
+  // Work Queue. MIRRORS backend/config/permissions.js.
+  VIEW_WORK_QUEUE: "view_work_queue",
+  CREATE_WORK_QUEUE_TASK: "create_work_queue_task",
+  ASSIGN_WORK_QUEUE_TASK: "assign_work_queue_task",
+  EDIT_WORK_QUEUE_TASK: "edit_work_queue_task",
+  COMPLETE_WORK_QUEUE_TASK: "complete_work_queue_task",
+  MANAGE_WORK_QUEUE: "manage_work_queue",
+  MANAGE_WORK_QUEUE_TRASH: "manage_work_queue_trash",
+  VIEW_WORK_QUEUE_ACTIVITY: "view_work_queue_activity",
+
   ACCESS_HRMS: "access_hrms",
   MANAGE_HRMS_TEAM: "manage_hrms_team",
   MANAGE_HRMS_PEOPLE: "manage_hrms_people",
@@ -99,22 +125,54 @@ const PORTAL_BASICS = [
 ];
 
 /**
+ * The backend's task-doer bundle (backend/config/permissions.js WORK_QUEUE_DOER):
+ * every role that does tasks holds the same six Work Queue keys.
+ */
+const WORK_QUEUE_DOER = [
+  PERMISSIONS.VIEW_WORK_QUEUE,
+  PERMISSIONS.CREATE_WORK_QUEUE_TASK,
+  PERMISSIONS.ASSIGN_WORK_QUEUE_TASK,
+  PERMISSIONS.EDIT_WORK_QUEUE_TASK,
+  PERMISSIONS.COMPLETE_WORK_QUEUE_TASK,
+  PERMISSIONS.MANAGE_WORK_QUEUE,
+];
+
+/**
  * Fallback only. See the note at the top of the file: this answers for the
  * built-in roles while the profile is in flight, and the server answers for
  * everyone once it arrives.
+ *
+ * A COPY of BASELINE_ROLE_PERMISSIONS in backend/config/permissions.js, where
+ * the reasoning for each role is written out. permissions.test.js asserts the
+ * two are equal, so a change on the server fails the build until it is copied
+ * here. SYSTEM_ROLE_NAMES (and so isCustomRole) is derived from these keys.
  */
-const FALLBACK_ROLE_PERMISSIONS = {
+export const FALLBACK_ROLE_PERMISSIONS = {
   "Super Admin": ["*"],
   Admin: ["*"],
-  /**
-   * HR - the whole of HRMS, and the ordinary portal screens.
-   *
-   * ADMINISTER_HRMS is the only non-basic key: the HRMS nav and every HRMS
-   * screen are driven by the HRMS actor, not by this list, so mirroring the
-   * eight tiers here would add nothing the sidebar can use. Mirrors
-   * backend/config/permissions.js, where the reasoning is written out.
-   */
   HR: [...PORTAL_BASICS, PERMISSIONS.ADMINISTER_HRMS],
+  Billing: [
+    ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
+    ...WORK_QUEUE_DOER,
+  ],
+  Accounts: [
+    ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
+    ...WORK_QUEUE_DOER,
+  ],
+  "Billing Head": [
+    ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
+    PERMISSIONS.HOLD_O2D,
+    PERMISSIONS.OVERRIDE_O2D,
+    PERMISSIONS.EXIT_O2D,
+    PERMISSIONS.VIEW_O2D_ANALYTICS,
+    ...WORK_QUEUE_DOER,
+  ],
   Sales: [
     ...PORTAL_BASICS,
     PERMISSIONS.VIEW_ORDERS,
@@ -122,11 +180,16 @@ const FALLBACK_ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_CUSTOMER_USERS,
     PERMISSIONS.EDIT_BOOKING_PRE_PO,
     PERMISSIONS.RAISE_PO,
-    // Mirrors the server (2026-10-19): Sales moves booking status and cancels
-    // on a customer's behalf.
     PERMISSIONS.MANAGE_ORDERS,
+    PERMISSIONS.VIEW_PRICING,
     PERMISSIONS.VIEW_REPORTS,
     PERMISSIONS.VIEW_INVENTORY,
+    PERMISSIONS.ASSIGN_INDENT_STOCK,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.CREATE_O2D_ORDER,
+    PERMISSIONS.WORK_O2D_STAGE,
+    ...WORK_QUEUE_DOER,
+    PERMISSIONS.MANAGE_PRICING,
   ],
   "Inventory Manager": [
     ...PORTAL_BASICS,
@@ -141,42 +204,52 @@ const FALLBACK_ROLE_PERMISSIONS = {
     PERMISSIONS.APPROVE_COUNT,
     PERMISSIONS.TRANSFER_STOCK,
     PERMISSIONS.VIEW_REPORTS,
+    PERMISSIONS.MANAGE_PRICING,
   ],
   "Warehouse User": [
     ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
     PERMISSIONS.VIEW_INVENTORY,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.EXPORT_INVENTORY,
     PERMISSIONS.POST_STOCK_IN,
     PERMISSIONS.PERFORM_COUNT,
     PERMISSIONS.TRANSFER_STOCK,
+    ...WORK_QUEUE_DOER,
   ],
   Management: [
     ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_WORK_QUEUE_ACTIVITY,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.VIEW_O2D_ANALYTICS,
+    PERMISSIONS.HOLD_O2D,
+    PERMISSIONS.OVERRIDE_O2D,
+    PERMISSIONS.EXIT_O2D,
     PERMISSIONS.VIEW_INVENTORY,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.EXPORT_INVENTORY,
     PERMISSIONS.APPROVE_ADJUSTMENT,
     PERMISSIONS.APPROVE_COUNT,
     PERMISSIONS.VIEW_REPORTS,
+    ...WORK_QUEUE_DOER,
+    PERMISSIONS.MANAGE_PRICING,
   ],
   /**
-   * Import Team - maintains the catalogue and touches nothing else.
-   *
-   * Holds no ordering or booking permission at all, which is what makes the
-   * sales and booking menus disappear for this role rather than merely being
-   * refused after a click. Mirrors backend/config/permissions.js, where the
-   * reasoning for each inclusion and omission is written out.
+   * Import Team - maintains the catalogue and holds no ordering or booking
+   * permission, which is what makes the sales and booking menus disappear.
    */
   "Import Team": [
     ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
     PERMISSIONS.VIEW_INVENTORY,
     PERMISSIONS.MANAGE_INVENTORY_MASTER,
     PERMISSIONS.EXPORT_INVENTORY,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.POST_STOCK_IN,
+    PERMISSIONS.ASSIGN_INDENT_STOCK,
+    PERMISSIONS.MANAGE_PRICING,
   ],
-
   Customer: [...PORTAL_BASICS, PERMISSIONS.CREATE_ORDER, PERMISSIONS.VIEW_ORDERS],
 };
 
@@ -378,23 +451,46 @@ export const canViewPricing = (user) => hasPermission(user, PERMISSIONS.VIEW_PRI
 export const canManagePricing = (user) => hasPermission(user, PERMISSIONS.MANAGE_PRICING);
 
 /**
- * Whether to offer the IMS master screens. Customers hold no inventory
- * permission at any level, so they never see them. Sales can read availability
- * through the ordering flow and does not need the master list.
+ * Ask a matrix cell, falling back to its one permission key when the server
+ * sent no grants (an older backend, or a login response without them). The
+ * server derives every grant from the permission list, so for a one-key cell
+ * the two answers agree.
+ */
+const cellOrKey = (user, moduleKey, submoduleKey, action, key) =>
+  (Array.isArray(user?.grants)
+    ? canAction(user, moduleKey, submoduleKey, action)
+    : hasPermission(user, key));
+
+/**
+ * Whether to offer the IMS master screens: the inventory.master View cell.
  *
- * Kept as a ROLE question for the seven built-in roles, because that is exactly
- * what it has always been and re-deriving it from permissions would change who
- * sees these screens - Sales holds VIEW_INVENTORY for availability, and would
- * be pulled in by any permission-shaped version of this rule.
- *
- * A CUSTOM role is asked the matrix instead. There is no list to consult for a
- * role invented last week, and its Super Admin has already answered the
- * question by ticking (or not ticking) Inventory Master.
+ * This used to be a ROLE question (Admin or one of INVENTORY_ROLES; the matrix
+ * was asked only for custom roles), so the Admin's matrix was ignored for every
+ * built-in role: Sales was offered the Inventory Dashboard by the server menu
+ * and the route guard, then bounced by the page. It now follows the matrix for
+ * everyone (audit F4). If a role must not see these screens, untick the cell
+ * in its role row rather than encoding it here.
  */
 export const canUseInventoryMaster = (user) =>
-  isAdmin(user)
-  || INVENTORY_ROLES.includes(user?.role)
-  || (isCustomRole(user) && canAction(user, "inventory", "master", "view"));
+  cellOrKey(user, "inventory", "master", "view", PERMISSIONS.VIEW_INVENTORY);
+
+/**
+ * Whether the Inventory Master SCREEN opens at all. Wider than the rule above,
+ * which still decides the other IMS screens.
+ *
+ * Sales was let in only through Manage Pricing (for the Update Stock pricing
+ * tab). That key is newer than many stored Sales role records, and a stored
+ * role is the whole answer (backend utils/roleResolver.js), so the page sent
+ * Sales back to Home while the sidebar and the route guard both offered it.
+ *
+ * The screen now opens for anyone the route guard admits: View Inventory, or
+ * the inventory.master view cell when the server sends grants. Customers hold
+ * neither. The server already serves this list to View Inventory (no prices,
+ * no costs), and every action on the page keeps its own permission check, so
+ * a Sales user without more sees the list read-only.
+ */
+export const canOpenInventoryMaster = (user) =>
+  canUseInventoryMaster(user) || canManagePricing(user);
 
 /**
  * Whether to offer user management at all.
@@ -423,7 +519,16 @@ export const canManageAllUsers = (user) => hasPermission(user, PERMISSIONS.MANAG
 export const canManageAccount = (user, account, action = "edit") => {
   const isCustomerAccount = (account?.role || "Customer") === "Customer";
   // An older server sends no grants; keep the old rule rather than hide every button.
-  if (!Array.isArray(user?.grants)) return canManageAllUsers(user) || isCustomerAccount;
+  if (!Array.isArray(user?.grants)) {
+    // Delete (Suspend) is never the customer-desk key: customers.delete is
+    // manage_users and users.delete is delete_users in the registry.
+    if (action === "delete") {
+      return isCustomerAccount
+        ? canManageAllUsers(user)
+        : hasPermission(user, PERMISSIONS.DELETE_USERS);
+    }
+    return canManageAllUsers(user) || isCustomerAccount;
+  }
   // The same cell the server checks (user.controller.js denyIfOutOfScope):
   // customers.<action> for a Customer account, users.<action> for staff.
   return canAction(user, "administration", isCustomerAccount ? "customers" : "users", action);
@@ -437,19 +542,27 @@ export const canManageAccount = (user, account, action = "edit") => {
  * them from the roles API, rather than fetched here, so this stays a pure
  * function the way its 20-odd callers expect.
  */
+/**
+ * The roles this user may pick for an account.
+ *
+ * Mirrors the server's rule (backend utils/accessGuard.js): only an account
+ * with full access assigns a full-access role. Anything else beyond what the
+ * actor holds is refused by the server with the reason; the list does not try
+ * to predict a custom role's contents.
+ */
+const FULL_ACCESS_ROLES = ["Super Admin", "Admin"];
+const BUILT_IN_ROLES = [
+  "Super Admin", "Admin", "Sales", "Inventory Manager", "Warehouse User", "Management",
+  "Import Team", "HR", "Billing", "Accounts", "Billing Head", "Customer",
+];
+
 export const assignableRolesFor = (user, extraRoles = []) => {
   if (!canManageAllUsers(user)) return ["Customer"];
+  const full = hasPermission(user, "*");
   return [
-    "Super Admin",
-    "Admin",
-    "Sales",
-    "Inventory Manager",
-    "Warehouse User",
-    "Management",
-    "Import Team",
-    "Customer",
-    ...extraRoles.filter((r) => !SYSTEM_ROLE_NAMES.includes(r)),
-  ];
+    ...BUILT_IN_ROLES,
+    ...extraRoles.filter((r) => !BUILT_IN_ROLES.includes(r) && !SYSTEM_ROLE_NAMES.includes(r)),
+  ].filter((r) => full || !FULL_ACCESS_ROLES.includes(r));
 };
 
 export const canEditPlanning = (user) =>
@@ -472,11 +585,9 @@ export const canEditBoxNo = (user) =>
  * Admin, Sales, and the inventory roles who pick and count against it.
  * Customers are excluded; it is an internal picking location.
  */
-export const canViewBoxNo = (user) =>
-  isAdmin(user)
-  || isSales(user)
-  || INVENTORY_ROLES.includes(user?.role)
-  || (isCustomRole(user) && canAction(user, "inventory", "master", "view"));
+// The inventory.master View cell (was role names; audit F5). Every baseline role
+// that holds view_inventory sees it, as before; customers hold no inventory cell.
+export const canViewBoxNo = (user) => canUseInventoryMaster(user);
 
 /**
  * Who sees the box number ON A BOOKING'S LINE ITEMS - the sales desk, the order
@@ -490,8 +601,8 @@ export const canViewBoxNo = (user) =>
  * inventory rule would put a picking location in front of the customer who
  * placed the order.
  */
-export const canViewLineItemBoxNo = (user) =>
-  isAdmin(user) || isSales(user) || (isCustomRole(user) && canUseSalesDesk(user));
+// The sales desk cell (sales.bookings.view = view_all_bookings), not role names.
+export const canViewLineItemBoxNo = (user) => canUseSalesDesk(user);
 
 export const canConfigureInventory = (user) =>
   hasPermission(user, PERMISSIONS.CONFIGURE_INVENTORY);
@@ -523,6 +634,7 @@ export default {
   canCancelBookings,
   canViewPricing,
   canUseInventoryMaster,
+  canOpenInventoryMaster,
   canOpenUserManagement,
   canManageRoles,
   canManageAllUsers,

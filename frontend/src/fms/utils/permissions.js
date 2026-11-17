@@ -99,6 +99,20 @@ export const PERMISSIONS = {
   VIEW_O2D_ANALYTICS: "view_o2d_analytics",
   MANAGE_O2D_MASTERS: "manage_o2d_masters",
 
+  // Change the price schedule. MIRRORS backend/config/permissions.js.
+  MANAGE_PRICING: "manage_pricing",
+  // Indent Stock Assignment. MIRRORS backend/config/permissions.js.
+  ASSIGN_INDENT_STOCK: "assign_indent_stock",
+  // Work Queue. MIRRORS backend/config/permissions.js.
+  VIEW_WORK_QUEUE: "view_work_queue",
+  CREATE_WORK_QUEUE_TASK: "create_work_queue_task",
+  ASSIGN_WORK_QUEUE_TASK: "assign_work_queue_task",
+  EDIT_WORK_QUEUE_TASK: "edit_work_queue_task",
+  COMPLETE_WORK_QUEUE_TASK: "complete_work_queue_task",
+  MANAGE_WORK_QUEUE: "manage_work_queue",
+  MANAGE_WORK_QUEUE_TRASH: "manage_work_queue_trash",
+  VIEW_WORK_QUEUE_ACTIVITY: "view_work_queue_activity",
+
   ACCESS_HRMS: "access_hrms",
   MANAGE_HRMS_TEAM: "manage_hrms_team",
   MANAGE_HRMS_PEOPLE: "manage_hrms_people",
@@ -119,34 +133,71 @@ const PORTAL_BASICS = [
 ];
 
 /**
+ * The backend's task-doer bundle (backend/config/permissions.js WORK_QUEUE_DOER):
+ * every role that does tasks holds the same six Work Queue keys.
+ */
+const WORK_QUEUE_DOER = [
+  PERMISSIONS.VIEW_WORK_QUEUE,
+  PERMISSIONS.CREATE_WORK_QUEUE_TASK,
+  PERMISSIONS.ASSIGN_WORK_QUEUE_TASK,
+  PERMISSIONS.EDIT_WORK_QUEUE_TASK,
+  PERMISSIONS.COMPLETE_WORK_QUEUE_TASK,
+  PERMISSIONS.MANAGE_WORK_QUEUE,
+];
+
+/**
  * Fallback only. See the note at the top of the file: this answers for the
  * built-in roles while the profile is in flight, and the server answers for
  * everyone once it arrives.
+ *
+ * A COPY of BASELINE_ROLE_PERMISSIONS in backend/config/permissions.js, where
+ * the reasoning for each role is written out. permissions.test.js asserts the
+ * two are equal, so a change on the server fails the build until it is copied
+ * here. SYSTEM_ROLE_NAMES (and so isCustomRole) is derived from these keys.
  */
-const FALLBACK_ROLE_PERMISSIONS = {
+export const FALLBACK_ROLE_PERMISSIONS = {
   "Super Admin": ["*"],
   Admin: ["*"],
-  /**
-   * HR - the whole of HRMS, and the ordinary portal screens.
-   *
-   * ADMINISTER_HRMS is the only non-basic key: the HRMS nav and every HRMS
-   * screen are driven by the HRMS actor, not by this list, so mirroring the
-   * eight tiers here would add nothing the sidebar can use. Mirrors
-   * backend/config/permissions.js, where the reasoning is written out.
-   */
   HR: [...PORTAL_BASICS, PERMISSIONS.ADMINISTER_HRMS],
-  Sales: [
+  Billing: [
     ...PORTAL_BASICS,
     PERMISSIONS.VIEW_O2D,
-    PERMISSIONS.CREATE_O2D_ORDER,
     PERMISSIONS.WORK_O2D_STAGE,
+    ...WORK_QUEUE_DOER,
+  ],
+  Accounts: [
+    ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
+    ...WORK_QUEUE_DOER,
+  ],
+  "Billing Head": [
+    ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.WORK_O2D_STAGE,
+    PERMISSIONS.HOLD_O2D,
+    PERMISSIONS.OVERRIDE_O2D,
+    PERMISSIONS.EXIT_O2D,
+    PERMISSIONS.VIEW_O2D_ANALYTICS,
+    ...WORK_QUEUE_DOER,
+  ],
+  Sales: [
+    ...PORTAL_BASICS,
     PERMISSIONS.VIEW_ORDERS,
     PERMISSIONS.VIEW_ALL_BOOKINGS,
     PERMISSIONS.MANAGE_CUSTOMER_USERS,
     PERMISSIONS.EDIT_BOOKING_PRE_PO,
     PERMISSIONS.RAISE_PO,
+    PERMISSIONS.MANAGE_ORDERS,
+    PERMISSIONS.VIEW_PRICING,
     PERMISSIONS.VIEW_REPORTS,
     PERMISSIONS.VIEW_INVENTORY,
+    PERMISSIONS.ASSIGN_INDENT_STOCK,
+    PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.CREATE_O2D_ORDER,
+    PERMISSIONS.WORK_O2D_STAGE,
+    ...WORK_QUEUE_DOER,
+    PERMISSIONS.MANAGE_PRICING,
   ],
   "Inventory Manager": [
     ...PORTAL_BASICS,
@@ -161,6 +212,7 @@ const FALLBACK_ROLE_PERMISSIONS = {
     PERMISSIONS.APPROVE_COUNT,
     PERMISSIONS.TRANSFER_STOCK,
     PERMISSIONS.VIEW_REPORTS,
+    PERMISSIONS.MANAGE_PRICING,
   ],
   "Warehouse User": [
     ...PORTAL_BASICS,
@@ -172,77 +224,40 @@ const FALLBACK_ROLE_PERMISSIONS = {
     PERMISSIONS.POST_STOCK_IN,
     PERMISSIONS.PERFORM_COUNT,
     PERMISSIONS.TRANSFER_STOCK,
+    ...WORK_QUEUE_DOER,
   ],
   Management: [
     ...PORTAL_BASICS,
+    PERMISSIONS.VIEW_WORK_QUEUE_ACTIVITY,
     PERMISSIONS.VIEW_O2D,
+    PERMISSIONS.VIEW_O2D_ANALYTICS,
     PERMISSIONS.HOLD_O2D,
     PERMISSIONS.OVERRIDE_O2D,
     PERMISSIONS.EXIT_O2D,
-    PERMISSIONS.VIEW_O2D_ANALYTICS,
     PERMISSIONS.VIEW_INVENTORY,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.EXPORT_INVENTORY,
     PERMISSIONS.APPROVE_ADJUSTMENT,
     PERMISSIONS.APPROVE_COUNT,
     PERMISSIONS.VIEW_REPORTS,
+    ...WORK_QUEUE_DOER,
+    PERMISSIONS.MANAGE_PRICING,
   ],
   /**
-   * Import Team - maintains the catalogue and touches nothing else.
-   *
-   * Holds no ordering or booking permission at all, which is what makes the
-   * sales and booking menus disappear for this role rather than merely being
-   * refused after a click. Mirrors backend/config/permissions.js, where the
-   * reasoning for each inclusion and omission is written out.
+   * Import Team - maintains the catalogue and holds no ordering or booking
+   * permission, which is what makes the sales and booking menus disappear.
    */
   "Import Team": [
     ...PORTAL_BASICS,
-    // Read-only, and scoped to orders from stage 6 by the SERVER - the list
-    // endpoint narrows the rows. A permission cannot express "which rows",
-    // so the screen must not try to.
     PERMISSIONS.VIEW_O2D,
     PERMISSIONS.VIEW_INVENTORY,
     PERMISSIONS.MANAGE_INVENTORY_MASTER,
     PERMISSIONS.EXPORT_INVENTORY,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.POST_STOCK_IN,
+    PERMISSIONS.ASSIGN_INDENT_STOCK,
+    PERMISSIONS.MANAGE_PRICING,
   ],
-
-  /**
-   * The three roles O2D introduced. They own eight of the twelve stages between
-   * them, and the portal had no such roles before.
-   *
-   * Mirrors backend/config/permissions.js, including the omission that matters:
-   * Accounts does NOT hold OVERRIDE_O2D, so the role that records an advance
-   * shortfall cannot also waive it.
-   */
-  Billing: [
-    ...PORTAL_BASICS,
-    PERMISSIONS.VIEW_O2D,
-    PERMISSIONS.CREATE_O2D_ORDER,
-    PERMISSIONS.WORK_O2D_STAGE,
-    PERMISSIONS.HOLD_O2D,
-    PERMISSIONS.VIEW_INVENTORY,
-  ],
-  Accounts: [
-    ...PORTAL_BASICS,
-    PERMISSIONS.VIEW_O2D,
-    PERMISSIONS.WORK_O2D_STAGE,
-    PERMISSIONS.HOLD_O2D,
-  ],
-  "Billing Head": [
-    ...PORTAL_BASICS,
-    PERMISSIONS.VIEW_O2D,
-    PERMISSIONS.CREATE_O2D_ORDER,
-    PERMISSIONS.WORK_O2D_STAGE,
-    PERMISSIONS.HOLD_O2D,
-    PERMISSIONS.OVERRIDE_O2D,
-    PERMISSIONS.EXIT_O2D,
-    PERMISSIONS.VIEW_O2D_ANALYTICS,
-    PERMISSIONS.MANAGE_O2D_MASTERS,
-    PERMISSIONS.VIEW_INVENTORY,
-  ],
-
   Customer: [...PORTAL_BASICS, PERMISSIONS.CREATE_ORDER, PERMISSIONS.VIEW_ORDERS],
 };
 
@@ -427,10 +442,12 @@ export const canViewPricing = (user) => hasPermission(user, PERMISSIONS.VIEW_PRI
  * role invented last week, and its Super Admin has already answered the
  * question by ticking (or not ticking) Inventory Master.
  */
+// The inventory.master View cell for every role (was role names for built-in
+// roles; audit F4), falling back to its key when the server sent no grants.
 export const canUseInventoryMaster = (user) =>
-  isAdmin(user)
-  || INVENTORY_ROLES.includes(user?.role)
-  || (isCustomRole(user) && canAction(user, "inventory", "master", "view"));
+  (Array.isArray(user?.grants)
+    ? canAction(user, "inventory", "master", "view")
+    : hasPermission(user, PERMISSIONS.VIEW_INVENTORY));
 
 /**
  * Whether to offer user management at all.
@@ -488,12 +505,27 @@ export const canManageAccount = (user, account) =>
  * passed in by the caller, which has them from the roles API, rather than
  * fetched here, so this stays a pure function the way its 20-odd callers expect.
  */
+/**
+ * The roles this user may pick for an account.
+ *
+ * Mirrors the server's rule (backend utils/accessGuard.js): only an account
+ * with full access assigns a full-access role. Anything else beyond what the
+ * actor holds is refused by the server with the reason; the list does not try
+ * to predict a custom role's contents.
+ */
+const FULL_ACCESS_ROLES = ["Super Admin", "Admin"];
+const BUILT_IN_ROLES = [
+  "Super Admin", "Admin", "Sales", "Inventory Manager", "Warehouse User", "Management",
+  "Import Team", "HR", "Billing", "Accounts", "Billing Head", "Customer",
+];
+
 export const assignableRolesFor = (user, extraRoles = []) => {
   if (!canManageAllUsers(user)) return ["Customer"];
+  const full = hasPermission(user, "*");
   return [
-    ...SYSTEM_ROLE_NAMES,
-    ...extraRoles.filter((r) => !SYSTEM_ROLE_NAMES.includes(r)),
-  ];
+    ...BUILT_IN_ROLES,
+    ...extraRoles.filter((r) => !BUILT_IN_ROLES.includes(r) && !SYSTEM_ROLE_NAMES.includes(r)),
+  ].filter((r) => full || !FULL_ACCESS_ROLES.includes(r));
 };
 
 export const canEditPlanning = (user) =>
@@ -516,11 +548,8 @@ export const canEditBoxNo = (user) =>
  * Admin, Sales, and the inventory roles who pick and count against it.
  * Customers are excluded; it is an internal picking location.
  */
-export const canViewBoxNo = (user) =>
-  isAdmin(user)
-  || isSales(user)
-  || INVENTORY_ROLES.includes(user?.role)
-  || (isCustomRole(user) && canAction(user, "inventory", "master", "view"));
+// The inventory.master View cell (was role names; audit F5).
+export const canViewBoxNo = (user) => canUseInventoryMaster(user);
 
 /**
  * Who sees the box number ON A BOOKING'S LINE ITEMS - the sales desk, the order
@@ -534,8 +563,8 @@ export const canViewBoxNo = (user) =>
  * inventory rule would put a picking location in front of the customer who
  * placed the order.
  */
-export const canViewLineItemBoxNo = (user) =>
-  isAdmin(user) || isSales(user) || (isCustomRole(user) && canUseSalesDesk(user));
+// The sales desk cell (view_all_bookings), not role names (audit F5).
+export const canViewLineItemBoxNo = (user) => canUseSalesDesk(user);
 
 export const canConfigureInventory = (user) =>
   hasPermission(user, PERMISSIONS.CONFIGURE_INVENTORY);

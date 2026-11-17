@@ -23,7 +23,16 @@ const SEARCH_DEBOUNCE_MS = 250;
 /** How a customer reads in the list and the field: master name, then contact. */
 export const customerDisplayName = (c) => c?.customerName || c?.user || c?.company || c?.email || "";
 
-export const CustomerSelect = ({ value, onChange, disabled = false }) => {
+export const CustomerSelect = ({
+  value,
+  onChange,
+  disabled = false,
+  // Where "+ Add Customer" comes back to. Defaults to this page; Edit Details
+  // passes a Sales Desk link that reopens the booking and the form.
+  returnTo: returnPath = null,
+  // The line under an empty field, explaining what selecting does here.
+  hint = "The booking is created on this customer's account and appears in their Booking History.",
+}) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [query, setQuery] = useState("");
@@ -85,7 +94,7 @@ export const CustomerSelect = ({ value, onChange, disabled = false }) => {
   };
 
   const addCustomer = () => {
-    const returnTo = `${location.pathname}${location.search || ""}`;
+    const returnTo = returnPath || `${location.pathname}${location.search || ""}`;
     navigate(`/admin/customers?add=1&returnTo=${encodeURIComponent(returnTo)}`);
   };
 
@@ -202,10 +211,8 @@ export const CustomerSelect = ({ value, onChange, disabled = false }) => {
           )}
         </div>
       )}
-      {!value && (
-        <span className="text-[11px] text-slate-400 font-medium">
-          The booking is created on this customer&apos;s account and appears in their Booking History.
-        </span>
+      {!value && hint && (
+        <span className="text-[11px] text-slate-400 font-medium">{hint}</span>
       )}
     </div>
   );

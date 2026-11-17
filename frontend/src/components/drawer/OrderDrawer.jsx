@@ -29,7 +29,7 @@ import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
-import { canViewLineItemBoxNo, canEditBookingQuantity, canCancelBookings, hasPermission, PERMISSIONS, isSuperAdmin} from "../../utils/permissions";
+import { canViewLineItemBoxNo, canEditBookingQuantity, canCancelBookings, hasPermission, PERMISSIONS, canUseSalesDesk } from "../../utils/permissions";
 import { BookingScheduleSection } from "./BookingScheduleSection";
 import { usePagination } from "../../hooks/usePagination";
 import { Pagination } from "../ui/Pagination";
@@ -39,6 +39,7 @@ import { PicklistPreview } from "../pricing/PicklistPreview";
 import { picklistFromCustomerOrder, allocationPicklistFromCustomerOrder } from "../../utils/picklistDocument";
 import { AllocationsSection } from "./AllocationsSection";
 import { stageLabel } from "../../constants/bookingLifecycle";
+import { formatDisplayDate } from "../../utils/dateValue";
 
 export const OrderDrawer = () => {
   const {
@@ -65,7 +66,9 @@ export const OrderDrawer = () => {
   // This drawer is also the customer's own order-history view, so the box
   // number is limited to the desk that acts on the booking.
   const showBoxNo = canViewLineItemBoxNo(user);
-  const isAdmin = isSuperAdmin(user);
+  // Customer columns/filters/cards follow the sales-desk cell (view_all_bookings),
+  // not the Super Admin role name: staff granted every booking need to see whose it is.
+  const seesCustomers = canUseSalesDesk(user);
   // The status, PO and resend controls below call routes guarded by
   // manage_orders, so they are offered on that key rather than on the role
   // name — a role granted it in Roles & Permissions gets the controls too.
@@ -180,6 +183,7 @@ export const OrderDrawer = () => {
   const lineChange = (item) => qtyOf(item) - savedQtyOf(item);
   const dirty = lineItems.some((item) => lineChange(item) !== 0);
   const hasIndent = lineItems.some((item) => (item.pendingQty ?? 0) > 0);
+  const hasDispatchDate = lineItems.some((item) => item.scheduledDate);
   // What the CUSTOMER asked for across the booking, indent included.
   const totalBooked = lineItems.reduce((n, i) => n + (i.bookedQty ?? 0), 0);
   const totalIndent = lineItems.reduce((n, i) => n + (i.pendingQty ?? 0), 0);
@@ -408,7 +412,7 @@ export const OrderDrawer = () => {
                 </div>
               )}
 
-              {isAdmin && (
+              {seesCustomers && (
                 <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
                   <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
                     <User size={16} className="text-blue-600" />
@@ -646,6 +650,10 @@ export const OrderDrawer = () => {
                           <th className="px-5 py-3 text-center">Qty</th>
                           {canEditQty && <th className="px-5 py-3 text-center">Change</th>}
                           {hasIndent && <th className="px-5 py-3 text-center">Indent</th>}
+                          {/* The line's dispatch date: 3 days after booking by
+                              default, or what the desk set. The same value the
+                              confirmation and schedule emails show. */}
+                          {hasDispatchDate && <th className="px-5 py-3">Dispatch Date</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
@@ -716,6 +724,15 @@ export const OrderDrawer = () => {
                                   <span className="text-amber-600">{item.pendingQty}</span>
                                 ) : (
                                   <span className="text-slate-300">&mdash;</span>
+                                )}
+                              </td>
+                            )}
+                            {hasDispatchDate && (
+                              <td className="px-5 py-4 text-sm font-semibold text-slate-700">
+                                {item.scheduledDate ? (
+                                  formatDisplayDate(new Date(item.scheduledDate))
+                                ) : (
+                                  <span className="font-normal text-slate-300">&mdash;</span>
                                 )}
                               </td>
                             )}

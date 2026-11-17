@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { History, Eye, Clock, Lock, FileCheck2, Download, FileText, Loader2 } from "lucide-react";
 import { SearchInput } from "../../components/ui/SearchInput";
 import { useBusyAction } from "../../hooks/useBusyAction";
@@ -11,6 +12,7 @@ import { PoCountdown } from "../../components/ui/PoCountdown";
 import { SalesBookingDrawer } from "../../components/drawer/SalesBookingDrawer";
 import { BookingHistoryDrawer } from "../../components/drawer/BookingHistoryDrawer";
 import { useSalesStore } from "../../store/salesStore";
+import { salesApi } from "../../services/sales";
 import { useUserStore } from "../../store/userStore";
 import { canUseSalesDesk } from "../../utils/permissions";
 import { customerNameOf, companyNameOf, siTeamOf, siTeamLabelOf } from "../../utils/bookingParty";
@@ -47,6 +49,43 @@ export const SalesDesk = () => {
   useEffect(() => {
     ensureBookings();
   }, [ensureBookings]);
+
+  /**
+   * `?booking=<orderId>` opens that booking; with `&editDetails=1` its Edit
+   * Details form opens too, with `&customer=<id>` selected. This is how "+ Add
+   * Customer" in Edit Details comes back after the customer is created. The
+   * parameters are removed once read, so a reload does not reopen it.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedBooking = searchParams.get("booking");
+  useEffect(() => {
+    if (!linkedBooking || !canUseSalesDesk(user)) return undefined;
+    const editDetails = searchParams.get("editDetails") === "1";
+    const customerId = searchParams.get("customer");
+    // Not cancelled on cleanup: removing the parameters below re-runs this
+    // effect, and the booking must still open. The store is global, so
+    // finishing after the page unmounts is harmless.
+    salesApi.getBooking(linkedBooking)
+      .then((booking) => {
+        if (!booking) return;
+        useSalesStore.setState({
+          selected: booking,
+          pricing: null,
+          detailsIntent: editDetails ? { orderId: booking.orderId, customerId: customerId || null } : null,
+        });
+      })
+      .catch(() => toast.error(`Could not open booking ${linkedBooking}.`))
+      .finally(() => {
+        setSearchParams((params) => {
+          const next = new URLSearchParams(params);
+          ["booking", "editDetails", "customer"].forEach((k) => next.delete(k));
+          return next;
+        }, { replace: true });
+      });
+    return undefined;
+    // Read once per linked booking; the other parameters arrive with it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedBooking]);
 
   // The route is already guarded, but a direct URL hit by the wrong role should
   // explain itself rather than render an empty table.

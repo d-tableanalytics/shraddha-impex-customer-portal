@@ -44,8 +44,9 @@ router.route('/')
   .post(authorize(...MAY_BOOK), createReservation);
 
 // Static paths must precede the '/:id' routes below, or Express matches them as an id.
-router.get('/pending', getPendingReservations);
-router.get('/cancelled-count', getCancelledCount);
+// Indent History's reads: its View cell (view_orders), the desk's, or ordering.
+router.get('/pending', authorize('view_orders', 'view_all_bookings', 'create_order'), getPendingReservations);
+router.get('/cancelled-count', authorize('view_orders', 'view_all_bookings', 'create_order'), getCancelledCount);
 // Scheduling takes a LIST, so it is not under /:id — an admin sets dates for
 // several SKUs of one indent in a single save.
 router.post('/schedule', scheduleIndent);

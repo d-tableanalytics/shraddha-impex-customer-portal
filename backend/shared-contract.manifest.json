@@ -1,9 +1,9 @@
 {
   "config/moduleRegistry.js": "2d35082b109636b11aff494ea5ada489078edb8e99fa6adb2732eca4af24b54b",
   "config/permissions.js": "f989c16330ee60cb678f20705c4880d8e7072132bc60a6b316f2562b4a1bdd1f",
-  "middlewares/auth.js": "6703eadb56c0de1550e7ee3039a13c619d3a031951e514652ae8e8f82c806c28",
+  "middlewares/auth.js": "deedb10acdba735fa59426cc18bbc436cf1956967b62a5167d8df259d6acffad",
   "middlewares/portalGuard.js": "bfbb22d974441a2cec30512530ace7c72949154df43ed264e869bdf9f9091211",
-  "middlewares/rbac.js": "06cec9bbbf87049c01f23a7c2fb6a40c59617e1e5469c508bdec47553d6042a2",
+  "middlewares/rbac.js": "958b61d9970e0d31413fa62ec706312fe68cb93b18f250ae6e4f1da62c26609e",
   "models/Brand.js": "34ccca4337c4c058dbc6c8f51720166e44e0620be4a406cfecf57cde15e29a60",
   "models/Role.js": "679b1e2aed31846c439d0f30cb7c7e6cc6670fabbcd1fee3ffeaf47f1293a281",
   "models/User.js": "195e15b4f90b424dfdfbac0ccb97decc51eb136906429c7a1efe93a46711cbf2",
@@ -15,6 +15,6 @@
   "shared/permissions/matrix.js": "543c536073493a7cb6be72fa770ce95fc1a345d1da0937e0bce91b449d5a2060",
   "utils/brandRegistry.js": "7284ae7ed412dc54a81bd5bdf4180c3d625e04ae8a0a8bb3ba570f9f9e1b5aae",
   "utils/hrmsRoleGuard.js": "fd597f1ab51273f86d0da4b0ee457b51f9d713548223693a4410225315dabb9b",
-  "utils/roleResolver.js": "d6eef7a8e58512d3c490485ab7c3e18dda880ca9aa61baff7af7847ab256fb74",
-  "utils/tokens.js": "8a3bfb43e39541b4263fc4dc46adc6f9d56b1f4b88da50330b0b9303107d9b69"
+  "utils/roleResolver.js": "6347a1999f1adebaf44ce06697f56442afa76f7bfcbb7e73b0d393b367e2ad0a",
+  "utils/tokens.js": "8025d16bd5960a48798e402a2a4a05430b0d8db74c38c5f8b04103731d567cdd"
 }

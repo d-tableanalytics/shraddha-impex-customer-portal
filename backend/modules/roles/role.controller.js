@@ -1,5 +1,9 @@
 import Role from '../../models/Role.js';
 import User from '../../models/User.js';
+import ArchivedUser from '../../models/ArchivedUser.js';
+import { compileGrants } from '../../config/moduleRegistry.js';
+import { editRoleProblem, sendProblem } from '../../utils/accessGuard.js';
+import { recordAudit } from '../../utils/auditLog.js';
 import {
   ACTIONS,
   registryForClient,
@@ -68,6 +72,17 @@ const present = (role) => ({
   baselineGrants: grantsFromPermissions(BASELINE_ROLE_PERMISSIONS[role.name] || []),
   updatedAt: role.updatedAt,
 });
+
+/** Everything a stored role shape grants, as flat keys. */
+const keysOf = ({ grants = [], permissions = [] }) => [...compileGrants(grants), ...permissions];
+
+/** A role as the audit trail records it: before/after of what it grants. */
+const snapshotOf = (role) => (role ? {
+  name: role.name,
+  isSuperAdmin: !!role.isSuperAdmin,
+  grants: (role.grants || []).map((g) => ({ module: g.module, submodule: g.submodule, actions: [...(g.actions || [])] })),
+  permissions: [...(role.permissions || [])],
+} : null);
 
 export const getRoles = async (req, res, next) => {
   try {
@@ -149,6 +164,12 @@ export const createRole = async (req, res, next) => {
     const { grants: clean, error } = validateGrants(grants || []);
     if (error) return res.status(400).json({ success: false, message: error });
 
+    // Nobody creates a role with access they do not hold (utils/accessGuard.js).
+    {
+      const blocked = editRoleProblem(req.user, null, keysOf(normaliseRoleSave({ incomingGrants: clean })));
+      if (blocked) return sendProblem(res, blocked);
+    }
+
     const role = await Role.create({
       name: trimmed,
       slug: slugify(trimmed),
@@ -163,6 +184,8 @@ export const createRole = async (req, res, next) => {
     });
 
     await loadRoles();
+    await recordAudit(req.user, 'Role Created', `Role "${role.name}" created`, req,
+      { meta: { roleId: String(role._id), before: null, after: snapshotOf(role) } });
     res.status(201).json({ success: true, data: present(role.toObject()) });
   } catch (error) {
     next(error);
@@ -184,7 +207,15 @@ export const updateRole = async (req, res, next) => {
     const role = await Role.findById(req.params.id);
     if (!role) return res.status(404).json({ success: false, message: 'Role not found' });
 
+    const before = snapshotOf(role.toObject());
     const { name, description, grants, isSuperAdmin, portalOnly } = req.body;
+
+    // Your own role, and a full-access role, are changed by somebody else /
+    // a Super Admin; checked before anything moves (utils/accessGuard.js).
+    {
+      const blocked = editRoleProblem(req.user, role, []);
+      if (blocked) return sendProblem(res, blocked);
+    }
 
     if (name !== undefined && String(name).trim() !== role.name) {
       if (role.isSystem) {
@@ -248,12 +279,34 @@ export const updateRole = async (req, res, next) => {
         storedPermissions: role.permissions || [],
         incomingGrants: clean,
       });
+      // Rule 1: what the role would grant afterwards, against what the actor holds.
+      const blocked = editRoleProblem(req.user, role, keysOf(next));
+      if (blocked) return sendProblem(res, blocked);
       role.grants = next.grants;
       role.permissions = next.permissions;
     }
 
     await role.save();
+
+    /*
+     * A rename carries its holders with it. `User.role` is the role's NAME, so
+     * renaming the role used to leave every holder on a name that no longer
+     * exists - no permissions, and a profile that failed validation on its next
+     * save. Live and suspended accounts both move.
+     */
+    let moved = 0;
+    if (before.name !== role.name) {
+      const [live, archived] = await Promise.all([
+        User.updateMany({ role: before.name }, { $set: { role: role.name } }),
+        ArchivedUser.updateMany({ role: before.name }, { $set: { role: role.name } }),
+      ]);
+      moved = (live.modifiedCount || 0) + (archived.modifiedCount || 0);
+    }
+
     await loadRoles();
+    await recordAudit(req.user, 'Role Updated',
+      `Role "${role.name}" updated${before.name !== role.name ? ` (renamed from "${before.name}", ${moved} account(s) moved)` : ''}`,
+      req, { meta: { roleId: String(role._id), before, after: snapshotOf(role.toObject()) } });
 
     res.status(200).json({ success: true, data: present(role.toObject()) });
   } catch (error) {
@@ -281,8 +334,13 @@ export const updateRolePermissions = async (req, res, next) => {
     // route to unrestricted access.
     const clean = permissions.filter((p) => typeof p === 'string' && p && p !== '*');
 
-    const existing = await Role.findById(req.params.id).select('permissions').lean();
+    const existing = await Role.findById(req.params.id).lean();
     if (!existing) return res.status(404).json({ success: false, message: 'Role not found' });
+    {
+      const merged = mergeServedPermissions(existing.permissions, clean);
+      const blocked = editRoleProblem(req.user, existing, keysOf({ grants: existing.grants, permissions: merged }));
+      if (blocked) return sendProblem(res, blocked);
+    }
 
     // Merged like grants: another portal's flat keys stay as stored.
     const role = await Role.findByIdAndUpdate(
@@ -292,6 +350,8 @@ export const updateRolePermissions = async (req, res, next) => {
     );
 
     await loadRoles();
+    await recordAudit(req.user, 'Role Updated', `Role "${role.name}" permission list updated`, req,
+      { meta: { roleId: String(role._id), before: snapshotOf(existing), after: snapshotOf(role.toObject()) } });
     res.status(200).json({ success: true, data: present(role.toObject()) });
   } catch (error) {
     next(error);
@@ -318,6 +378,11 @@ export const deleteRole = async (req, res, next) => {
       });
     }
 
+    {
+      const blocked = editRoleProblem(req.user, role, []);
+      if (blocked) return sendProblem(res, blocked);
+    }
+
     const inUse = await User.countDocuments({ role: role.name });
     if (inUse > 0) {
       return res.status(400).json({
@@ -328,6 +393,8 @@ export const deleteRole = async (req, res, next) => {
 
     await Role.deleteOne({ _id: role._id });
     await loadRoles();
+    await recordAudit(req.user, 'Role Deleted', `Role "${role.name}" deleted`, req,
+      { meta: { roleId: String(role._id), before: snapshotOf(role.toObject()), after: null } });
 
     res.status(200).json({ success: true, message: `Role "${role.name}" deleted.` });
   } catch (error) {

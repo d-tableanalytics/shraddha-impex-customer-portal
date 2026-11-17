@@ -7,6 +7,8 @@ import { isHrmsRoleKey } from '../../shared/permissions/constants.js';
 // AD-4, asked of the LIVE role model rather than the literal name 'Customer'.
 import { assertHrmsRolesAssignable } from '../../utils/hrmsRoleGuard.js';
 import { hashPassword } from '../../utils/password.js';
+import { assignRoleProblem, actOnAccountProblem, deactivateProblem, sendProblem } from '../../utils/accessGuard.js';
+import { recordAudit } from '../../utils/auditLog.js';
 import {
   assignableRoleNames,
   resolveUserPermissions,
@@ -178,7 +180,9 @@ export const searchCustomers = async (req, res, next) => {
     }
 
     const customers = await User.find(query)
-      .select('user customerName company email customerCategory location phone brandAccess moq showMsilCode')
+      .select('user customerName company email customerCategory location phone brandAccess moq showMsilCode '
+        // The details a booking carries, so Edit Details can fill them in on selection.
+        + 'shopNumber gstNumber shippingAddress billingAddress')
       .sort({ customerName: 1, user: 1, company: 1 })
       .limit(limit)
       .lean();
@@ -231,6 +235,12 @@ export const createUser = async (req, res, next) => {
     // is to POST /users with role: 'Admin'.
     if (denyIfOutOfScope(req, res, { role: requestedRole }, 'create', 'create')) return;
     if (denyIfRoleCombinationInvalid(res, requestedRole, req.body.roles)) return;
+    // Nobody creates an account with more access than they hold, and only a
+    // Super Admin creates a Super Admin (utils/accessGuard.js).
+    {
+      const blocked = await assignRoleProblem(req.user, null, requestedRole);
+      if (blocked) return sendProblem(res, blocked);
+    }
 
     // Master details are mandatory for a NEW customer, and only meaningful for
     // one — staff accounts carry no GST or shop number.
@@ -315,6 +325,18 @@ export const updateUser = async (req, res, next) => {
       || await ArchivedUser.findById(req.params.id).lean();
     if (!target) return res.status(404).json({ success: false, message: 'User not found' });
     if (denyIfOutOfScope(req, res, target, 'edit')) return;
+    {
+      // A full-access account is changed only by a full-access actor; a role
+      // change obeys the assignment rules; and the last Super Admin is never
+      // suspended. See utils/accessGuard.js.
+      // Turning an account into staff is an Internal User Management edit.
+      if ('role' in req.body && denyIfOutOfScope(req, res, { role: req.body.role }, 'assign that role to', 'edit')) return;
+      const blocked = actOnAccountProblem(req.user, target)
+        || ('role' in req.body ? await assignRoleProblem(req.user, target, req.body.role) : null)
+        || (target.status === 'Active' && req.body.status && req.body.status !== 'Active'
+          ? await deactivateProblem(req.user, target) : null);
+      if (blocked) return sendProblem(res, blocked);
+    }
 
     if ('role' in req.body && !canManageAllUsers(req.user) && req.body.role !== 'Customer') {
       return res.status(403).json({
@@ -363,10 +385,20 @@ export const updateUser = async (req, res, next) => {
         if (String(req.user?._id) === String(req.params.id)) {
           return res.status(400).json({ success: false, message: 'You cannot suspend your own account.' });
         }
+        await recordAudit(req.user, 'User Access Changed', `${live.email}: suspended`, req,
+          { meta: { userId: String(live._id), before: { status: live.status }, after: { status: 'Suspended' } } });
         return suspend(live, updates, res);
       }
 
       const updated = await User.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
+      if (updated && (('role' in updates && updates.role !== target.role) || ('status' in updates && updates.status !== target.status))) {
+        await recordAudit(req.user, 'User Access Changed',
+          `${target.email}: ` + [
+            'role' in updates && updates.role !== target.role ? `role "${target.role}" → "${updates.role}"` : null,
+            'status' in updates && updates.status !== target.status ? `status "${target.status}" → "${updates.status}"` : null,
+          ].filter(Boolean).join('; '),
+          req, { meta: { userId: String(target._id), before: { role: target.role, status: target.status }, after: { role: updated.role, status: updated.status } } });
+      }
       return res.status(200).json({ success: true, data: updated });
     }
 
@@ -442,6 +474,11 @@ export const resetUserPassword = async (req, res, next) => {
       || await ArchivedUser.findById(req.params.id).lean();
     if (!target) return res.status(404).json({ success: false, message: 'User not found' });
     if (denyIfOutOfScope(req, res, target, 'reset the password for')) return;
+    {
+      // Resetting a password is signing in as that person; never upwards.
+      const blocked = actOnAccountProblem(req.user, target);
+      if (blocked) return sendProblem(res, blocked);
+    }
 
     const hashed = await hashPassword(newPassword);
 
@@ -488,9 +525,19 @@ export const updateUserRole = async (req, res, next) => {
     // findByIdAndUpdate, so the AD-4 rule is checked here against the roles the
     // account already holds. Demoting an employee to Customer while they still
     // carry HRMS roles is exactly the case this catches.
-    const target = await User.findById(req.params.id).select('roles').lean();
+    const target = await User.findById(req.params.id).select('roles role status email extraGrants').lean();
     if (!target) return res.status(404).json({ success: false, message: 'User not found' });
     if (denyIfRoleCombinationInvalid(res, role, target.roles)) return;
+    // The account and the role it moves to must both be ones this actor may
+    // edit: a customer account under Customer Management, staff under Internal
+    // User Management (the Edit cell, not the View cell that compiles to
+    // manage_users).
+    if (denyIfOutOfScope(req, res, target, 'change the role of', 'edit')) return;
+    if (denyIfOutOfScope(req, res, { role }, 'assign that role to', 'edit')) return;
+    {
+      const blocked = await assignRoleProblem(req.user, target, role);
+      if (blocked) return sendProblem(res, blocked);
+    }
 
     const user = await User.findByIdAndUpdate(
       req.params.id,
@@ -499,6 +546,11 @@ export const updateUserRole = async (req, res, next) => {
     );
 
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    if (target.role !== role) {
+      await recordAudit(req.user, 'User Access Changed', `${target.email}: role "${target.role}" → "${role}"`, req,
+        { meta: { userId: String(target._id), before: { role: target.role }, after: { role } } });
+    }
 
     res.status(200).json({ success: true, data: user });
   } catch (error) {
@@ -573,6 +625,12 @@ export const updateUserAccess = async (req, res, next) => {
 
     const target = await User.findById(req.params.id);
     if (!target) return res.status(404).json({ success: false, message: 'User not found' });
+    if (denyIfOutOfScope(req, res, target, 'change the access of', 'edit')) return;
+    {
+      const blocked = actOnAccountProblem(req.user, target);
+      if (blocked) return sendProblem(res, blocked);
+    }
+    const extraBefore = (target.extraGrants || []).map((g) => (g.toObject ? g.toObject() : g));
 
     /**
      * AD-4, enforced HERE rather than left to the schema.
@@ -616,6 +674,9 @@ export const updateUserAccess = async (req, res, next) => {
     if (next.error) return res.status(400).json({ success: false, message: next.error });
     target.extraGrants = next.grants;
     await target.save({ validateBeforeSave: false });
+    await recordAudit(req.user, 'User Extra Access Changed', `${target.email}: extra access updated`, req, {
+      meta: { userId: String(target._id), before: extraBefore, after: (target.extraGrants || []).map((g) => (g.toObject ? g.toObject() : g)) },
+    });
 
     const updated = target.toObject();
     delete updated.password;

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 import {
   RotateCcw, Boxes, PackageX, AlertTriangle, TrendingDown,
   CheckCircle2, Clock, ArrowUpRight, ArrowDownRight,
@@ -16,7 +17,7 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { useDashboardStore } from '../../store/dashboardStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
-import { hasPermission, canUseInventoryMaster, PERMISSIONS } from '../../utils/permissions';
+import { canCell } from '../../utils/cellKeys';
 import { formatAvailablePercent, bandLabel } from '../../utils/inventoryFormat';
 import { DateField } from "../../components/ui/DateField";
 
@@ -139,8 +140,9 @@ export const InventoryDashboard = () => {
     fetchCategories();
   }, [fetchDashboard, fetchCategories]);
 
-  if (user && !(hasPermission(user, PERMISSIONS.VIEW_INVENTORY) && canUseInventoryMaster(user))) {
-    return <Navigate to="/" replace />;
+  // The route's own cell (inventory.dashboard.view), not a role list (audit F4).
+  if (user && !canCell(user, 'inventory', 'dashboard', 'view')) {
+    return <Unauthorized />;
   }
 
   const brands = allowedBrands(user);

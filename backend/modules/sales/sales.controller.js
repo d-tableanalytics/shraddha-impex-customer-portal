@@ -184,7 +184,7 @@ const buildPoRaisedEmail = ({
       </div>
       ${deliveryScheduleDate
       ? `<div style="margin-top: 10px; font-size: 11px; color: #5a7ca8; letter-spacing: 0.3px;">
-             Delivery scheduled from
+             Dispatch Date:
              <strong style="color:#1a5b9e;">${esc(fmtMailDate(deliveryScheduleDate))}</strong>
            </div>`
       : ''}
@@ -1383,7 +1383,12 @@ const sendServiceError = (error, res, next) => {
     return res.status(400).json({ success: false, message: error.message, field: error.field });
   }
   if (error?.status) {
-    return res.status(error.status).json({ success: false, message: error.message });
+    return res.status(error.status).json({
+      success: false,
+      message: error.message,
+      // Lets the form put the message on the input it is about.
+      ...(error.field ? { field: error.field } : {}),
+    });
   }
   return next(error);
 };

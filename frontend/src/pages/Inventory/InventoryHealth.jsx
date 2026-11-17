@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 import { Search, X, Loader2, RotateCcw, AlertCircle, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -215,7 +215,7 @@ export const InventoryHealth = () => {
   const [selectingAll, setSelectingAll] = useState(false);
 
   if (user && !hasPermission(user, PERMISSIONS.VIEW_INVENTORY)) {
-    return <Navigate to="/" replace />;
+    return <Unauthorized />;
   }
 
   const togglePick = (skuCode) => setPicked((prev) => {

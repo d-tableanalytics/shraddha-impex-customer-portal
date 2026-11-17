@@ -11,7 +11,7 @@ import {
   CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
 } from "../../utils/historyExportColumns";
 
-import { isSuperAdmin, canUseSalesDesk } from "../../utils/permissions";
+import { canUseSalesDesk } from "../../utils/permissions";
 export const OrderHistoryTable = () => {
   const {
     orders,
@@ -51,12 +51,14 @@ export const OrderHistoryTable = () => {
     indentBookingIds.has(order.orderNumber)
     || (Boolean(order.poNumber) && indentPOs.has(order.poNumber));
 
-  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
+  // Customer columns/filters/cards follow the sales-desk cell (view_all_bookings),
+  // not the Super Admin role name: staff granted every booking need to see whose it is.
+  const seesCustomers = useUserStore((s) => canUseSalesDesk(s.user));
   // The SI Team column (who placed the booking for the customer) is for the
   // desk — Sales and Admin — the people whose names it carries. A customer's
   // own history keeps its columns; the drawer still tells them who booked.
   const showSiTeam = useUserStore((s) => canUseSalesDesk(s.user));
-  const columnCount = 6 + (isAdmin ? 2 : 0) + (showSiTeam ? 1 : 0);
+  const columnCount = 6 + (seesCustomers ? 2 : 0) + (showSiTeam ? 1 : 0);
 
   const totalPages = Math.max(1, Math.ceil(orders.length / limit));
   const currentPage = Math.min(page, totalPages);
@@ -173,8 +175,8 @@ export const OrderHistoryTable = () => {
                 />
               </th>
               <th className="px-5 py-3 border-b border-slate-200">Booking ID</th>
-              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Customer Name</th>}
-              {isAdmin && <th className="px-5 py-3 border-b border-slate-200">Company Name</th>}
+              {seesCustomers && <th className="px-5 py-3 border-b border-slate-200">Customer Name</th>}
+              {seesCustomers && <th className="px-5 py-3 border-b border-slate-200">Company Name</th>}
               {showSiTeam && <th className="px-5 py-3 border-b border-slate-200">SI Team</th>}
               <th className="px-5 py-3 border-b border-slate-200">PO Number</th>
               <th
@@ -228,7 +230,7 @@ export const OrderHistoryTable = () => {
                       )}
                     </div>
                   </td>
-                  {isAdmin && (
+                  {seesCustomers && (
                     /* WHO the customer is. Previously this cell stacked the name
                        over the company to save a column, on the reasoning that a
                        booking list which scrolls sideways is worse than a
@@ -268,7 +270,7 @@ export const OrderHistoryTable = () => {
                       )}
                     </td>
                   )}
-                  {isAdmin && (
+                  {seesCustomers && (
                     /* Kept as its own column, per the requirement. Shown even
                        when it matches the customer name: a blank here would
                        read as "no company recorded" rather than "same as the

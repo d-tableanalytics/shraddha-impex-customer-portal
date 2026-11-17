@@ -28,6 +28,7 @@ import { Modal } from "../ui/Modal";
 import { MsilSupplyDateBar, HeldIndentStatus, isMsilBooking } from "./MsilSupply";
 import { stageLabel, normalizeStatus } from "../../constants/bookingLifecycle";
 import { formatRupees, withGstParts, GST_LABEL, MANUAL_PRICE_TYPE, asPrice } from "../../constants/pricing";
+import { formatDisplayDate } from "../../utils/dateValue";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
 //
@@ -63,6 +64,10 @@ const toDraft = (booking) =>
     unitPrice: l.unitPrice ?? null,
     amount: l.amount ?? null,
     confirmedQty: l.confirmedQty ?? null,
+    // Read-only too: the line's dispatch date (3 days after booking by
+    // default, or as the desk set it). Changed from Booking History's Delivery
+    // schedule panel, which also emails the customer.
+    scheduledDate: l.scheduledDate ?? null,
   }));
 
 export const SalesBookingDrawer = () => {
@@ -112,6 +117,9 @@ export const SalesBookingDrawer = () => {
   const [manualPrices, setManualPrices] = useState({});
   // Admin-only correction of the submitted customer/order details.
   const [editingDetails, setEditingDetails] = useState(false);
+  // A customer to pre-select in Edit Details (back from "+ Add Customer").
+  const [detailsCustomerId, setDetailsCustomerId] = useState(null);
+  const detailsIntent = useSalesStore((s) => s.detailsIntent);
   // Which line is being dragged, and which row the pointer is over.
   const [dragIdx, setDragIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
@@ -160,6 +168,20 @@ export const SalesBookingDrawer = () => {
     indentAsked.current = orderId;
     reloadSelected();
   }, [selected?.orderId, selected?.indent, reloadSelected]);
+
+  /**
+   * Back from "+ Add Customer" in Edit Details: the desk selects the booking
+   * and leaves this request in the same update, so it runs AFTER the reset
+   * above (effects run in order) and the form opens with the new customer.
+   */
+  useEffect(() => {
+    if (!detailsIntent || detailsIntent.orderId !== selected?.orderId) return;
+    if (hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK)) {
+      setDetailsCustomerId(detailsIntent.customerId || null);
+      setEditingDetails(true);
+    }
+    useSalesStore.setState({ detailsIntent: null });
+  }, [detailsIntent, selected?.orderId, user]);
 
   if (!selected) return null;
 
@@ -1105,6 +1127,7 @@ export const SalesBookingDrawer = () => {
                       <th className="px-5 py-3 w-[26%] min-w-[140px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">MSIL Code</th>
                       {showBoxNo && <th className="px-5 py-3 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Box No</th>}
                       <th className="px-5 py-3 text-center w-[110px] sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Quantity</th>
+                      <th className="px-5 py-3 whitespace-nowrap sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_0_rgb(226_232_240)]">Dispatch Date</th>
                       {/* Money sits after quantity, which is the order the eye
                           multiplies in and the order a paper PO prints. Gated on
                           view_pricing exactly like the section below: the server
@@ -1234,6 +1257,11 @@ export const SalesBookingDrawer = () => {
                             disabled={!editable}
                             onChange={(e) => setLine(idx, { quantity: e.target.value })}
                           />
+                        </td>
+                        <td className="px-5 py-3 whitespace-nowrap text-sm font-semibold text-slate-700">
+                          {line.scheduledDate
+                            ? formatDisplayDate(new Date(line.scheduledDate))
+                            : <span className="font-normal text-slate-300">&mdash;</span>}
                         </td>
                         {mayPrice && (
                           /*
@@ -1756,7 +1784,8 @@ export const SalesBookingDrawer = () => {
         <BookingDetailsModal
           isOpen={editingDetails}
           booking={selected}
-          onClose={() => setEditingDetails(false)}
+          initialCustomerId={detailsCustomerId}
+          onClose={() => { setEditingDetails(false); setDetailsCustomerId(null); }}
           /* The response is the whole booking, so the drawer resyncs from
              server truth rather than from what the form believed it sent. */
           onSaved={(updated) => useSalesStore.setState({ selected: updated })}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 import { Search, X, Loader2, RotateCcw, ArrowDownRight, ArrowUpRight, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -211,7 +211,7 @@ export const StockLedger = () => {
   // The route is guarded server-side on every request; this only avoids
   // rendering a screen the user could not populate.
   if (user && !hasPermission(user, PERMISSIONS.VIEW_STOCK_LEDGER)) {
-    return <Navigate to="/" replace />;
+    return <Unauthorized />;
   }
 
   const togglePick = (txn) => setPicked((prev) => {

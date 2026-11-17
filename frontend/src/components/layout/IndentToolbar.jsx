@@ -10,12 +10,14 @@ import {
   CUSTOMER_EXPORT_COLS, customerExportRow, exportDate, poNumberValue,
 } from "../../utils/historyExportColumns";
 
-import { isSuperAdmin } from "../../utils/permissions";
+import { canUseSalesDesk } from "../../utils/permissions";
 export const IndentToolbar = () => {
   const { searchQuery, setSearchQuery, filters, setFilters, selectedIds, allIndents } =
     useIndentHistoryStore();
   const [showFilters, setShowFilters] = useState(false);
-  const isAdmin = useUserStore((s) => isSuperAdmin(s.user));
+  // Customer columns/filters/cards follow the sales-desk cell (view_all_bookings),
+  // not the Super Admin role name: staff granted every booking need to see whose it is.
+  const seesCustomers = useUserStore((s) => canUseSalesDesk(s.user));
 
   // Customer list is derived from the loaded indents — no extra request needed,
   // and it can only ever offer customers that actually have an indent.
@@ -99,7 +101,7 @@ export const IndentToolbar = () => {
           <input
             type="text"
             placeholder={
-              isAdmin
+              seesCustomers
                 ? "Search Indent No, Booking ID, SKU, Customer..."
                 : "Search Indent No, Booking ID, SKU..."
             }
@@ -117,7 +119,7 @@ export const IndentToolbar = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          {isAdmin && (
+          {seesCustomers && (
             <div className="relative hidden sm:block">
               <Users
                 size={16}

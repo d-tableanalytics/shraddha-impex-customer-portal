@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { Unauthorized } from '../../../components/common/Unauthorized';
 import {
   Boxes, Search, ImagePlus, Trash2, RefreshCw, Save, Loader2, Film, Plus, X,
   FileText, Image as ImageIcon, Upload, CheckCircle2, AlertTriangle, ImageOff,
@@ -689,7 +690,7 @@ export const ProductDetailsAdmin = () => {
       : row)));
   };
 
-  if (user && !mayManage) return <Navigate to="/" replace />;
+  if (user && !mayManage) return <Unauthorized />;
 
   return (
     <div className="flex flex-col gap-6">

@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import toast from "react-hot-toast";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, ArrowRightLeft } from "lucide-react";
 
 import { Modal } from "../ui/Modal";
 import { ERPButton } from "../ui/ERPButton";
+import { CustomerSelect, customerDisplayName } from "../booking/CustomerSelect";
 import { salesApi } from "../../services/sales";
+import { customersApi } from "../../services/users";
+import { bookingOwnerOf, bookingDetailsFromCustomer, siTeamLabelOf } from "../../utils/bookingParty";
 
 /**
  * Admin correction of a booking's submitted customer/order details.
@@ -36,11 +40,30 @@ import { salesApi } from "../../services/sales";
  * this maps that onto the input so the error lands where the fix is. A second
  * copy of the rules here would drift from the first and start disagreeing about
  * what is valid.
+ *
+ * ---------------------------------------------------------------------------
+ * SELECT CUSTOMER
+ * ---------------------------------------------------------------------------
+ *
+ * The same picker as Create Booking (components/booking/CustomerSelect),
+ * showing the customer the booking belongs to. Choosing a DIFFERENT customer
+ * fills the customer fields below from that customer's record
+ * (bookingDetailsFromCustomer, the mapping the server uses too) and, on save,
+ * moves the booking to their account: it then shows in their Booking History
+ * and on the desk under their name. Nothing about the customer is sent unless a
+ * different one is chosen, so an ordinary correction never touches ownership.
+ * The server applies Create Booking's rules to the choice (live customer,
+ * brand access, MSIL category) and says which one failed.
+ *
+ * The SI Team is shown, read-only, from the booking's own creator stamp. No
+ * edit changes it, whoever makes the edit.
  */
 
 /** Mirrors EDITABLE_FIELDS on the server. Labels are the ones staff use. */
 const FIELDS = [
-  { key: "customerName", label: "Customer Name", type: "text" },
+  // The company stamped on the booking (the server's `company` column). The
+  // customer themselves is chosen with Select Customer above the fields.
+  { key: "customerName", label: "Company Name", type: "text" },
   { key: "poNumber", label: "PO Number", type: "text", hint: "Must be unique across bookings." },
   { key: "poDate", label: "PO Date", type: "date" },
   { key: "shopNumber", label: "Shop Number", type: "text" },
@@ -75,11 +98,17 @@ const initialForm = (booking) =>
     }),
   );
 
-export const BookingDetailsModal = ({ isOpen, booking, onClose, onSaved }) => {
+/** The form fields that follow the customer when a different one is chosen. */
+const CUSTOMER_KEYS = Object.keys(bookingDetailsFromCustomer({}));
+
+export const BookingDetailsModal = ({ isOpen, booking, onClose, onSaved, initialCustomerId = null }) => {
+  const location = useLocation();
   const [form, setForm] = useState(() => initialForm(booking));
   const [baseline, setBaseline] = useState(() => initialForm(booking));
   const [saving, setSaving] = useState(false);
   const [fieldError, setFieldError] = useState(null);
+  const owner = bookingOwnerOf(booking);
+  const [picked, setPicked] = useState(owner);
 
   // Re-seed when a different booking is opened. Keyed on orderId rather than an
   // effect on `booking`, so a socket refresh of the same booking mid-edit does
@@ -90,7 +119,43 @@ export const BookingDetailsModal = ({ isOpen, booking, onClose, onSaved }) => {
     setForm(initialForm(booking));
     setBaseline(initialForm(booking));
     setFieldError(null);
+    setPicked(bookingOwnerOf(booking));
   }
+
+  const isOwner = (c) => Boolean(c && owner && String(c._id) === owner._id);
+  const customerChanged = Boolean(picked) && !isOwner(picked);
+
+  /**
+   * A different customer fills the customer fields from their record. Going
+   * back to the booking's own customer, or clearing the choice, restores what
+   * the booking already had, so nothing is overwritten unless a different
+   * customer is actually selected.
+   */
+  const pickCustomer = (customer) => {
+    setPicked(customer);
+    if (fieldError?.field === "customerId") setFieldError(null);
+    const source = customer && !isOwner(customer)
+      ? bookingDetailsFromCustomer(customer)
+      : Object.fromEntries(CUSTOMER_KEYS.map((k) => [k, baseline[k]]));
+    setForm((f) => ({ ...f, ...source }));
+  };
+
+  // Back from "+ Add Customer" with the new account's id: select it.
+  useEffect(() => {
+    if (!initialCustomerId) return undefined;
+    let live = true;
+    customersApi.getById(initialCustomerId)
+      .then((customer) => { if (live && customer) pickCustomer(customer); })
+      .catch(() => toast.error("Could not load the new customer. Select them from the list."));
+    return () => { live = false; };
+    // Only when a new id arrives; pickCustomer is recreated every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCustomerId]);
+
+  // "+ Add Customer" comes back to this booking with this form open.
+  const addCustomerReturn = booking?.orderId
+    ? `${location.pathname}?booking=${encodeURIComponent(booking.orderId)}&editDetails=1`
+    : null;
 
   const set = (key) => (e) => {
     setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -99,18 +164,24 @@ export const BookingDetailsModal = ({ isOpen, booking, onClose, onSaved }) => {
 
   /** Only the fields whose value actually moved. */
   const changed = Object.keys(form).filter((k) => form[k] !== baseline[k]);
+  const changeCount = changed.length + (customerChanged ? 1 : 0);
 
   const handleSave = async () => {
-    if (changed.length === 0) return onClose();
+    if (changeCount === 0) return onClose();
 
-    const patch = Object.fromEntries(changed.map((k) => [k, form[k]]));
+    const patch = {
+      ...Object.fromEntries(changed.map((k) => [k, form[k]])),
+      ...(customerChanged ? { customerId: picked._id } : {}),
+    };
 
     setSaving(true);
     setFieldError(null);
     try {
       const updated = await salesApi.updateDetails(booking.orderId, patch);
       toast.success(
-        `Updated ${changed.length} field${changed.length === 1 ? "" : "s"}. The change is recorded in the audit trail.`,
+        customerChanged
+          ? `Booking moved to ${customerDisplayName(picked)}. The change is recorded in the audit trail.`
+          : `Updated ${changed.length} field${changed.length === 1 ? "" : "s"}. The change is recorded in the audit trail.`,
       );
       onSaved?.(updated);
       onClose();
@@ -140,6 +211,52 @@ export const BookingDetailsModal = ({ isOpen, booking, onClose, onSaved }) => {
             also move the stock and send the customer the right notice. This form covers the
             customer and order details only.
           </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50/40 p-3">
+          <div className="sm:col-span-2" data-testid="booking-details-customer">
+            <CustomerSelect
+              value={picked}
+              onChange={pickCustomer}
+              disabled={saving}
+              returnTo={addCustomerReturn}
+              hint={owner
+                ? `Leave empty to keep ${customerDisplayName(owner)}.`
+                : "Select the customer this booking belongs to."}
+            />
+            {customerChanged && (
+              <p className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold text-amber-700">
+                <ArrowRightLeft size={13} className="mt-px shrink-0" aria-hidden="true" />
+                <span>
+                  On save, this booking, its open indent and its status history move to{" "}
+                  {customerDisplayName(picked)}&apos;s account. Their details are filled in below;
+                  check them before saving.
+                </span>
+              </p>
+            )}
+            {fieldError?.field === "customerId" && (
+              <p className="mt-1 text-[11px] font-semibold text-error-600">{fieldError.message}</p>
+            )}
+          </div>
+          <div className="sm:col-span-2">
+            <label
+              htmlFor="bd-siTeam"
+              className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1"
+            >
+              SI Team
+            </label>
+            <input
+              id="bd-siTeam"
+              type="text"
+              readOnly
+              tabIndex={-1}
+              className={`${input} bg-slate-100 text-slate-600 cursor-not-allowed`}
+              value={siTeamLabelOf(booking) || "—"}
+            />
+            <p className="mt-1 text-[11px] text-slate-400">
+              Who placed this booking on the customer&apos;s behalf. Editing never changes it.
+            </p>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -185,15 +302,15 @@ export const BookingDetailsModal = ({ isOpen, booking, onClose, onSaved }) => {
 
         <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
           <p className="text-xs text-slate-500">
-            {changed.length === 0
+            {changeCount === 0
               ? "No changes yet."
-              : `${changed.length} field${changed.length === 1 ? "" : "s"} will be updated and recorded.`}
+              : `${changeCount} change${changeCount === 1 ? "" : "s"} will be saved and recorded.`}
           </p>
           <div className="flex gap-2">
             <ERPButton variant="secondary" onClick={onClose} disabled={saving}>
               Cancel
             </ERPButton>
-            <ERPButton onClick={handleSave} disabled={saving || changed.length === 0}>
+            <ERPButton onClick={handleSave} disabled={saving || changeCount === 0}>
               {saving ? <Loader2 size={15} className="animate-spin" /> : null}
               Save changes
             </ERPButton>

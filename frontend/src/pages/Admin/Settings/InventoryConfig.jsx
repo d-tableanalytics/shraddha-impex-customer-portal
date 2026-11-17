@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Unauthorized } from '../../../components/common/Unauthorized';
 import { Save, Loader2, MapPin, Plus, Star, History, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -72,7 +72,7 @@ export const InventoryConfig = () => {
     });
   }, [config]);
 
-  if (user && !canConfigureInventory(user)) return <Navigate to="/" replace />;
+  if (user && !canConfigureInventory(user)) return <Unauthorized />;
 
   if (loading || !form) {
     return (

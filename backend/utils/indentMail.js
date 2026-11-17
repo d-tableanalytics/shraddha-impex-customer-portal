@@ -43,6 +43,19 @@ export const fmtDate = (d) => {
   return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
+/**
+ * A calendar DAY stored as UTC midnight (a dispatch date: utils/dispatchDate.js,
+ * or one picked on the Sales Desk), formatted as that same day wherever the
+ * server runs. fmtDate above uses the server's zone, which suits an instant
+ * like the booking time but could show a stored day as the day before.
+ */
+export const fmtDay = (d) => {
+  if (!d) return '—';
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString('en-IN', { timeZone: 'UTC', day: '2-digit', month: 'short', year: 'numeric' });
+};
+
 const CELL = 'padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
 const HEAD = 'padding: 7px 12px; background: #f4f6f8; color: #555; text-align: left; '
   + 'font-size: 12px; text-transform: uppercase; border-bottom: 2px solid #e3e7eb;';
@@ -327,6 +340,9 @@ export const sendIndentRaisedMails = async ({
 export const sendBookingMails = async ({
   customer, orderNumber, poNumber, indentId, bookingDate,
   summary, totalConfirmed, totalPending, extraCc = [], placedBy = null,
+  // The default dispatch date of the lines booked from stock; null when the
+  // booking has nothing in hand (an all-indent request never reaches here).
+  dispatchDate = null,
 }) => {
   const name = customer?.user || customer?.name || customer?.company || 'Customer';
   const totalRequested = totalConfirmed + totalPending;
@@ -357,6 +373,12 @@ export const sendBookingMails = async ({
         ${poNumber && poNumber !== '-' ? ` &nbsp;·&nbsp; PO: <strong>${esc(poNumber)}</strong>` : ''}
         ${hasIndent ? ` &nbsp;·&nbsp; Indent reference: <strong style="font-family: monospace; color: #b54708;">${esc(indentId)}</strong>` : ''}
       </div>
+      ${dispatchDate ? `
+      <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #cfe0f7;">
+        <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">Dispatch Date</div>
+        <div style="font-size: 16px; font-weight: bold; color: #1a5b9e; margin-top: 2px;">${esc(fmtDay(dispatchDate))}</div>
+        ${hasIndent ? '<div style="margin-top: 2px; font-size: 12px; color: #5a7ca8;">For the units confirmed from stock. Indented units are scheduled once material arrives.</div>' : ''}
+      </div>` : ''}
     </div>
     ${customerBlock(customer, { audience })}
     ${journeyByAudience ? journeyByAudience[audience] : bookingTable(summary, { audience })}`;

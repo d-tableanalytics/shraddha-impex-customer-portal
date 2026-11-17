@@ -233,9 +233,36 @@ const crossSiteCookies = () => process.env.CROSS_SITE_COOKIES === 'true';
  */
 export function refreshCookieOptions() {
   const crossSite = crossSiteCookies();
+
+  /**
+   * `Secure`, and the one escape hatch.
+   *
+   * Production means HTTPS, so `Secure` is the default and stays the default.
+   * `COOKIE_SECURE=false` turns it off for the one situation that genuinely
+   * cannot satisfy it: a deployment reachable only by IP, where no certificate
+   * authority will issue a certificate and the box is being verified over plain
+   * http before DNS is pointed at it.
+   *
+   * ⚠ WHAT IT COSTS, PLAINLY: the refresh token then travels in cleartext, and
+   * so does every request carrying it. Anyone on the path can lift a session.
+   * This is a setting for a UAT box, not for a portal holding PAN, Aadhaar and
+   * bank details — turn it back on the moment TLS is available, which is also
+   * the moment it costs nothing.
+   *
+   * It is ignored when cross-site cookies are on, because `SameSite=None`
+   * without `Secure` is rejected by the browser outright: the combination is
+   * not "less secure", it is "no cookie at all", and honouring the override
+   * there would break login rather than relax it.
+   */
+  const secure = crossSite
+    ? true
+    : process.env.COOKIE_SECURE === 'false'
+      ? false
+      : process.env.NODE_ENV === 'production';
+
   return {
     httpOnly: true,
-    secure: crossSite || process.env.NODE_ENV === 'production',
+    secure,
     sameSite: crossSite ? 'none' : 'strict',
     path: '/api/v1/auth',
     maxAge: refreshCookieMaxAgeMs(),

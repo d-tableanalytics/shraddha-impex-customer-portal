@@ -51,8 +51,7 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 import Order from '../models/Order.js';
 import User from '../models/User.js';
-import Reservation from '../models/Reservation.js';
-import BookingStatusEvent from '../models/BookingStatusEvent.js';
+import { countOwnedRecords, moveOwnedRecords } from '../utils/bookingOwner.js';
 
 const isCustomerAccount = (u) => (u?.role || 'Customer') === 'Customer';
 const staffName = (u) => u?.user || u?.customerName || u?.company || u?.email || null;
@@ -124,13 +123,7 @@ export const reassignBooking = async ({ orderId, customerEmail, apply = false })
     }
     : null;
 
-  const indentNumber = `PI-${id.replace(/^[A-Z]+-/, '')}`;
-  const indentFilter = {
-    customerId: rows[0].user,
-    $or: [{ indentNumber }, { autoBookedOrderId: id }],
-  };
-  const indents = await Reservation.countDocuments(indentFilter);
-  const events = await BookingStatusEvent.countDocuments({ orderId: id, user: rows[0].user });
+  const { indents, statusEvents: events } = await countOwnedRecords(id, rows[0].user);
 
   const changes = {
     lines: rows.length,
@@ -162,8 +155,7 @@ export const reassignBooking = async ({ orderId, customerEmail, apply = false })
       };
       await Order.updateOne({ _id: row._id }, { $set: set });
     }
-    await Reservation.updateMany(indentFilter, { $set: { customerId: customer._id } });
-    await BookingStatusEvent.updateMany({ orderId: id, user: rows[0].user }, { $set: { user: customer._id } });
+    await moveOwnedRecords({ orderId: id, fromUserId: rows[0].user, toUserId: customer._id });
   }
 
   return {

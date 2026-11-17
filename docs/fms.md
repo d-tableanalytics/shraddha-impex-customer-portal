@@ -41,8 +41,8 @@ the same screen in either portal.
 
 | Where | Setting |
 |---|---|
-| This repository → GitHub → Settings → Variables | `EMPLOYEE_API_URL` = the Employee API's origin (no `/api/v1`). CI and deploy pass it to the build as `VITE_EMPLOYEE_API_URL`. |
-| Employee Portal API environment | Add `https://erp.shraddhaimpex.net` to `CORS_ORIGINS`. |
+| This repository's workflows | Nothing. CI and deploy build with `VITE_EMPLOYEE_API_URL=https://app.shraddhaimpex.net`, the live Employee Portal. To point somewhere else, set the GitHub repository variable `EMPLOYEE_API_URL` (an origin, no `/api/v1`). |
+| Employee Portal API environment (`/var/www/shraddha-employee-portal/.env`) | `CORS_ORIGINS=https://erp.shraddhaimpex.net`, then `pm2 reload … --update-env`. Every deploy here checks this in its "Cross-portal link" step and warns if it is missing. |
 | Local development | Nothing: the build falls back to `http://localhost:5001`. The Employee backend's `.env` needs `CORS_ORIGINS=http://localhost:5173`. |
 
 With either missing, FMS is simply not offered — no menu, no bell, and the

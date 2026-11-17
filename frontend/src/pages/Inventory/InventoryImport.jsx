@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
+import { Unauthorized } from '../../components/common/Unauthorized';
 import {
   Upload, FileSpreadsheet, Download, Loader2, CheckCircle2, XCircle,
   AlertTriangle, Ban, PlayCircle, RotateCcw, ChevronRight, History,
@@ -17,7 +18,8 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { useImportStore } from '../../store/importStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
-import { hasPermission, canUseInventoryMaster, canManagePricing, PERMISSIONS } from '../../utils/permissions';
+import { canManagePricing } from '../../utils/permissions';
+import { canCell } from '../../utils/cellKeys';
 import { NewSkuMoqModal } from '../../components/inventory/NewSkuMoqModal';
 import { NewSkuDetailsModal, isNewSkuAnswered } from '../../components/inventory/NewSkuDetailsModal';
 
@@ -199,9 +201,9 @@ export const InventoryImport = () => {
 
   // A pricing holder (e.g. Sales) reaches this screen for the SKU Pricing sheet;
   // the server marks every other import type as not allowed for them.
-  if (user && !(hasPermission(user, PERMISSIONS.VIEW_INVENTORY)
-    && (canUseInventoryMaster(user) || canManagePricing(user)))) {
-    return <Navigate to="/" replace />;
+  // The route's own cell (inventory.imports.view), not a role list (audit F4).
+  if (user && !(canCell(user, 'inventory', 'imports', 'view') || canManagePricing(user))) {
+    return <Unauthorized />;
   }
 
   const brands = allowedBrands(user);

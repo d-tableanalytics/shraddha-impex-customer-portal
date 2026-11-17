@@ -1,8 +1,9 @@
-import { Navigate, Outlet } from "react-router-dom";
+import { Outlet } from "react-router-dom";
 
 import { useUserStore } from "../../store/userStore";
 import { hasPermission, PERMISSIONS } from "../../utils/permissions";
 import { LoadingSpinner } from "../ui/LoadingSpinner";
+import { Unauthorized } from "../common/Unauthorized";
 
 /**
  * The O2D route guard.
@@ -45,7 +46,8 @@ export function O2dProtectedRoute({ permission = PERMISSIONS.VIEW_O2D }) {
     );
   }
 
-  if (!hasPermission(user, permission)) return <Navigate to="/" replace />;
+  // A panel, not a redirect: the user is told why the screen did not open.
+  if (!hasPermission(user, permission)) return <Unauthorized />;
 
   return <Outlet />;
 }
