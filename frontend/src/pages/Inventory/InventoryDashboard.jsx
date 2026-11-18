@@ -18,6 +18,7 @@ import { useDashboardStore } from '../../store/dashboardStore';
 import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import { canCell } from '../../utils/cellKeys';
+import { hasPermission, PERMISSIONS } from '../../utils/permissions';
 import { formatAvailablePercent, bandLabel } from '../../utils/inventoryFormat';
 import { DateField } from "../../components/ui/DateField";
 

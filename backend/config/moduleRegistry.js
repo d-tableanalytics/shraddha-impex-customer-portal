@@ -304,7 +304,7 @@ export const MODULES = [
         label: 'Inventory Dashboard',
         path: '/inventory/dashboard',
         icon: 'GaugeCircle',
-        actions: { view: ['view_inventory'] },
+        actions: { view: ['view_inventory_dashboard'] },
       },
       {
         key: 'master',
@@ -327,7 +327,7 @@ export const MODULES = [
         // rather than the sidebar (removed from the menu 2026-11-16). The route
         // and its permission cell are unchanged.
         hidden: true,
-        actions: { view: ['view_inventory'] },
+        actions: { view: ['view_inventory_health'] },
       },
       {
         key: 'ledger',
@@ -358,7 +358,7 @@ export const MODULES = [
         // import posts a receipt through the ledger. A role that may run it
         // must hold the permission that movement needs.
         actions: {
-          view: ['view_inventory'],
+          view: ['view_inventory_import'],
           create: ['manage_inventory_master', 'post_stock_in'],
         },
       },

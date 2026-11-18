@@ -155,7 +155,13 @@ export const normaliseRoleSave = ({ storedGrants = [], storedPermissions = [], i
     .filter(([cell]) => served.has(cell))
     .map(([, n]) => n.key));
 
-  const flat = new Set((storedPermissions || []).filter((k) => !narrowedKeys.has(k)));
+  // A key this portal's matrix can express is decided by the ticks in this save,
+  // never by a stale flat entry. Keeping those made an unticked cell impossible
+  // to revoke (e.g. a legacy flat `view_inventory` kept every Inventory screen
+  // open after the admin left only the Dashboard ticked). Keys the matrix does
+  // not serve here (other portal, HRMS tiers) are kept as stored.
+  const servedKeys = servedPermissionKeys(portal);
+  const flat = new Set((storedPermissions || []).filter((k) => !narrowedKeys.has(k) && !servedKeys.has(k)));
   const cells = [];
   for (const g of withDerived(storedGrants.filter((x) => served.has(cellKey(x))), servedIncoming)) {
     const narrowed = NARROWED_CELLS[cellKey(g)];

@@ -72,7 +72,7 @@ router.use(protect);
 
 // ── Inventory master ──────────────────────────────────────────────────────
 // Static paths first, or Express matches '/categories' as a :sku.
-router.get('/categories', authorize(PERMISSIONS.VIEW_INVENTORY), listCategories);
+router.get('/categories', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_DASHBOARD, PERMISSIONS.VIEW_INVENTORY_HEALTH), listCategories);
 
 // Daily average measured from sales. Rewrites a planning input across the
 // catalogue, so it is a system operation, not a master edit.
@@ -175,21 +175,21 @@ router.get('/balances/:sku', authorize(PERMISSIONS.VIEW_INVENTORY), getBalanceBy
 // CONFIGURE_INVENTORY alongside the other projection rebuilds.
 //
 // Static and more-specific paths first, or '/reorder' matches as a :sku.
-router.get('/health/meta/formulas', authorize(PERMISSIONS.VIEW_INVENTORY), listFormulas);
-router.get('/health/reorder/list', authorize(PERMISSIONS.VIEW_INVENTORY), getReorderList);
-router.get('/health/overstock/list', authorize(PERMISSIONS.VIEW_INVENTORY), getOverstockList);
-router.get('/health/coverage/lookup', authorize(PERMISSIONS.VIEW_INVENTORY), getCoverage);
+router.get('/health/meta/formulas', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_HEALTH), listFormulas);
+router.get('/health/reorder/list', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_HEALTH), getReorderList);
+router.get('/health/overstock/list', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_HEALTH), getOverstockList);
+router.get('/health/coverage/lookup', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_HEALTH), getCoverage);
 // Before '/health/:sku', or 'codes' is read as a SKU.
-router.get('/health/codes', authorize(PERMISSIONS.VIEW_INVENTORY), listHealthCodes);
+router.get('/health/codes', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_HEALTH), listHealthCodes);
 router.post('/health/rebuild', authorize(PERMISSIONS.CONFIGURE_INVENTORY), rebuildHealthProjection);
-router.get('/health', authorize(PERMISSIONS.VIEW_INVENTORY), listHealth);
-router.get('/health/:sku', authorize(PERMISSIONS.VIEW_INVENTORY), getHealthBySku);
+router.get('/health', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_HEALTH), listHealth);
+router.get('/health/:sku', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_HEALTH), getHealthBySku);
 
 // ── Dashboard (M5) ────────────────────────────────────────────────────────
 // A pure read model over the balance and health projections. One composed,
 // briefly-cached payload rather than a widget-per-request fan-out. It performs
 // no inventory calculation of its own — every figure traces to a projection.
-router.get('/dashboard', authorize(PERMISSIONS.VIEW_INVENTORY), getDashboard);
+router.get('/dashboard', authorize(PERMISSIONS.VIEW_INVENTORY_DASHBOARD), getDashboard);
 
 // ── Reports & snapshots (M6) ──────────────────────────────────────────────
 // Read-only aggregations over the ledger, balance and health projections.
@@ -289,11 +289,11 @@ const MAY_IMPORT = [
 
 router.get('/imports/types', authorize(...MAY_IMPORT), listImportTypes);
 router.get('/imports/templates/:importType', authorize(...MAY_IMPORT), downloadTemplate);
-router.get('/imports', authorize(PERMISSIONS.VIEW_INVENTORY), importHistory);
+router.get('/imports', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_IMPORT), importHistory);
 router.post('/imports', authorize(...MAY_IMPORT), uploadImportFile, handleUploadErrors, uploadImport);
-router.get('/imports/:jobId', authorize(PERMISSIONS.VIEW_INVENTORY), importStatus);
-router.get('/imports/:jobId/preview', authorize(PERMISSIONS.VIEW_INVENTORY), previewImport);
-router.get('/imports/:jobId/errors', authorize(PERMISSIONS.VIEW_INVENTORY), importErrors);
+router.get('/imports/:jobId', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_IMPORT), importStatus);
+router.get('/imports/:jobId/preview', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_IMPORT), previewImport);
+router.get('/imports/:jobId/errors', authorize(PERMISSIONS.VIEW_INVENTORY, PERMISSIONS.VIEW_INVENTORY_IMPORT), importErrors);
 // Answer the mandatory details — MOQ, lead time, safety factor, box number —
 // for the NEW SKUs a staged import will create. Same permission as the import
 // itself: whoever may create a SKU through a sheet is who must describe it, and

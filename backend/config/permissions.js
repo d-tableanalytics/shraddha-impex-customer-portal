@@ -109,6 +109,12 @@ export const PERMISSIONS = {
   // the four marked (M1) are enforced by any route today; the rest are carried
   // by the roles that will need them when their module ships.
   VIEW_INVENTORY: 'view_inventory',                     // (M1) list, detail, health, dashboard
+  // One view key per routed Inventory screen, so ticking the Dashboard cell in
+  // the matrix no longer opens the Master, Health and Import screens as well
+  // (they all shared view_inventory, and compiling one cell lit up the others).
+  VIEW_INVENTORY_DASHBOARD: 'view_inventory_dashboard',
+  VIEW_INVENTORY_HEALTH: 'view_inventory_health',
+  VIEW_INVENTORY_IMPORT: 'view_inventory_import',
   MANAGE_INVENTORY_MASTER: 'manage_inventory_master',   // (M1) edit planning parameters
   MANAGE_BOX_NUMBER: 'manage_box_number',               // (M1) add/change the SKU -> box number mapping
   CONFIGURE_INVENTORY: 'configure_inventory',           // (M1) thresholds, reason codes, locations
@@ -450,6 +456,9 @@ export const BASELINE_ROLE_PERMISSIONS = {
     // Sales needs to know what can be sold - availability only, never the
     // ledger, costs or adjustments.
     PERMISSIONS.VIEW_INVENTORY,
+    PERMISSIONS.VIEW_INVENTORY_DASHBOARD,
+    PERMISSIONS.VIEW_INVENTORY_HEALTH,
+    PERMISSIONS.VIEW_INVENTORY_IMPORT,
     // Sales decides which customer's indent arriving stock goes to.
     PERMISSIONS.ASSIGN_INDENT_STOCK,
     // O2D stages 1 and 2: Sales receives the customer PO and hands it to
@@ -465,6 +474,9 @@ export const BASELINE_ROLE_PERMISSIONS = {
   'Inventory Manager': [
     ...PORTAL_BASICS,
     PERMISSIONS.VIEW_INVENTORY,
+    PERMISSIONS.VIEW_INVENTORY_DASHBOARD,
+    PERMISSIONS.VIEW_INVENTORY_HEALTH,
+    PERMISSIONS.VIEW_INVENTORY_IMPORT,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.MANAGE_INVENTORY_MASTER,
     PERMISSIONS.EXPORT_INVENTORY,
@@ -487,6 +499,9 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_O2D,
     PERMISSIONS.WORK_O2D_STAGE,
     PERMISSIONS.VIEW_INVENTORY,
+    PERMISSIONS.VIEW_INVENTORY_DASHBOARD,
+    PERMISSIONS.VIEW_INVENTORY_HEALTH,
+    PERMISSIONS.VIEW_INVENTORY_IMPORT,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.EXPORT_INVENTORY,
     PERMISSIONS.POST_STOCK_IN,
@@ -509,6 +524,9 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.OVERRIDE_O2D,
     PERMISSIONS.EXIT_O2D,
     PERMISSIONS.VIEW_INVENTORY,
+    PERMISSIONS.VIEW_INVENTORY_DASHBOARD,
+    PERMISSIONS.VIEW_INVENTORY_HEALTH,
+    PERMISSIONS.VIEW_INVENTORY_IMPORT,
     PERMISSIONS.VIEW_STOCK_LEDGER,
     PERMISSIONS.EXPORT_INVENTORY,
     PERMISSIONS.APPROVE_ADJUSTMENT,
@@ -555,6 +573,9 @@ export const BASELINE_ROLE_PERMISSIONS = {
     // plan procurement, not so they can move the order along.
     PERMISSIONS.VIEW_O2D,
     PERMISSIONS.VIEW_INVENTORY,
+    PERMISSIONS.VIEW_INVENTORY_DASHBOARD,
+    PERMISSIONS.VIEW_INVENTORY_HEALTH,
+    PERMISSIONS.VIEW_INVENTORY_IMPORT,
     PERMISSIONS.MANAGE_INVENTORY_MASTER,
     PERMISSIONS.EXPORT_INVENTORY,
     PERMISSIONS.VIEW_STOCK_LEDGER,

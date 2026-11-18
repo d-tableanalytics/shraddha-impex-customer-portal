@@ -198,8 +198,12 @@ for (const [role, before] of Object.entries(BEFORE)) {
   if (before.includes('*')) continue;
   const now = resolveRolePermissions(role);
   const allowed = DELIBERATE_ADDITIONS[role] || new Set();
+  // The per-screen Inventory view keys split view_inventory; a role that held
+  // view_inventory holding them too is the same access, not a gain.
+  const splitFromViewInventory = (p) => before.includes(PERMISSIONS.VIEW_INVENTORY)
+    && [PERMISSIONS.VIEW_INVENTORY_DASHBOARD, PERMISSIONS.VIEW_INVENTORY_HEALTH, PERMISSIONS.VIEW_INVENTORY_IMPORT].includes(p);
   const gained = now.filter((p) =>
-    !before.includes(p) && !PORTAL_ADDITIONS.has(p) && !allowed.has(p));
+    !before.includes(p) && !PORTAL_ADDITIONS.has(p) && !allowed.has(p) && !splitFromViewInventory(p));
   check(
     `${role} gained nothing unexpected`,
     gained.length === 0,
