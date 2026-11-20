@@ -12,14 +12,12 @@ import customerPortal from "./customerPortal";
 import salesReports from "./salesReports";
 import inventory from "./inventory";
 import administration from "./administration";
-import fmsO2d from "./fmsO2d";
 
 export const MODULE_INFO = Object.freeze([
   ...customerPortal,
   ...salesReports,
   ...inventory,
   ...administration,
-  ...fmsO2d,
 ]);
 
 export default MODULE_INFO;

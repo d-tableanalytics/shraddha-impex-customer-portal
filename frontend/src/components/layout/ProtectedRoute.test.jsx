@@ -63,8 +63,9 @@ describe("pageForPath", async () => {
     expect(pageForPath("/admin/users")).toBe("UserManagement");
   });
 
-  test("leaves unknown paths and FMS alone", () => {
+  test("leaves unknown paths alone", () => {
     expect(pageForPath("/nowhere")).toBeNull();
+    // FMS lives in the Employee Portal only; this is not a route here.
     expect(pageForPath("/fms/o2d/tasks")).toBeNull();
     expect(pageForPath("/orders/history/extra")).toBeNull();
   });

@@ -10,7 +10,7 @@
  * Dependency-free (see ../README.md).
  */
 
-import { SCOPE_RANK, SCOPES, isHrmsRoleKey } from './constants.js';
+import { SCOPE_RANK, SCOPES, isHrmsRoleKey, fenceSuperAdminOnly } from './constants.js';
 import { permissionsForHrmsRoles } from './matrix.js';
 
 /**
@@ -20,6 +20,7 @@ import { permissionsForHrmsRoles } from './matrix.js';
  * @property {string|null}  departmentId
  * @property {string[]}     managerChain  Ancestor manager employee ids, nearest first.
  * @property {string[]}     roleKeys      HRMS role keys only (`hrms_*`).
+ * @property {boolean}      portalSuperAdmin  Holds the portal wildcard ('*').
  * @property {Array<{module:string,action:string,scope:string}>} permissions
  */
 
@@ -38,6 +39,7 @@ export const ANONYMOUS_HRMS_ACTOR = Object.freeze({
   departmentId: null,
   managerChain: Object.freeze([]),
   roleKeys: Object.freeze([]),
+  portalSuperAdmin: false,
   permissions: Object.freeze([]),
 });
 
@@ -54,9 +56,22 @@ export const ANONYMOUS_HRMS_ACTOR = Object.freeze({
  * @param {string[]}[input.roles]       Raw `User.roles[]`, portal and HRMS keys mixed.
  * @param {string}  [input.legacyRole]  `User.role`. Never contributes HRMS grants.
  * @param {Object}  [input.employee]    `{ id, departmentId, managerChain }`, if any.
+ * @param {boolean} [input.portalSuperAdmin]  Does the PORTAL side of this
+ *        account resolve the `'*'` wildcard - i.e. is it a 'Super Admin' or
+ *        'Admin' account, or one holding a role flagged `isSuperAdmin`? The
+ *        caller decides, because this module is dependency-free and cannot
+ *        read config/permissions.js. It is used ONLY to take grants away
+ *        (SUPER_ADMIN_ONLY_MODULES), never to add one, so AD-4 is untouched:
+ *        a portal role still cannot yield an HRMS permission.
  * @returns {HrmsActor}
  */
-export function buildHrmsActor({ userId = null, roles = [], legacyRole = null, employee = null } = {}) {
+export function buildHrmsActor({
+  userId = null,
+  roles = [],
+  legacyRole = null,
+  employee = null,
+  portalSuperAdmin = false,
+} = {}) {
   // `legacyRole` is accepted so callers can pass a whole user object without
   // filtering first, and is then deliberately ignored - see AD-4 above.
   void legacyRole;
@@ -69,7 +84,12 @@ export function buildHrmsActor({ userId = null, roles = [], legacyRole = null, e
     departmentId: employee?.departmentId ? String(employee.departmentId) : null,
     managerChain: (employee?.managerChain ?? []).map(String),
     roleKeys,
-    permissions: permissionsForHrmsRoles(roleKeys),
+    portalSuperAdmin: Boolean(portalSuperAdmin),
+    // Salary is Super-Admin-only. See SUPER_ADMIN_ONLY_MODULES in
+    // ./constants.js — and note that this is NOT the only place the fence is
+    // applied, because customRole.middleware.js replaces `permissions`
+    // wholesale from the database after this runs.
+    permissions: fenceSuperAdminOnly(permissionsForHrmsRoles(roleKeys), portalSuperAdmin),
   };
 }
 

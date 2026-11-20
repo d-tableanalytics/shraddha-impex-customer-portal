@@ -40,9 +40,6 @@ export const loaders = {
   Settings: () => import("../pages/Settings/Settings"),
   Help: () => import("../pages/Help/Help"),
   RolesPermissions: () => import("../pages/Admin/Settings/RolesPermissions"),
-  O2dProtectedRoute: () => import("../fms/components/o2d/O2dProtectedRoute"),
-  O2dPage: () => import("../fms/pages/O2d/O2dPage"),
-  O2dNewOrderPage: () => import("../fms/pages/O2d/NewOrderPage"),
 };
 
 /** `lazy()` factory for a named export of one of the loaders above. */
@@ -50,8 +47,7 @@ export const lazyPage = (name, exportName = name) => () =>
   loaders[name]().then((m) => ({ default: m[exportName] }));
 
 // Path → page, for the protected screens worth fetching ahead. Exact paths, in
-// the router's own spelling; FMS is left out on purpose (its guard re-checks
-// against another server, and its chunk is large).
+// the router's own spelling.
 const ROUTE_PAGES = [
   ["/", "Dashboard"],
   ["/orders/new", "CustomerOrders"],

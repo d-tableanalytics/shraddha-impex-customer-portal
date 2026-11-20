@@ -10,6 +10,7 @@ import { listLocations, createLocation, updateLocation, setDefaultLocation } fro
 import { listBrandsHandler, createBrand, updateBrand, deleteBrand } from './brand.controller.js';
 import { getConfig, getConfigHistory, updateConfig } from './config.controller.js';
 import { getQueue, postAuto, postAssign, postReassign, postCancelAllocation } from './indentAssignment.controller.js';
+import { postAssignPo } from './poIndentAssignment.controller.js';
 import {
   getUpcoming, postImportPreview, postImport, patchShipment, postCancelShipment,
   deleteUpcomingShipment, postDeleteSku,
@@ -343,6 +344,10 @@ router.post('/indent-assignment/auto', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK
 router.post('/indent-assignment/assign', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postAssign);
 router.post('/indent-assignment/reassign', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postReassign);
 router.post('/indent-assignment/cancel', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postCancelAllocation);
+// PO-wise: every waiting indent under one PO assigned in a single click. Each
+// one goes through the same assign as the individual screen — see
+// poIndentAssignment.service.js.
+router.post('/indent-assignment/po/assign', authorize(PERMISSIONS.ASSIGN_INDENT_STOCK), postAssignPo);
 
 // ── Upcoming stock ────────────────────────────────────────────────────────
 // Ordered but not yet received, with a FIFO allocation to open indents worked

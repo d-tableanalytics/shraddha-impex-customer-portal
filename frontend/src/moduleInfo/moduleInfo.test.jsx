@@ -21,8 +21,6 @@ const SCREENS = [
   "/inventory/ledger", "/inventory/brands", "/inventory/indent-assignment", "/inventory/import",
   "/admin/product-details",
   "/admin", "/admin/customers", "/admin/users", "/admin/permissions",
-  "/fms/o2d/tasks", "/fms/o2d/orders", "/fms/o2d/orders/new", "/fms/o2d/stages",
-  "/fms/o2d/analytics",
 ];
 
 const KINDS = ["automatic", "manual", "historical", "multi"];

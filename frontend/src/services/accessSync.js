@@ -1,7 +1,6 @@
 import { api } from "./api";
 import { refreshSocketAuth } from "./socketService";
 import { useUserStore } from "../store/userStore";
-import { useUserStore as useFmsUserStore } from "../fms/store/userStore";
 
 /**
  * Keep the screen in step with the user's CURRENT access.
@@ -19,9 +18,6 @@ import { useUserStore as useFmsUserStore } from "../fms/store/userStore";
  *   - every POLL_MS while the tab is visible,
  *   - when the tab becomes visible again,
  *   - shortly after any 403 (the clearest sign the screen is out of date).
- *
- * The Order-to-Dispatch screens keep their own copy of the access, read from
- * the Employee Portal's API; it is reloaded on the same signal.
  */
 
 const POLL_MS = Number(import.meta.env?.VITE_ACCESS_POLL_MS) || 30_000;
@@ -45,10 +41,6 @@ export const checkAccess = async () => {
     await useUserStore.getState().refreshSession();
     // Live-update rooms are decided at connection, by access; reconnect.
     refreshSocketAuth();
-    const fms = useFmsUserStore.getState();
-    const user = useUserStore.getState().user;
-    fms.clear();
-    if (user) fms.load(user);
     return true;
   } catch {
     // A failed check changes nothing; a 401 is handled by the api client.

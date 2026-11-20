@@ -878,6 +878,10 @@ export default [
     },
     "functions": [
       {
+        "title": "Two tabs over one queue",
+        "detail": "Individual (the default) works SKU by SKU and indent by indent, exactly as before. PO-wise groups the very same waiting indents under the PO they go by, for settling a whole PO at once. Both read the same queue, so the figures always agree."
+      },
+      {
         "title": "See the waiting queue",
         "detail": "One card per SKU with free stock and its open indents, oldest first. Columns include Customer Name, Company Name, PO Number (a dash until a PO is raised), requested and pending quantity, and the MSIL supply status."
       },
@@ -890,6 +894,10 @@ export default [
         "detail": "Puts a chosen number of units on a specific indent. Part quantities are allowed, unless the indent's booking was cancelled; then it can only be booked whole as a new booking."
       },
       {
+        "title": "Assign all on a PO (PO-wise tab)",
+        "detail": "Click a PO number to see every waiting indent under it, with what each would get. 'Assign all' assigns them one after another, oldest first — each one exactly as the Individual tab would assign it. The free stock of a SKU is counted down as it goes, so two indents on one PO never get the same units. What could not be assigned is listed with the reason."
+      },
+      {
         "title": "Move to… (reassign)",
         "detail": "Moves stock already allocated to one customer's indent onto another indent of the same SKU. Only while that booking has no PO and the stock is still only reserved."
       },
@@ -899,7 +907,7 @@ export default [
       },
       {
         "title": "Search and filter",
-        "detail": "Search by SKU, customer, indent, reservation, booking or PO number. 'Only SKUs with stock to assign or move' hides cards with nothing to do."
+        "detail": "Search by SKU, customer, indent, reservation, booking or PO number. 'Only SKUs with stock to assign or move' hides cards with nothing to do. The PO-wise tab has the same box over POs, with 'Only POs with stock to assign'."
       },
       {
         "title": "Cancel an inward allocation (from the Sales Desk)",
@@ -1003,8 +1011,14 @@ export default [
         "verified": true
       },
       {
+        "action": "Assign all on a PO",
+        "effect": "The same as assigning each of that PO's indents by hand: stock reserved, booking lines updated, indents reduced, and one email per allocation to the customer and Support. A PO with more owed than is free is served as far as the stock goes and the rest is reported as still waiting.",
+        "kind": "multi",
+        "verified": true
+      },
+      {
         "action": "Any action on this screen",
-        "effect": "Written to the audit log with the user: 'Indent Stock Auto-Assigned', 'Indent Stock Assigned', 'Indent Stock Reassigned', 'Inward Allocation Cancelled'.",
+        "effect": "Written to the audit log with the user: 'Indent Stock Auto-Assigned', 'Indent Stock Assigned', 'Indent Stock Reassigned', 'Inward Allocation Cancelled'. A PO-wise run writes one 'Indent Stock Assigned' per indent plus one 'Indent Stock Assigned (PO-wise)' for the run.",
         "kind": "historical",
         "verified": true
       }
@@ -1026,6 +1040,18 @@ export default [
         "title": "No over-allocation",
         "detail": "You cannot assign more than the indent is waiting for or more than is free. The stock write itself is guarded, so two people clicking at once cannot both take the same units.",
         "kind": "stock",
+        "verified": true
+      },
+      {
+        "title": "PO-wise assigns nothing the Individual tab would not",
+        "detail": "Every indent on a PO is put through the same assign, with the same checks, one after another. An indent that is refused does not stop the others; it is reported with its reason. An indent whose booking was cancelled can only be taken whole, so it is skipped unless all of it is free.",
+        "kind": "stock",
+        "verified": true
+      },
+      {
+        "title": "Only indents that already go by a PO",
+        "detail": "An indent is listed under a PO once its booking has one (or the PO was stamped on the indent itself). Indents with no PO yet appear only on the Individual tab, and the PO-wise tab says how many there are.",
+        "kind": "validation",
         "verified": true
       },
       {
@@ -1059,12 +1085,13 @@ export default [
       "Find the SKU with the search box, or tick 'Only SKUs with stock to assign or move'.",
       "Click 'Auto-assign (FIFO)', or type a quantity on one indent and click Assign.",
       "To move stock already given, use 'Move to…' on the allocation.",
+      "To settle a whole PO instead, open the PO-wise tab, click the PO number to check its indents, then click 'Assign all'.",
       "Confirm. The booking updates on the Sales Desk and the customer is emailed."
     ],
     "warnings": [
       {
         "title": "Assigning sends emails",
-        "detail": "The customer and Support Team are emailed straight away. There is no draft step.",
+        "detail": "The customer and Support Team are emailed straight away. There is no draft step. 'Assign all' on a PO sends one email per indent it assigns, exactly as assigning them one by one would.",
         "severity": "warning"
       },
       {

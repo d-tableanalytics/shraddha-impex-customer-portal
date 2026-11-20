@@ -13,9 +13,6 @@ import { homePathFor } from "../../utils/permissions";
  * explanation. A panel, not a redirect: redirecting "home" can loop for a role
  * whose home is itself refused.
  *
- * The FMS screens (src/fms) use the Employee Portal's verbatim copy at
- * src/fms/components/common/Unauthorized.jsx, which looks the same.
- *
  * Not the enforcement point: the API refuses the same request with a 403.
  */
 export function Unauthorized({ homePath }) {

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { Shuffle, Zap, SearchX, ArrowRightLeft, PackageCheck, RefreshCw } from "lucide-react";
+import { Shuffle, Zap, SearchX, ArrowRightLeft, PackageCheck, RefreshCw, ListChecks, FileText } from "lucide-react";
 import { PageHeader } from "../../components/common/PageHeader";
 import { Card, CardContent } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
@@ -15,6 +15,7 @@ import { useBusyAction } from "../../hooks/useBusyAction";
 import { queryKeys, STALE } from "../../lib/queryKeys";
 import { invalidateBookingData } from "../../store/invalidation";
 import { hasPermission, PERMISSIONS } from "../../utils/permissions";
+import { PoIndentAssignment } from "./PoIndentAssignment";
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 const errorOf = (err, fallback) => err?.response?.data?.message || err?.message || fallback;
@@ -41,6 +42,16 @@ const indentMatches = (indent, term) =>
 const hasStockWork = (sku) => sku.available > 0 || sku.reassignable.length > 0;
 
 /**
+ * The two ways to work the same queue. Individual — the original screen, per
+ * SKU and per indent — is the default and is unchanged. PO-wise groups the
+ * very same indents under the PO they go by, for settling a whole PO at once.
+ */
+const VIEWS = [
+  { key: "individual", label: "Individual", icon: ListChecks },
+  { key: "po", label: "PO-wise", icon: FileText },
+];
+
+/**
  * INDENT STOCK ASSIGNMENT — which customer indent arriving stock goes to.
  *
  * In MANUAL mode (Inventory setting) arriving stock waits here instead of going
@@ -57,6 +68,9 @@ export const IndentAssignment = () => {
   const canConfigure = hasPermission(user, PERMISSIONS.CONFIGURE_INVENTORY);
   const { run, isBusy, anyBusy } = useBusyAction();
 
+  // Which view of the queue is on screen: the original per-indent one, or the
+  // PO-wise one. Each keeps its own search; the queue behind them is one.
+  const [tab, setTab] = useState("individual");
   const [search, setSearch] = useState("");
   const [withStockOnly, setWithStockOnly] = useState(true);
   // SKUs whose card shows every waiting indent despite a search (see `skus`).
@@ -224,6 +238,42 @@ export const IndentAssignment = () => {
         </CardContent>
       </Card>
 
+      {/* Individual or PO-wise, over the one queue read above. */}
+      <div role="tablist" aria-label="Assignment view" className="-mb-2 flex gap-1 border-b border-slate-200">
+        {VIEWS.map(({ key, label, icon: Icon }) => {
+          const active = tab === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(key)}
+              className={`inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-xs font-bold transition-colors ${
+                active ? "border-primary-600 text-primary-700" : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              <Icon size={14} />
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "po" ? (
+        <PoIndentAssignment
+          data={data}
+          loading={loading}
+          loadError={loadError}
+          onReload={load}
+          onChanged={reloadAfterChange}
+          run={run}
+          isBusy={isBusy}
+          anyBusy={anyBusy}
+        />
+      ) : (
+      <>
+      {/* ── The individual view, exactly as it was ──────────────────────── */}
       {/* Search and filter — the same toolbar as the Sales Desk. */}
       <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -507,6 +557,8 @@ export const IndentAssignment = () => {
             </Card>
           );
         })
+      )}
+      </>
       )}
 
       <ConfirmationDialog

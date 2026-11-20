@@ -31,8 +31,6 @@ import {
   Circle,
   X,
   ListChecks,
-  Truck,
-  Ban,
   CalendarClock,
   Shuffle,
 } from "lucide-react";
@@ -42,8 +40,6 @@ import { useCartStore } from "../../store/cartStore";
 import { useUserStore } from "../../store/userStore";
 import { homePathFor } from "../../utils/permissions";
 import { buildNavigation, navPathFor } from "../../utils/navigation";
-import { useUserStore as useFmsUserStore } from "../../fms/store/userStore";
-import { fmsNavGroup, withFmsGroup } from "../../fms/navigation";
 
 /**
  * Icon names travel from the backend registry as strings; this is where they
@@ -61,8 +57,8 @@ const ICONS = {
   GaugeCircle, Upload, Images, Tags, Store, ShieldCheck, LayoutGrid, Key, BarChart3,
   // Indent Stock Assignment.
   Shuffle,
-  // FMS (src/fms/navigation.js).
-  ListChecks, Truck, Ban,
+  // Work Queue.
+  ListChecks,
   // Upcoming Stock (utils/navigation.js).
   CalendarClock,
 };
@@ -130,9 +126,6 @@ export const Sidebar = () => {
   const cartItems = useCartStore((state) => state.items);
 
   const { user, logout } = useUserStore();
-  // The user as the Employee API resolves them — the only answer that can
-  // include FMS. Null until it loads, and for anyone FMS is not offered to.
-  const fmsUser = useFmsUserStore((s) => s.user);
   const location = useLocation();
   const isDesktop = useIsDesktop();
 
@@ -194,7 +187,7 @@ export const Sidebar = () => {
    * into groups. The presentation decisions that genuinely belong to the
    * sidebar - the cart badge, which group is open - stay here.
    */
-  const erpGroups = withFmsGroup(buildNavigation(user), fmsNavGroup(fmsUser));
+  const erpGroups = buildNavigation(user);
 
   /**
    * Administration sits at the BOTTOM of the rail, under everything it

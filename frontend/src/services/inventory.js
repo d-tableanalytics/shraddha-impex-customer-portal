@@ -50,6 +50,12 @@ export const inventoryApi = {
   /** Move (part of) an allocation to another indent. */
   reassignAllocation: async ({ orderId, lineId, seq, toIndentId, quantity }) =>
     (await api.post("/inventory/indent-assignment/reassign", { orderId, lineId, seq, toIndentId, quantity })).data.data,
+  /**
+   * PO-wise: assign every waiting indent listed under one PO in one call. Each
+   * indent is assigned exactly as the individual Assign button assigns it.
+   */
+  assignPoIndents: async (poNumber) =>
+    (await api.post("/inventory/indent-assignment/po/assign", { poNumber })).data.data,
   /** Cancel one inward allocation: its units go back to stock and to their indent. */
   cancelAllocation: async ({ orderId, lineId, seq, reason }) =>
     (await api.post("/inventory/indent-assignment/cancel", { orderId, lineId, seq, reason })).data.data,

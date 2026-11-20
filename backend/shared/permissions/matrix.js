@@ -219,7 +219,12 @@ export const HRMS_PERMISSION_MATRIX = Object.freeze({
 
   [R.PAYROLL_ADMIN]: Object.freeze([
     ...SELF_BASELINE,
-    p(M.EMPLOYEES_COMPENSATION, A.VIEW, S.ORG),
+    // NO `employees:compensation`. A Payroll Admin designs the structures and
+    // runs the month; reading what an individual is paid is Super-Admin-only
+    // (SUPER_ADMIN_ONLY_MODULES in ./constants.js). The run itself does not go
+    // through this actor - run.service.js reads compensation rows directly to
+    // compute - so losing the grant narrows what a person may BROWSE without
+    // taking payroll away from the role that runs it.
     p(M.PAYROLL, A.VIEW, S.ORG),
     p(M.PAYROLL, A.RUN, S.ORG),
     p(M.PAYROLL_STRUCTURE, A.VIEW, S.ORG),

@@ -164,36 +164,5 @@ export default [
     "paths": [
       "/admin/permissions"
     ]
-  },
-  {
-    "key": "o2d.tasks",
-    "title": "My Tasks",
-    "paths": [
-      "/fms/o2d/tasks"
-    ]
-  },
-  {
-    "key": "o2d.orders",
-    "title": "Order Tracker",
-    "paths": [
-      "/fms/o2d/orders",
-      "/fms/o2d/orders/new",
-      "/fms/o2d/history",
-      "/fms/o2d/exits"
-    ]
-  },
-  {
-    "key": "o2d.stages",
-    "title": "Stages",
-    "paths": [
-      "/fms/o2d/stages"
-    ]
-  },
-  {
-    "key": "o2d.analytics",
-    "title": "Analytics",
-    "paths": [
-      "/fms/o2d/analytics"
-    ]
   }
 ];

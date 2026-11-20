@@ -149,6 +149,62 @@ export const HRMS_ROLE_LABELS = Object.freeze({
 });
 
 /**
+ * ---------------------------------------------------------------------------
+ * SALARY IS SUPER-ADMIN ONLY
+ * ---------------------------------------------------------------------------
+ * Modules in this set resolve for a PORTAL Super Admin and for nobody else,
+ * whatever the matrix, a custom role or an explicit `User.roles[]` entry says.
+ *
+ * `employees:compensation` is the one gate every salary figure in the HRMS
+ * already sits behind - a CTC and its revision history, somebody else's
+ * payslip (payroll/payslip.service.js `seesEveryone`), an F&F settlement
+ * amount (exits/exit.service.js) and the plaintext reveal of bank account and
+ * PAN in Employee Master. Narrowing that one key therefore narrows all of
+ * them at once, which is what "across all relevant modules" has to mean if it
+ * is to be true rather than merely repeated in five places.
+ *
+ * WHY A CEILING AND NOT JUST A SMALLER MATRIX. Three routes reach the grant
+ * and only one of them is the matrix:
+ *
+ *   1. `HRMS_PERMISSION_MATRIX` - now grants it to `hrms_super_admin` alone.
+ *   2. `utils/hrmsAccessBridge.js` - maps the portal's `administer_hrms` to
+ *      EVERY hrms role key, so the HR role (which is not a portal Super Admin)
+ *      comes away holding `hrms_super_admin` and, through it, the matrix grant.
+ *   3. `modules/hrms/rbac/customRole.middleware.js` - REPLACES the actor's
+ *      permissions with database rows every request, so an administrator who
+ *      ticks the compensation cell for any role re-grants it.
+ *
+ * A smaller matrix closes the first and neither of the others. The ceiling is
+ * applied at both points where `actor.permissions` is finally set, so all
+ * three routes end at the same answer. It is modelled on PORTAL_ONLY_ROLES in
+ * config/permissions.js, for the same reason: a fence that a database row can
+ * reopen is not a fence.
+ */
+export const SUPER_ADMIN_ONLY_MODULES = Object.freeze([
+  HRMS_MODULES.EMPLOYEES_COMPENSATION,
+]);
+
+export const isSuperAdminOnlyModule = (module) =>
+  SUPER_ADMIN_ONLY_MODULES.includes(module);
+
+/**
+ * Drop the Super-Admin-only grants unless the caller IS a portal Super Admin.
+ *
+ * Takes and returns the `{module, action, scope}` list, so it can sit at the
+ * end of every path that builds one. Returns the array unchanged (same
+ * reference) when nothing is removed, which keeps the common case free.
+ *
+ * @param {Array<{module:string,action:string,scope:string}>} permissions
+ * @param {boolean} portalSuperAdmin
+ */
+export const fenceSuperAdminOnly = (permissions, portalSuperAdmin) => {
+  if (portalSuperAdmin) return permissions;
+  if (!Array.isArray(permissions) || permissions.length === 0) return permissions;
+  const kept = permissions.filter((g) => !isSuperAdminOnlyModule(g?.module));
+  return kept.length === permissions.length ? permissions : kept;
+};
+
+/**
  * Role keys carry an `hrms_` prefix so they can never collide with a portal role
  * inside the single `User.roles[]` array (AD-3). It also makes the invariant in
  * AD-4 trivially checkable: an HRMS role is any key matching this test.

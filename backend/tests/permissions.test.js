@@ -307,16 +307,26 @@ test('matrix: HR admin may view payroll but never run it', () => {
   assert.equal(hasHrmsPermission(payroll, M.PAYROLL, A.RUN, S.ORG), true);
 });
 
-test('matrix: compensation is restricted to payroll admin and super admin', () => {
-  const canSee = [R.PAYROLL_ADMIN, R.SUPER_ADMIN];
+test('matrix: compensation reaches no HRMS role on its own', () => {
+  // Salary is Super-Admin-only (SUPER_ADMIN_ONLY_MODULES in
+  // shared/permissions/constants.js). An HRMS role key is never enough by
+  // itself — not even `hrms_super_admin`, which the Employee portal's bridge
+  // hands to its HR role. The actor must also be a portal Super Admin.
   for (const role of HRMS_ROLE_LIST) {
     const actor = buildHrmsActor({ userId: 'u1', roles: [role] });
     assert.equal(
       hasHrmsPermission(actor, M.EMPLOYEES_COMPENSATION, A.VIEW, S.ORG),
-      canSee.includes(role),
+      false,
       `${role} compensation visibility`,
     );
   }
+
+  const superAdmin = buildHrmsActor({
+    userId: 'u1',
+    roles: [R.SUPER_ADMIN],
+    portalSuperAdmin: true,
+  });
+  assert.equal(hasHrmsPermission(superAdmin, M.EMPLOYEES_COMPENSATION, A.VIEW, S.ORG), true);
 });
 
 test('matrix: helpdesk resolution is category-scoped', () => {

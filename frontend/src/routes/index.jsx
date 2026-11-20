@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter } from "react-router-dom";
 import MainLayout from "../components/layout/MainLayout";
 import { ProtectedRoute } from "../components/layout/ProtectedRoute";
 import { OrderingRoute } from "../components/layout/OrderingRoute";
@@ -6,7 +6,7 @@ import { HomeRoute } from "../components/layout/HomeRoute";
 import { ModuleRoute } from "../components/layout/ModuleRoute";
 import { PredicateRoute } from "../components/layout/PredicateRoute";
 import { NotFound } from "../components/common/NotFound";
-import { canManageRoles, PERMISSIONS } from "../utils/permissions";
+import { canManageRoles } from "../utils/permissions";
 import { lazy } from 'react';
 // One loader per page, shared with route prefetching — see routeChunks.js.
 import { lazyPage } from './routeChunks';
@@ -44,12 +44,6 @@ const Help = lazy(lazyPage("Help"));
 // Roles & Permissions — this portal's modules only. The page re-checks
 // manage_roles itself, and the API behind it is guarded server-side.
 const RolesPermissions = lazy(lazyPage("RolesPermissions"));
-// FMS (O2D). The Employee Portal's screens, verbatim, calling the Employee API
-// — see src/fms/ and scripts/fms-port.mjs. The guard re-checks view_o2d against
-// that server's answer, and every API behind it is guarded there too.
-const O2dProtectedRoute = lazy(lazyPage("O2dProtectedRoute"));
-const O2dPage = lazy(lazyPage("O2dPage"));
-const O2dNewOrderPage = lazy(lazyPage("O2dNewOrderPage", "NewOrderPage"));
 
 export const router = createBrowserRouter([
   {
@@ -205,23 +199,9 @@ export const router = createBrowserRouter([
             path: "help",
             element: <ModuleRoute module="customer_portal" submodule="support"><Help /></ModuleRoute>,
           },
-          {
-            // FMS, at the same paths as the Employee Portal, so a notification's
-            // link (`/fms/o2d/orders?open=<id>`) opens the same screen here.
-            // `orders/new` before `:tab`, or "orders" would be read as a tab.
-            path: "fms/o2d",
-            element: <O2dProtectedRoute />,
-            children: [
-              { index: true, element: <Navigate to="/fms/o2d/tasks" replace /> },
-              {
-                // The intake form needs create_o2d_order, as in the Employee
-                // Portal; view_o2d alone only reaches the lists (audit F10).
-                element: <O2dProtectedRoute permission={PERMISSIONS.CREATE_O2D_ORDER} />,
-                children: [{ path: "orders/new", element: <O2dNewOrderPage /> }],
-              },
-              { path: ":tab", element: <O2dPage /> },
-            ],
-          },
+          // FMS (O2D) is the Employee Portal's module and is served only
+          // there. `/fms/o2d/...` is no longer a route here, so a notification
+          // link to one lands on the "not found" screen below.
           // Any path the router does not know: a "not found" screen inside the
           // layout, instead of React Router's bare default error page.
           { path: "*", element: <NotFound /> },
