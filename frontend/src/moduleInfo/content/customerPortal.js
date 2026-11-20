@@ -135,7 +135,7 @@ export default [
     "functions": [
       {
         "title": "Select Customer (Sales/Admin only)",
-        "detail": "Staff must choose an active customer first. The booking belongs to that customer; staff are recorded as 'SI Team'. '+ Add Customer' opens Customer Management and returns with the new customer selected."
+        "detail": "Optional. Choose an active customer and the booking belongs to them, with staff recorded as 'SI Team'; leave it empty and the booking is created on the staff member's own account. '+ Add Customer' opens Customer Management and returns with the new customer selected."
       },
       {
         "title": "Add to List",
@@ -273,7 +273,7 @@ export default [
     ],
     "steps": [
       "Open Create Booking.",
-      "Sales/Admin: choose the customer in Select Customer.",
+      "Sales/Admin: optionally choose the customer in Select Customer (empty books on your own account).",
       "Search the SKU and enter a quantity in the right Multiple.",
       "Click ADD TO LIST; repeat for each item.",
       "Check the Selection List and add Remarks if needed.",

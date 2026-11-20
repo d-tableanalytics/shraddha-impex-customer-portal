@@ -35,7 +35,8 @@ const RESERVATIONS = [{
 
 const confirmCalls = () => api.post.mock.calls.filter(([url]) => url === "/reservations/confirm");
 
-// The customer a salesperson books FOR — Select Customer is mandatory for them.
+// The customer a salesperson books FOR — Select Customer is optional, but
+// these cases choose one so the popup has a named customer to show.
 const ABC = { _id: "cust-abc", customerName: "Customer ABC", company: "ABC Industries", email: "abc@example.com", moq: "SKIP" };
 
 const renderAs = async (user) => {

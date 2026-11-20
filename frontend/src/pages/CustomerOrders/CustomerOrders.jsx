@@ -65,14 +65,15 @@ export const CustomerOrders = () => {
    * WHO THE BOOKING IS FOR.
    *
    * A customer books for themselves. A Sales Person or Admin (anyone who works
-   * the sales desk) books ON BEHALF OF a customer chosen in the mandatory
-   * Select Customer field, and until one is chosen nothing can be added or
-   * confirmed. `bookingProfile` is the account whose rules apply — MOQ, MSIL,
-   * brand — which is the customer's, never the staff member's.
+   * the sales desk) may book ON BEHALF OF a customer chosen in the OPTIONAL
+   * Select Customer field. Left empty, the desk books on its OWN account —
+   * the same thing the server does when no `customerId` is sent
+   * (backend/utils/bookingActor.js) and what Bulk Upload has always done.
+   * `bookingProfile` is the account whose rules apply — MOQ, MSIL, brand —
+   * which is the chosen customer's, and otherwise the staff member's own.
    */
   const booksForOthers = canUseSalesDesk(user);
-  const needsCustomer = booksForOthers && !actingCustomer;
-  const bookingProfile = booksForOthers ? actingCustomer : user;
+  const bookingProfile = (booksForOthers && actingCustomer) ? actingCustomer : user;
 
   // MOQ is enforced only for non-MSIL customers; MSIL customers are exempt.
   // Both the classification and the rule come from utils/moq.js, which mirrors
@@ -92,10 +93,11 @@ export const CustomerOrders = () => {
 
   const watchQuantity = watch("quantity");
 
-  // Load existing reservations on mount. The desk's list is PER CUSTOMER, so
-  // nothing is read until a customer is chosen (setCustomer reads it then).
+  // Load existing reservations on mount. The desk's list is PER CUSTOMER: this
+  // reads the staff member's own list, and choosing a customer re-reads theirs
+  // (setCustomer).
   useEffect(() => {
-    if (!needsCustomer) fetchReservations();
+    fetchReservations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchReservations]);
 
@@ -141,10 +143,6 @@ export const CustomerOrders = () => {
   };
 
   const handleAddToCart = async (data) => {
-    if (needsCustomer) {
-      toast.error("Select the customer this booking is for first.", { icon: "⚠️" });
-      return;
-    }
     if (!selectedProduct) {
       toast.error("Please Select Product", { icon: "⚠️" });
       return;
@@ -262,10 +260,6 @@ export const CustomerOrders = () => {
   // reservations are re-read first so the popup shows live stock. A customer
   // books straight away — see bookDirectly.
   const handleOrderSubmission = async () => {
-    if (needsCustomer) {
-      toast.error("Select the customer this booking is for first.");
-      return;
-    }
     if (cartItems.length === 0) {
       toast.error("No reserved items to confirm.");
       return;
@@ -304,8 +298,9 @@ export const CustomerOrders = () => {
 
           <form onSubmit={handleSubmit(handleAddToCart)} className="flex flex-col gap-6">
 
-            {/* SELECT CUSTOMER — Sales / Admin only, and mandatory for them:
-                the booking is created on the chosen customer's account. */}
+            {/* SELECT CUSTOMER — Sales / Admin only, and optional: the booking
+                is created on the chosen customer's account, or on the staff
+                member's own when none is chosen. */}
             {booksForOthers && (
               <CustomerSelect
                 value={actingCustomer}
@@ -320,25 +315,11 @@ export const CustomerOrders = () => {
                 Item SKU Code
               </label>
               <div className="rounded-xl shadow-sm transition-colors focus-within:ring-2 focus-within:ring-[#1a5b9e]/20">
-                {needsCustomer ? (
-                  // Not the live picker: a product chosen before the customer
-                  // would be checked against nobody's brand access or MOQ.
-                  <input
-                    type="text"
-                    disabled
-                    value=""
-                    readOnly
-                    placeholder="Select a customer first"
-                    aria-label="Item SKU Code"
-                    className="w-full px-4 py-3 border border-slate-200/80 rounded-xl text-slate-800 font-semibold placeholder-slate-300 bg-slate-50/50 disabled:cursor-not-allowed"
-                  />
-                ) : (
-                  <ProductSearchDropdown
-                    placeholder={showMsilCode ? "Search by MSIL Code or SKU Code..." : "Search by SKU Code..."}
-                    value={productSearchVal}
-                    onChange={handleProductSelect}
-                  />
-                )}
+                <ProductSearchDropdown
+                  placeholder={showMsilCode ? "Search by MSIL Code or SKU Code..." : "Search by SKU Code..."}
+                  value={productSearchVal}
+                  onChange={handleProductSelect}
+                />
               </div>
             </div>
 
@@ -473,7 +454,7 @@ export const CustomerOrders = () => {
               <p className="text-xs font-semibold text-slate-500 mt-1" data-testid="selection-list-for">
                 {actingCustomer
                   ? <>For <span className="text-slate-800">{customerDisplayName(actingCustomer)}</span>{actingCustomer.company ? ` · ${actingCustomer.company}` : ""}</>
-                  : "Select a customer to start their booking."}
+                  : "For your own account — select a customer above to book for them instead."}
               </p>
             )}
           </div>
@@ -481,7 +462,7 @@ export const CustomerOrders = () => {
           <div className="flex flex-col">
             <div className="w-full">
               <OrderTable
-                items={needsCustomer ? [] : cartItems}
+                items={cartItems}
                 onUpdateQty={handleInlineQtyChange}
                 onRemoveItem={handleRemoveCartItem}
                 onBulkRemove={handleBulkRemove}
@@ -532,7 +513,7 @@ export const CustomerOrders = () => {
                 
                 <button
                   onClick={handleOrderSubmission}
-                  disabled={needsCustomer || loading || checkingStock || submitting || cartItems.length === 0}
+                  disabled={loading || checkingStock || submitting || cartItems.length === 0}
                   aria-busy={checkingStock || submitting}
                   className="w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black rounded-xl flex items-center justify-center gap-3 transition-all shadow-[0_4px_14px_0_rgba(16,185,129,0.39)] hover:shadow-[0_6px_20px_rgba(16,185,129,0.23)] active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:hover:shadow-none disabled:cursor-not-allowed mb-4"
                 >

@@ -164,8 +164,15 @@ const WORK_QUEUE_DOER = [
   PERMISSIONS.MANAGE_WORK_QUEUE,
 ];
 
+// Changing the price schedule (Update Stock -> Pricing, SKU Pricing import).
+// Decided 2026-10-21 for Sales, Inventory Manager, Management and Import Team;
+// never Warehouse User. See MANAGE_PRICING in config/permissions.js.
+const PRICING_EDITORS = [PERMISSIONS.MANAGE_PRICING];
+
 const DELIBERATE_ADDITIONS = {
+  'Inventory Manager': new Set([...PRICING_EDITORS]),
   Sales: new Set([
+    ...PRICING_EDITORS,
     PERMISSIONS.VIEW_PRICING,
     // O2D stages 1 and 2 — Sales receives the customer PO and hands it over.
     PERMISSIONS.VIEW_O2D,
@@ -188,10 +195,11 @@ const DELIBERATE_ADDITIONS = {
     PERMISSIONS.OVERRIDE_O2D,
     ...WORK_QUEUE_DOER,
     PERMISSIONS.EXIT_O2D,
+    ...PRICING_EDITORS,
   ]),
   // §20: read-only visibility from stage 6.
   // ...and Indent Stock Assignment: they receive the stock.
-  'Import Team': new Set([PERMISSIONS.VIEW_O2D, PERMISSIONS.ASSIGN_INDENT_STOCK]),
+  'Import Team': new Set([PERMISSIONS.VIEW_O2D, PERMISSIONS.ASSIGN_INDENT_STOCK, ...PRICING_EDITORS]),
 };
 
 for (const [role, before] of Object.entries(BEFORE)) {

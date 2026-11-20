@@ -7,6 +7,11 @@ import { customersApi } from "../../services/users";
  * Select Customer — the first field on Create Booking for a Sales Person or
  * Admin, who book on a customer's behalf.
  *
+ * OPTIONAL. Left empty on Create Booking, the booking is placed on the staff
+ * member's own account (the server's default when no `customerId` is sent —
+ * backend/utils/bookingActor.js), and the staff member's own rules apply. In
+ * Edit Details it has always been optional: empty keeps the current owner.
+ *
  * A searchable dropdown over the accounts Customer Management manages (the
  * server returns live Customer accounts only), matched on the customer's
  * name, contact name, company and email as typed. Picking one hands the whole
@@ -31,7 +36,7 @@ export const CustomerSelect = ({
   // passes a Sales Desk link that reopens the booking and the form.
   returnTo: returnPath = null,
   // The line under an empty field, explaining what selecting does here.
-  hint = "The booking is created on this customer's account and appears in their Booking History.",
+  hint = "Optional — the booking is created on this customer's account and appears in their Booking History. Leave empty to book on your own account.",
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -102,7 +107,7 @@ export const CustomerSelect = ({
     <div ref={containerRef} className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
         <label htmlFor="booking-customer" className="text-[10px] font-bold text-slate-500 tracking-widest uppercase">
-          Select Customer <span className="text-red-500" aria-hidden="true">*</span>
+          Select Customer <span className="text-slate-400 font-semibold normal-case tracking-normal">(optional)</span>
         </label>
         <button
           type="button"

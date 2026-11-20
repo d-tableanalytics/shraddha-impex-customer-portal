@@ -3,8 +3,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 
 /**
- * Create Booking for a Sales Person or Admin: the mandatory Select Customer
- * field, and that everything they then do is done FOR that customer.
+ * Create Booking for a Sales Person or Admin: the OPTIONAL Select Customer
+ * field, and that everything they then do is done FOR that customer. Left
+ * empty, the desk books on its own account and sends no customer id.
  *
  * A customer's own Create Booking has no such field and sends no customer id —
  * their flow is pinned here too, so it cannot quietly pick one up.
@@ -78,15 +79,16 @@ describe("Select Customer (Sales / Admin)", () => {
     expect(getCalls("/reservations")[0][1]).toEqual({ params: {} });
   });
 
-  test("a salesperson must pick a customer before anything can be added or confirmed", async () => {
+  test("a salesperson need not pick a customer: the field is optional and they book on their own account", async () => {
     renderAt(SALES);
     const picker = await screen.findByLabelText(/Select Customer/);
     expect(screen.getByText("+ Add Customer")).toBeTruthy();
-    // No list is read for nobody.
-    expect(getCalls("/reservations")).toHaveLength(0);
-    expect(screen.getByPlaceholderText("Select a customer first").disabled).toBe(true);
-    expect(screen.getByText("CONFIRM BOOKING").closest("button").disabled).toBe(true);
-    expect(screen.getByTestId("selection-list-for").textContent).toMatch(/Select a customer/);
+    // No customer chosen: the staff member's OWN list is read, with no id.
+    await waitFor(() => expect(getCalls("/reservations")).toHaveLength(1));
+    expect(getCalls("/reservations")[0][1]).toEqual({ params: {} });
+    // Nothing is gated on the choice: the product field is live from the start.
+    expect(screen.queryByPlaceholderText("Select a customer first")).toBeNull();
+    expect(screen.getByTestId("selection-list-for").textContent).toMatch(/your own account/i);
 
     // Searching by company name, as typed, reaches the customer lookup.
     fireEvent.change(picker, { target: { value: "xyz pvt" } });
