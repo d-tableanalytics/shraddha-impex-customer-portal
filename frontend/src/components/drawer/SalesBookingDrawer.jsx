@@ -17,7 +17,7 @@ import { PoCountdown } from "../ui/PoCountdown";
 import { ProductSearchDropdown } from "../ui/ProductSearchDropdown";
 import { CodeValue } from "../ui/CodeValue";
 import { BookingDetailsModal } from "../modal/BookingDetailsModal";
-import { canEditBooking, canRaisePo, canViewLineItemBoxNo, canViewPricing, hasPermission, PERMISSIONS } from "../../utils/permissions";
+import { canEditBooking, canAmendBookingItems, canRaisePo, canViewLineItemBoxNo, canViewPricing, hasPermission, PERMISSIONS } from "../../utils/permissions";
 import { PoConfirmModal } from "../modal/PoConfirmModal";
 import { PicklistPreview } from "../pricing/PicklistPreview";
 import { PriceTypeSelector } from "../pricing/PriceTypeSelector";
@@ -29,6 +29,7 @@ import { MsilSupplyDateBar, HeldIndentStatus, isMsilBooking } from "./MsilSupply
 import { stageLabel, normalizeStatus } from "../../constants/bookingLifecycle";
 import { formatRupees, withGstParts, GST_LABEL, MANUAL_PRICE_TYPE, asPrice } from "../../constants/pricing";
 import { formatDisplayDate } from "../../utils/dateValue";
+import { isMultipleOf } from "../../utils/moq";
 
 // Local editable copy of the booking's lines. `id` present = existing row.
 //
@@ -186,7 +187,24 @@ export const SalesBookingDrawer = () => {
   if (!selected) return null;
 
   const locked = selected.locked;
-  const editable = canEditBooking(user, selected);
+  /**
+   * TWO QUESTIONS, NOT ONE.
+   *
+   * `reopenable` is the wide authority — may this person reopen the booking at
+   * all. It governs rearranging the lines, and after the PO only an Admin
+   * holds it.
+   *
+   * `editable` is the narrow one the ITEMS table asks: may a product be added
+   * or a quantity moved. Sales holds it after the PO too
+   * (AMEND_BOOKING_POST_PO), and it is closed for EVERYONE once the booking is
+   * dispatched, delivered or cancelled — `selected.amendable`, which the
+   * server sends with the booking.
+   *
+   * The server enforces both independently; these only decide what the screen
+   * offers.
+   */
+  const reopenable = canEditBooking(user, selected);
+  const editable = canAmendBookingItems(user, selected);
   const showBoxNo = canViewLineItemBoxNo(user);
   const mayRaise = canRaisePo(user, selected);
   const mayPrice = canViewPricing(user);
@@ -239,7 +257,9 @@ export const SalesBookingDrawer = () => {
     setDraft((d) => d.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   const removeLine = (idx) => setDraft((d) => d.filter((_, i) => i !== idx));
   const addLine = () =>
-    setDraft((d) => [...d, { id: null, skuCode: "", msilCode: null, boxNo: null, quantity: 1 }]);
+    // `productMoq` rides along so a line the server has never seen can still be
+    // MOQ-checked before Save — see multipleFor().
+    setDraft((d) => [...d, { id: null, skuCode: "", msilCode: null, boxNo: null, productMoq: null, quantity: 1 }]);
 
   /**
    * Reordering the lines to match the customer's paper PO.
@@ -264,7 +284,7 @@ export const SalesBookingDrawer = () => {
    * the reorder response replaces `selected`, which re-derives the draft and
    * would silently discard them.
    */
-  const reorderable = editable && !dirty && !saving;
+  const reorderable = reopenable && !dirty && !saving;
 
   /** Persist a specific order of the CURRENT lines. */
   const persistOrder = async (lines) => {
@@ -332,7 +352,36 @@ export const SalesBookingDrawer = () => {
   };
 
   // Rearranging is an amendment, so it follows the same lock as one.
-  const mayReorder = editable && draft.length > 1;
+  const mayReorder = reopenable && draft.length > 1;
+
+  /**
+   * ── THE MULTIPLE THIS LINE HAS TO LAND ON ───────────────────────────────
+   *
+   * 0 means "no restriction" — the customer is MSIL, or configured MOQ Not
+   * Applicable, or the Multiple is 1. The rule comes from the server with the
+   * booking (`selected.moq`, see bookingMoq()), because it depends on the
+   * CUSTOMER's configuration and the browser has no way to derive it.
+   *
+   * A saved line is in `bySku`. A line the desk has just added is not — the
+   * server has never seen it — so it falls back to the customer's own
+   * configured Multiple, and failing that to the one carried on the product
+   * the picker returned.
+   */
+  const moqRule = selected.moq || null;
+  const multipleFor = (line) => {
+    if (!moqRule?.applies) return 0;
+    const known = Number(moqRule.bySku?.[line.skuCode] ?? 0) || 0;
+    if (known) return known > 1 ? known : 0;
+    const fallback = Number(moqRule.value ?? line.productMoq ?? 0) || 0;
+    return fallback > 1 ? fallback : 0;
+  };
+
+  /** What this line held when the drawer last read the booking, or null if new. */
+  const originalQty = (line) => {
+    if (!line.id) return null;
+    const was = toDraft(selected).find((l) => String(l.id) === String(line.id));
+    return was ? Number(was.quantity) : null;
+  };
 
   const handleSave = async () => {
     if (draft.length === 0) return toast.error("A booking must keep at least one line.");
@@ -340,6 +389,21 @@ export const SalesBookingDrawer = () => {
       if (!l.skuCode) return toast.error("Every line needs a SKU.");
       if (!Number.isInteger(Number(l.quantity)) || Number(l.quantity) <= 0) {
         return toast.error(`Quantity for ${l.skuCode} must be a whole number above zero.`);
+      }
+      /*
+       * MOQ, checked on the lines this save actually MOVES.
+       *
+       * Exactly the rule the server applies (runUpdateItems): a line left
+       * alone keeps whatever quantity it has, so a booking placed before its
+       * SKU carried a Multiple stays editable. Pre-checking here only saves
+       * the round trip — the server refuses either way.
+       */
+      const multiple = multipleFor(l);
+      if (multiple && Number(l.quantity) !== originalQty(l)
+        && !isMultipleOf(Number(l.quantity), multiple)) {
+        return toast.error(
+          `${l.skuCode} must be a multiple of ${multiple} for this customer (e.g. ${multiple}, ${multiple * 2}, ${multiple * 3}).`,
+        );
       }
     }
     const res = await saveItems(selected.orderId, draft.map((l) => ({
@@ -622,6 +686,36 @@ export const SalesBookingDrawer = () => {
                       You have administrator override — any change here is recorded in the audit trail.
                     </p>
                   )}
+                  {/* Sales after the PO: the items may still be amended, and
+                      nothing else. Saying which half is open is the difference
+                      between a usable screen and one that looks broken. */}
+                  {!isOverride && editable && (
+                    <p className="mt-2 flex items-center gap-1.5 text-amber-700 font-semibold">
+                      <AlertTriangle size={14} />
+                      You can still add products and change quantities. The PO number, the customer
+                      and the submitted details are frozen, and the customer is emailed every change.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/*
+              PAST THE WAREHOUSE DOOR.
+
+              Dispatched, delivered and cancelled bookings are closed to
+              everyone, administrators included — the goods have gone, and
+              moving a quantity here would reserve or release stock against
+              units nobody is going to pick. The server says so with the
+              booking (`amendBlockedReason`), so this never has to guess which
+              statuses are which.
+            */}
+            {selected.amendable === false && selected.amendBlockedReason && (
+              <div className="flex items-start gap-3 p-4 rounded-xl border border-slate-300 bg-slate-100">
+                <Lock size={18} className="text-slate-500 mt-0.5 shrink-0" />
+                <div className="text-sm text-slate-700">
+                  <p className="font-bold">Items can no longer be changed.</p>
+                  <p className="text-slate-600 mt-0.5">{selected.amendBlockedReason}</p>
                 </div>
               </div>
             )}
@@ -1226,6 +1320,9 @@ export const SalesBookingDrawer = () => {
                                   skuCode: p?.code || "",
                                   msilCode: p?.msilCode || null,
                                   boxNo: p?.boxNo || null,
+                                  // The product master's Multiple, for the
+                                  // pre-save MOQ check on a brand new line.
+                                  productMoq: p?.moq ?? null,
                                 })
                               }
                             />
@@ -1257,6 +1354,21 @@ export const SalesBookingDrawer = () => {
                             disabled={!editable}
                             onChange={(e) => setLine(idx, { quantity: e.target.value })}
                           />
+                          {/* The customer's Multiple for this SKU, shown so the
+                              desk types a legal number rather than discovering
+                              it on Save. Absent entirely when MOQ does not
+                              apply to this customer — nothing to mention. */}
+                          {editable && multipleFor(line) > 0 && (
+                            <p
+                              className={`mt-1 text-center text-[10px] font-semibold ${
+                                isMultipleOf(Number(line.quantity), multipleFor(line))
+                                  ? "text-slate-400"
+                                  : "text-rose-600"
+                              }`}
+                            >
+                              Multiple of {multipleFor(line)}
+                            </p>
+                          )}
                         </td>
                         <td className="px-5 py-3 whitespace-nowrap text-sm font-semibold text-slate-700">
                           {line.scheduledDate

@@ -1051,6 +1051,33 @@ const runConfirmBooking = async (req, session, { items = null, customer, onBehal
     }
     products.push(product);
   }
+
+  /**
+   * MOQ, RE-CHECKED AT CONFIRMATION.
+   *
+   * Every line was checked against the customer's MOQ when it went into the
+   * selection list — but a selection list is not a transaction. It can sit for
+   * days, and in between an admin can switch the customer from MOQ Not
+   * Applicable to Applicable, change their configured Multiple, or move them
+   * off MSIL. Confirming is the moment stock is committed and the booking
+   * becomes real, so it is the moment the rule has to be true, not merely to
+   * have been true when the line was added.
+   *
+   * Reported for every offending line at once rather than one at a time: a
+   * fifteen-line list fixed one refusal per attempt is fifteen round trips.
+   *
+   * Refused BEFORE any stock moves, for the reason given above the product
+   * loop — without a replica set there is no transaction to roll back.
+   */
+  const moqFailures = reservations
+    .map((r, i) => moqError(customer, products[i], r.quantity))
+    .filter(Boolean);
+  if (moqFailures.length) {
+    const err = new Error(moqFailures.join(' '));
+    err.statusCode = 400;
+    throw err;
+  }
+
   const creator = creatorStamp(req, onBehalf);
 
   if (reviewed) {

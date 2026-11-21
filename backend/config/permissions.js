@@ -78,6 +78,32 @@ export const PERMISSIONS = {
   RAISE_PO: 'raise_po',                       // generate the PO number (locks the booking)
   OVERRIDE_PO_LOCK: 'override_po_lock',       // edit a booking after the PO exists
   /**
+   * Add a product to a booking, or change a line's quantity, AFTER the PO has
+   * been raised. Held by Sales.
+   *
+   * A NARROWER KEY THAN OVERRIDE_PO_LOCK, ON PURPOSE.
+   *
+   * The separation of duties recorded below — Sales raises the PO and is then
+   * locked out of the booking it committed — exists so that the paperwork
+   * cannot be rewritten by the person who issued it. Handing Sales
+   * OVERRIDE_PO_LOCK to let them add a line would dissolve that rule entirely:
+   * the same key also reopens the PO number, the customer, the GST and the
+   * shipping address on a committed booking, and lets the PO be raised a second
+   * time over the top of the first.
+   *
+   * This key grants exactly one thing: the ITEMS of an already-committed
+   * booking may be amended — a line added, a quantity moved up or down, a line
+   * removed — with every change going through the same stock ledger,
+   * transaction and audit path a pre-PO amendment already uses, and the
+   * customer emailed about it. Everything else the lock protects stays shut.
+   *
+   * It is bounded by the order status as well as by the lock: a dispatched,
+   * delivered or cancelled booking is closed to this key and to the wildcard
+   * alike (see utils/bookingLock.js). Goods that have left the building are not
+   * an amendment, they are a return.
+   */
+  AMEND_BOOKING_POST_PO: 'amend_booking_post_po',
+  /**
    * See the four tier prices, and choose which one a customer is offered.
    *
    * Its own key rather than a corner of RAISE_PO, because "may raise the PO"
@@ -309,6 +335,12 @@ const WORK_QUEUE_DOER = [
  *
  *  - Sales holds RAISE_PO but not OVERRIDE_PO_LOCK - raising the PO locks the
  *    booking against the very role that raised it. Only the wildcard clears it.
+ *    Sales DOES hold AMEND_BOOKING_POST_PO, which reopens the booking's ITEMS
+ *    and nothing else: the PO number, the customer and the submitted details
+ *    stay frozen, and a second PO still cannot be raised over the first. The
+ *    rule being protected is "the paperwork cannot be rewritten by whoever
+ *    issued it", and adding a line the customer has asked for does not rewrite
+ *    it - every change is stock-moved, audited and emailed to the customer.
  *  - Inventory Manager holds ADJUST_STOCK but NOT APPROVE_ADJUSTMENT, and
  *    Management holds the approval without the ability to create. Nobody can
  *    both make and approve their own stock correction.
@@ -443,6 +475,12 @@ export const BASELINE_ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_CUSTOMER_USERS,
     PERMISSIONS.EDIT_BOOKING_PRE_PO,
     PERMISSIONS.RAISE_PO,
+    // Amend the ITEMS of a booking whose PO is already out — add a product,
+    // move a quantity — which the desk needs when a customer revises an order
+    // after committing it. Deliberately NOT OVERRIDE_PO_LOCK: the PO number,
+    // the customer and the booking's details stay frozen against the role that
+    // raised them, and a dispatched or delivered booking is closed to this too.
+    PERMISSIONS.AMEND_BOOKING_POST_PO,
     // Booking status is moved on the Sales Desk (decided 2026-10-19), and with
     // it the delivery schedule and cancelling on a customer's behalf.
     PERMISSIONS.MANAGE_ORDERS,
@@ -550,8 +588,8 @@ export const BASELINE_ROLE_PERMISSIONS = {
    * What it deliberately does NOT have:
    *
    *  - CREATE_ORDER / VIEW_ORDERS / VIEW_ALL_BOOKINGS / EDIT_BOOKING_PRE_PO /
-   *    RAISE_PO - every booking write path is refused, and the sales desk is
-   *    invisible.
+   *    RAISE_PO / AMEND_BOOKING_POST_PO - every booking write path is refused,
+   *    and the sales desk is invisible.
    *  - MANAGE_BOX_NUMBER - Admin-only for everyone (see the note above); a box
    *    number is a physical picking location quoted on every PO, and the import
    *    is not the way around that. An import that CREATES a SKU may still set

@@ -140,7 +140,7 @@ const bookingTotals = (rows, indentBySku) => {
 export const shapeBooking = (
   rows,
   boxNumbers = new Map(),
-  { includePricing = false, indentBySku = null, value = null, indent = null } = {},
+  { includePricing = false, indentBySku = null, value = null, indent = null, moq = null } = {},
 ) => {
   const first = rows[0];
   const bookingDate = first.date || first.orderTimestamp || first.createdAt;
@@ -235,6 +235,18 @@ export const shapeBooking = (
      * commercial figure and follows the same permission.
      */
     value: includePricing ? value : null,
+    /**
+     * The MOQ rule in force for this booking — `{ applies, value, bySku }` — so
+     * the desk's quantity fields can pre-validate against the CUSTOMER's
+     * configuration instead of guessing. Computed by bookingMoq() in
+     * sales.controller.js, which is where the customer and the products both
+     * are.
+     *
+     * Null on any response that did not ask for it (the list does not), and a
+     * client must read null as 'no information' rather than as 'no MOQ' — the
+     * server re-checks every quantity on save either way.
+     */
+    moq,
     lineCount: rows.length,
     lines: rows.map((r) => ({
       id: r._id,

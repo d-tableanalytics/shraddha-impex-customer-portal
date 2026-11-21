@@ -98,6 +98,11 @@ const emptyForm = {
   // the table use: 'Customer' and 'MSIL' are levels here, not a role plus a
   // category. It is turned back into { role, customerCategory } on submit.
   accessLevel: 'Customer', // overridden per audience when the Add modal opens
+  // MOQ configuration. '' is "not chosen", which is NOT sent to the server —
+  // see moqPayload(). An MSIL account ignores both: the server stamps the
+  // exemption itself.
+  moqMode: '',
+  moqValue: '',
   status: 'Active',
   // Every configured brand, ticked, is put here when the Add modal opens.
   brandAccess: {},
@@ -132,6 +137,128 @@ const SALES_LEVEL = 'Sales User';
  */
 const CUSTOMER_LEVELS = ['Customer', 'MSIL'];
 const isCustomerLevel = (level) => CUSTOMER_LEVELS.includes(level);
+
+/**
+ * ── MOQ CONFIGURATION ──────────────────────────────────────────────────────
+ *
+ * Shown for a Customer account and not for an MSIL one, because an MSIL account
+ * has nothing to configure: it is MOQ-exempt by what it is, the server stamps
+ * that on every write, and offering a choice that is then ignored would be a
+ * worse lie than offering none. The MSIL case gets a sentence saying so.
+ *
+ * `moqMode` is an explicit value, never inferred from the presence of
+ * `moqValue`. An account whose mode has never been set reads as "Not yet
+ * configured" rather than being silently shown as one of the two real answers —
+ * see the note on the null default in backend/models/User.js, which is what
+ * keeps existing customers behaving exactly as they did.
+ */
+const MOQ_MODES = { APPLICABLE: 'APPLICABLE', NOT_APPLICABLE: 'NOT_APPLICABLE' };
+
+/** The mode to show in the form for an account, or '' when never configured. */
+const moqModeOfRow = (u) => (
+  u?.moqMode === MOQ_MODES.APPLICABLE || u?.moqMode === MOQ_MODES.NOT_APPLICABLE
+    ? u.moqMode
+    : ''
+);
+
+/**
+ * The MOQ fields to SEND, given a form and the level it is saving at.
+ *
+ * Three rules, each of which exists to avoid writing something nobody chose:
+ *
+ *   - Not a customer account, or MSIL: send nothing. MOQ is a rule about what a
+ *     customer may order; MSIL is exempt by what it is and the server stamps
+ *     that itself, so sending a mode would only be a second opinion.
+ *   - Mode left unchosen: send nothing, so the account keeps the behaviour it
+ *     has (which for an existing account is the one it has always had).
+ *   - Not Applicable: send the mode alone. The server clears the value, rather
+ *     than leaving a dormant number to be re-applied the next time somebody
+ *     switches the mode back without looking at it.
+ */
+const moqPayload = (form, level) => {
+  if (!isCustomerLevel(level) || level === 'MSIL') return {};
+  if (form.moqMode !== MOQ_MODES.APPLICABLE && form.moqMode !== MOQ_MODES.NOT_APPLICABLE) return {};
+  if (form.moqMode === MOQ_MODES.NOT_APPLICABLE) return { moqMode: MOQ_MODES.NOT_APPLICABLE };
+  return {
+    moqMode: MOQ_MODES.APPLICABLE,
+    // '' is deliberate and meaningful: "use each product's own Multiple".
+    moqValue: String(form.moqValue ?? '').trim(),
+  };
+};
+
+const MoqConfiguration = ({ level, mode, value, onChange, inputCls }) => {
+  if (level === 'MSIL') {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+        <p className="text-xs font-bold text-slate-700">MOQ: not applicable</p>
+        <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+          MSIL accounts are exempt from the minimum order quantity. This is set automatically
+          and cannot be turned on for an MSIL account.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3 flex flex-col gap-3">
+      <div>
+        <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide">MOQ configuration</h4>
+        <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+          Whether this customer&apos;s order quantities must be a multiple of the MOQ.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {[
+          [MOQ_MODES.APPLICABLE, 'MOQ Applicable', 'Quantities must be a whole multiple of the MOQ.'],
+          [MOQ_MODES.NOT_APPLICABLE, 'MOQ Not Applicable', 'This customer may order any quantity.'],
+        ].map(([key, label, hint]) => (
+          <label key={key} className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="radio"
+              className="mt-0.5"
+              checked={mode === key}
+              onChange={() => onChange({ moqMode: key })}
+            />
+            <span>
+              <span className="text-xs font-bold text-slate-700">{label}</span>
+              <span className="block text-[11px] text-slate-500 leading-relaxed">{hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+
+      {/* Never configured. Said plainly rather than pre-selecting an answer
+          nobody gave — the account keeps behaving as it always has until one
+          of the two above is chosen. */}
+      {!mode && (
+        <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 leading-relaxed">
+          Not yet configured. This customer currently follows the default rule: quantities must be
+          a multiple of each product&apos;s own Multiple. Choose an option above to set it explicitly.
+        </p>
+      )}
+
+      {mode === MOQ_MODES.APPLICABLE && (
+        <Field label="MOQ value (optional)">
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={value}
+            onChange={(e) => onChange({ moqValue: e.target.value })}
+            className={inputCls}
+            placeholder="Leave blank to use each product's own Multiple"
+          />
+          <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+            A number here applies to every product this customer orders. Left blank, each
+            product&apos;s own Multiple from the inventory master is used — which is how MOQ has
+            always worked.
+          </p>
+        </Field>
+      )}
+    </div>
+  );
+};
 
 /** The level an existing account currently sits at. Never guesses. */
 const accessLevelOf = (u) => {
@@ -375,6 +502,11 @@ export const UserManagement = ({ audience = 'internal' }) => {
       gstNumber: u.gstNumber || '',
       shippingAddress: u.shippingAddress || '',
       billingAddress: u.billingAddress || '',
+      // What is STORED, not what is in force — an account that has never been
+      // configured shows as unconfigured rather than being pre-filled with the
+      // answer the rule happens to be deriving for it today.
+      moqMode: moqModeOfRow(u),
+      moqValue: u.moqValue ?? '',
     });
   };
 
@@ -400,10 +532,14 @@ export const UserManagement = ({ audience = 'internal' }) => {
 
   const saveEdit = async () => {
     setSavingEdit(true);
-    const { accessLevel, ...details } = editForm;
+    const { accessLevel, moqMode: _m, moqValue: _v, ...details } = editForm;
     const res = await updateUser(editUser._id, {
       ...details,
       ...accessLevelToFields(accessLevel),
+      // Switching an account TO MSIL sends no MOQ fields at all; the server
+      // resolves the exemption from the category it is being given, which is
+      // what stops a stale "Applicable" surviving the switch.
+      ...moqPayload(editForm, accessLevel),
     });
     setSavingEdit(false);
     setConfirmSuspend(false);
@@ -482,9 +618,15 @@ export const UserManagement = ({ audience = 'internal' }) => {
     }
 
     setSaving(true);
-    // The server stores a role and a category, not a level.
-    const { accessLevel, ...details } = form;
-    const res = await createUser({ ...details, ...accessLevelToFields(accessLevel) });
+    // The server stores a role and a category, not a level. The MOQ fields are
+    // rebuilt by moqPayload() rather than spread from the form, so an unchosen
+    // mode is absent from the request instead of being sent as ''.
+    const { accessLevel, moqMode: _m, moqValue: _v, ...details } = form;
+    const res = await createUser({
+      ...details,
+      ...accessLevelToFields(accessLevel),
+      ...moqPayload(form, accessLevel),
+    });
     setSaving(false);
     if (res.success) {
       toast.success('User created');
@@ -861,6 +1003,18 @@ export const UserManagement = ({ audience = 'internal' }) => {
               without them — and they are what Booking History shows as the
               customer's name, location and phone. They can be corrected later
               in the edit modal. */}
+          {/* MOQ configuration, directly under the role: choosing MSIL answers
+              it (exempt), choosing Customer asks the question. */}
+          {isCustomerLevel(form.accessLevel) && (
+            <MoqConfiguration
+              level={form.accessLevel}
+              mode={form.moqMode}
+              value={form.moqValue}
+              onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+              inputCls={inputCls}
+            />
+          )}
+
           {isCustomerLevel(form.accessLevel) && (
             <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 flex flex-col gap-3">
               <div>
@@ -1010,6 +1164,18 @@ export const UserManagement = ({ audience = 'internal' }) => {
                   ))}
                 </div>
               </div>
+            )}
+
+            {/* MOQ configuration for an existing customer. The requirement
+                that an admin can change this later is this control. */}
+            {isCustomerLevel(editForm.accessLevel) && (
+              <MoqConfiguration
+                level={editForm.accessLevel}
+                mode={editForm.moqMode}
+                value={editForm.moqValue}
+                onChange={(patch) => setEditForm((f) => ({ ...f, ...patch }))}
+                inputCls={inputCls}
+              />
             )}
 
             {/* What each status actually does, stated where the choice is made. */}

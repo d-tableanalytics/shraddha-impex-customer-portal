@@ -49,19 +49,105 @@ export const canOverrideLock = (user) =>
   hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
 
 /**
+ * Who may amend the ITEMS of a booking whose PO is already out.
+ *
+ * Two keys, two different authorities:
+ *   OVERRIDE_PO_LOCK       Admin. Reopens the whole booking — details, PO
+ *                          number, customer, and the items with them.
+ *   AMEND_BOOKING_POST_PO  Sales. Reopens the ITEMS only. Raising a second PO,
+ *                          rewriting the submitted details and rearranging the
+ *                          lines all keep asking canOverrideLock() and so stay
+ *                          shut to it.
+ *
+ * Deliberately NOT folded into canOverrideLock(): every existing caller of that
+ * function means the wider thing, and widening it in place is exactly how the
+ * separation of duties recorded in config/permissions.js would be lost by
+ * accident rather than by decision.
+ */
+export const canAmendLockedItems = (user) =>
+  canOverrideLock(user) || hasPermission(user, PERMISSIONS.AMEND_BOOKING_POST_PO);
+
+/**
+ * ── WHICH STATUSES PERMIT AN AMENDMENT ──────────────────────────────────────
+ *
+ * The PO lock answers "has this booking been committed". It does not answer
+ * "have the goods gone", and until now nothing did: a booking that had been
+ * dispatched, delivered or cancelled was as editable as one raised an hour ago,
+ * for anyone holding the override. Adding a line to a delivered booking would
+ * have taken stock out of inventory for goods that are never going to be picked.
+ *
+ * So amendment stops at the warehouse door. A booking may be amended while it
+ * is still being prepared — the lifecycle's first two stages — and not after:
+ *
+ *   PO Received / Booked   yes, being prepared ('Booked' is the legacy spelling)
+ *   Ready for Dispatch     yes, picked but still here
+ *   Dispatched             no, the goods have left
+ *   Delivered              no, the order is complete
+ *   Cancelled              no, the stock has already gone back
+ *
+ * This bound applies to EVERY caller including the wildcard. It is not a
+ * permission that someone senior can be given more of; it is a statement about
+ * where the goods are. A delivered order that genuinely needs changing is a
+ * return or a credit note, which is a workflow of its own and not this one.
+ */
+export const AMENDABLE_STATUSES = ['PO Received', 'Booked', 'Ready for Dispatch'];
+
+/** 'Cancelled' lines have already had their stock settled back. */
+const isCancelled = (order) => order?.status === 'Cancelled';
+
+/**
+ * Why this booking may not be amended, or null when it may be.
+ *
+ * Read from the LIVE lines — a booking with one cancelled line and three open
+ * ones is still an open booking. Every line cancelled means the booking is.
+ */
+export const amendmentBlockedBecause = (orders = []) => {
+  const live = orders.filter((o) => !isCancelled(o));
+  if (live.length === 0) {
+    return 'This booking has been cancelled, so its items can no longer be changed.';
+  }
+  const stopped = live.find((o) => !AMENDABLE_STATUSES.includes(o.status));
+  if (stopped) {
+    return `This booking is ${String(stopped.status).toLowerCase()}, so its items can no longer be changed. `
+      + 'Amendments are only possible while the booking is still being prepared.';
+  }
+  return null;
+};
+
+/**
  * Throws when the booking may not be modified by this user.
  * The thrown error carries `status` so the route can map it to 423 Locked.
+ *
+ * @param {object}  [opts]
+ * @param {boolean} [opts.itemsOnly]  The caller is amending the booking's ITEMS
+ *        (quantities, lines), which AMEND_BOOKING_POST_PO also unlocks. Left
+ *        false — the default, and what every pre-existing caller gets — only
+ *        OVERRIDE_PO_LOCK clears the lock, exactly as before.
+ * @param {boolean} [opts.checkStatus]  Also apply the status bound above.
+ *        Default false so that no existing caller changes behaviour; the item
+ *        amendment path passes true.
  */
-export const assertBookingEditable = (orders, user) => {
+export const assertBookingEditable = (orders, user, { itemsOnly = false, checkStatus = false } = {}) => {
   if (!orders || orders.length === 0) {
     const err = new Error('Booking not found.');
     err.status = 404;
     throw err;
   }
-  if (isBookingLocked(orders) && !canOverrideLock(user)) {
+  const mayUnlock = itemsOnly ? canAmendLockedItems(user) : canOverrideLock(user);
+  if (isBookingLocked(orders) && !mayUnlock) {
     const err = new Error('Booking is locked because the PO has already been generated.');
     err.status = 423; // 423 Locked — distinguishable from a plain 403
     throw err;
+  }
+  if (checkStatus) {
+    const blocked = amendmentBlockedBecause(orders);
+    if (blocked) {
+      // 409, not 423: the booking is not locked against this person, it has
+      // moved past the point where the change makes sense for anybody.
+      const err = new Error(blocked);
+      err.status = 409;
+      throw err;
+    }
   }
 };
 
@@ -69,12 +155,21 @@ export const assertBookingEditable = (orders, user) => {
 export const lockState = (orders = []) => {
   const locked = isBookingLocked(orders);
   const withPo = orders.find(isPoGenerated);
+  /**
+   * Whether the booking has moved past the point where its items may change,
+   * and why. Sent to the client so the drawer can explain a disabled Add
+   * Product button instead of just greying it out — the server still decides,
+   * on every request (see assertBookingEditable).
+   */
+  const blocked = amendmentBlockedBecause(orders);
   return {
     locked,
     status: locked ? 'PO Generated' : 'PO Pending',
     poNumber: locked ? (withPo?.poNumber ?? null) : null,
     poGeneratedAt: withPo?.poGeneratedAt ?? null,
     poGeneratedBy: withPo?.poGeneratedBy ?? null,
+    amendable: blocked === null,
+    amendBlockedReason: blocked,
   };
 };
 
@@ -85,6 +180,9 @@ export default {
   isPoGenerated,
   isBookingLocked,
   canOverrideLock,
+  canAmendLockedItems,
+  AMENDABLE_STATUSES,
+  amendmentBlockedBecause,
   assertBookingEditable,
   lockState,
 };
