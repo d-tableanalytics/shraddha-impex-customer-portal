@@ -18,6 +18,7 @@ import {
 import { validateGrants, compileGrants } from '../../config/moduleRegistry.js';
 import { mergeServedGrants, normaliseExtraGrants } from '../../utils/portalGrants.js';
 import { containsMatch } from '../../utils/searchQuery.js';
+import { MOQ_MODES, normaliseMoqMode, moqConfigFor, isMsilCustomer } from '../../utils/moq.js';
 
 /**
  * Roles an admin may assign.
@@ -68,6 +69,74 @@ export const CUSTOMER_MASTER_FIELDS = [
  * in. That is why they are absent from the required-fields loop below.
  */
 export const CUSTOMER_ADDRESS_FIELDS = ['shippingAddress', 'billingAddress'];
+
+/**
+ * ── THE MOQ CONFIGURATION A WRITE SHOULD STORE ──────────────────────────────
+ *
+ * Takes what the admin submitted plus the account type the write is landing on,
+ * and answers with the fields to persist — or a refusal.
+ *
+ * THREE RULES, AND ONE OF THEM IS STRUCTURAL.
+ *
+ * 1. MSIL IS EXEMPT BY WHAT IT IS. An MSIL account is always stored as
+ *    NOT_APPLICABLE with no value, whatever the form sent. The requirement says
+ *    an MSIL account is configured as MOQ-exempt automatically, and this is
+ *    where "automatically" happens — including when an existing Customer is
+ *    switched TO MSIL, which is the case a form-only implementation misses and
+ *    which would otherwise leave an APPLICABLE mode sitting on an exempt
+ *    account. (utils/moq.js refuses to honour such a row anyway; this keeps the
+ *    stored record honest as well as the behaviour.)
+ *
+ * 2. A VALUE IS MEANINGLESS WITHOUT APPLICABILITY. Moving a customer to MOQ Not
+ *    Applicable clears the number rather than keeping it dormant, so coming
+ *    back later cannot silently re-apply a figure nobody has looked at since.
+ *
+ * 3. AN UNRECOGNISED MODE IS A REFUSAL, NOT A DEFAULT. Falling back to
+ *    "applicable" on a typo would quietly impose a minimum nobody chose, and
+ *    falling back to "not applicable" would quietly remove one.
+ *
+ * @returns {{ fields: object } | { error: string }}
+ */
+export const resolveMoqConfig = ({ body, isMsil, existing = null }) => {
+  if (isMsil) {
+    // Already stamped exempt: write nothing, so an unrelated edit to an MSIL
+    // account (a phone number, a status) is not also a MOQ write.
+    const settled = existing
+      && normaliseMoqMode(existing.moqMode) === MOQ_MODES.NOT_APPLICABLE
+      && (existing.moqValue ?? null) === null;
+    return { fields: settled ? {} : { moqMode: MOQ_MODES.NOT_APPLICABLE, moqValue: null } };
+  }
+
+  const sentMode = 'moqMode' in body;
+  const sentValue = 'moqValue' in body;
+  if (!sentMode && !sentValue) return { fields: {} };
+
+  // An update that sends only a value keeps the mode the account already has,
+  // so "correct the number" does not have to re-state the mode to be safe.
+  const mode = sentMode
+    ? normaliseMoqMode(body.moqMode)
+    : (normaliseMoqMode(existing?.moqMode) ?? MOQ_MODES.APPLICABLE);
+
+  if (!mode) {
+    return { error: 'Invalid MOQ configuration. Use "APPLICABLE" or "NOT_APPLICABLE".' };
+  }
+  if (mode === MOQ_MODES.NOT_APPLICABLE) {
+    return { fields: { moqMode: MOQ_MODES.NOT_APPLICABLE, moqValue: null } };
+  }
+
+  // Applicable. The value is OPTIONAL: blank means "use the Multiple on each
+  // product", which is how MOQ worked before a customer could carry one of
+  // their own and remains the ordinary case.
+  const raw = sentValue ? body.moqValue : existing?.moqValue;
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return { fields: { moqMode: MOQ_MODES.APPLICABLE, moqValue: null } };
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    return { error: 'The MOQ value must be a whole number of 1 or more, or left blank to use each product\'s own Multiple.' };
+  }
+  return { fields: { moqMode: MOQ_MODES.APPLICABLE, moqValue: value } };
+};
 
 /**
  * Who this actor is allowed to act on.
@@ -181,6 +250,9 @@ export const searchCustomers = async (req, res, next) => {
 
     const customers = await User.find(query)
       .select('user customerName company email customerCategory location phone brandAccess moq showMsilCode '
+        // The MOQ configuration, so Create Booking validates a desk booking
+        // against the CUSTOMER's rule and not the salesperson's.
+        + 'moqMode moqValue '
         // The details a booking carries, so Edit Details can fill them in on selection.
         + 'shopNumber gstNumber shippingAddress billingAddress')
       .sort({ customerName: 1, user: 1, company: 1 })
@@ -269,6 +341,22 @@ export const createUser = async (req, res, next) => {
       }
     }
 
+    /**
+     * The MOQ configuration, decided at creation.
+     *
+     * Only for a Customer account: MOQ is a rule about what a customer may
+     * order, and a staff account carries no configuration for it at all (one
+     * would be read by nothing — utils/moq.js exempts company email addresses
+     * outright). Choosing MSIL stores the exemption without the admin having to
+     * ask for it, which is rule 1 in resolveMoqConfig.
+     */
+    const moqConfig = requestedRole === 'Customer'
+      ? resolveMoqConfig({ body: req.body, isMsil: customerCategory === 'MSIL' })
+      : { fields: {} };
+    if (moqConfig.error) {
+      return res.status(400).json({ success: false, message: moqConfig.error });
+    }
+
     const normalisedEmail = email.toLowerCase();
 
     const exists = await User.findOne({ email: normalisedEmail });
@@ -297,6 +385,10 @@ export const createUser = async (req, res, next) => {
       status: status || 'Active',
       // Keyed by configured brands only — see mergeBrandAccess().
       ...(brandAccess ? { brandAccess: mergeBrandAccess(null, brandAccess) } : {}),
+      // MSIL → exempt automatically; Customer → whatever the admin chose. An
+      // empty object means "leave the schema default", which is the unset state
+      // every pre-existing account is in. See models/User.js.
+      ...moqConfig.fields,
       // Written once, here. updateUser() refuses them from now on.
       ...master,
     });
@@ -365,6 +457,34 @@ export const updateUser = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid customer category. Use "MSIL" or "Customer".' });
     }
 
+    /**
+     * ── THE MOQ CONFIGURATION, ON AN EXISTING ACCOUNT ─────────────────────
+     *
+     * Resolved against the category the account will have AFTER this save, not
+     * the one it has now. That is what makes "switch this customer to MSIL"
+     * also mean "stop applying MOQ to them" in one request rather than leaving
+     * a stale APPLICABLE behind for the next edit to notice.
+     *
+     * Runs even when the body mentions neither MOQ field, because the category
+     * alone can change the answer. `resolveMoqConfig` returns an empty patch
+     * when nothing needs to move, so an unrelated edit — a phone number, a
+     * status — writes nothing here and the account keeps the configuration it
+     * had, including the unset state.
+     */
+    const nextCategory = updates.customerCategory ?? target.customerCategory;
+    const targetIsCustomer = (updates.role ?? target.role ?? 'Customer') === 'Customer';
+    if (targetIsCustomer) {
+      const moqConfig = resolveMoqConfig({
+        body: req.body,
+        isMsil: isMsilCustomer({ customerCategory: nextCategory }),
+        existing: target,
+      });
+      if (moqConfig.error) {
+        return res.status(400).json({ success: false, message: moqConfig.error });
+      }
+      Object.assign(updates, moqConfig.fields);
+    }
+
     // If email is being changed, ensure it is not taken by another user.
     if (updates.email) {
       updates.email = updates.email.toLowerCase();
@@ -391,6 +511,29 @@ export const updateUser = async (req, res, next) => {
       }
 
       const updated = await User.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
+
+      /**
+       * A MOQ change is audited on its own.
+       *
+       * It decides what a customer is allowed to order, so "who turned this
+       * off, and when" has to be answerable later. Recorded as the RESOLVED
+       * configuration on each side (utils/moq.js), not the raw columns: an
+       * account moving from unset to NOT_APPLICABLE has not changed behaviour
+       * at all, and an audit row saying it did would be noise in the one log
+       * somebody reads when a customer says their minimum changed without
+       * warning.
+       */
+      if (updated) {
+        const before = moqConfigFor(target);
+        const after = moqConfigFor(updated);
+        if (before.mode !== after.mode || before.value !== after.value) {
+          await recordAudit(req.user, 'Customer MOQ Changed',
+            `${target.email}: MOQ ${before.mode === MOQ_MODES.APPLICABLE ? `applicable (${before.value ?? 'product Multiple'})` : 'not applicable'}`
+            + ` → ${after.mode === MOQ_MODES.APPLICABLE ? `applicable (${after.value ?? 'product Multiple'})` : 'not applicable'}`,
+            req, { meta: { userId: String(target._id), before, after } });
+        }
+      }
+
       if (updated && (('role' in updates && updates.role !== target.role) || ('status' in updates && updates.status !== target.status))) {
         await recordAudit(req.user, 'User Access Changed',
           `${target.email}: ` + [

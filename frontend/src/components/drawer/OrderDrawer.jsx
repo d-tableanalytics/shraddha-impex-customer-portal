@@ -38,7 +38,7 @@ import toast from "react-hot-toast";
 import { PicklistPreview } from "../pricing/PicklistPreview";
 import { picklistFromCustomerOrder, allocationPicklistFromCustomerOrder } from "../../utils/picklistDocument";
 import { AllocationsSection } from "./AllocationsSection";
-import { stageLabel } from "../../constants/bookingLifecycle";
+import { stageLabel, AMENDABLE_STATUSES } from "../../constants/bookingLifecycle";
 import { formatDisplayDate } from "../../utils/dateValue";
 
 export const OrderDrawer = () => {
@@ -162,7 +162,15 @@ export const OrderDrawer = () => {
   // the customer may revise their own booking until the PO is raised. The
   // server re-checks both on every write, answering 423 once the booking is
   // locked and 404 for a booking that is not the caller's.
-  const canEditQty = canEditBookingQuantity(user, { locked: poRaised });
+  //
+  // `amendable` is derived from the booking's STATUS rather than read off the
+  // payload, because this screen's adapter predates the field. Once the goods
+  // have gone the quantities are closed to everyone — the server answers 409
+  // regardless, and offering the control would only produce one.
+  const canEditQty = canEditBookingQuantity(user, {
+    locked: poRaised,
+    amendable: AMENDABLE_STATUSES.includes(selectedOrder?.status),
+  });
   const isStaff = hasPermission(user, PERMISSIONS.VIEW_ALL_BOOKINGS);
 
   // Only this booking's history — the store holds one booking's at a time and

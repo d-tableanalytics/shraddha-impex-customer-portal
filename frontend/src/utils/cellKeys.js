@@ -22,6 +22,7 @@ export const CELL_KEYS = {
   "customer_portal.profile": { view: ["view_profile"], edit: ["edit_profile"] },
   "customer_portal.support": { view: ["view_help"] },
   "sales.bookings": { view: ["view_all_bookings"], create: ["create_order"], edit: ["edit_booking_pre_po"], delete: ["override_po_lock"], approve: ["raise_po"] },
+  "sales.post_po_amendment": { edit: ["amend_booking_post_po"] },
   "sales.pricing": { view: ["view_pricing"], edit: ["manage_pricing"] },
   "inventory.dashboard": { view: ["view_inventory_dashboard"] },
   "inventory.master": { view: ["view_inventory"], create: ["manage_inventory_master"], edit: ["manage_inventory_master"], delete: ["delete_sku"] },

@@ -18,6 +18,9 @@ import { hasPermission, PERMISSIONS } from '../middlewares/rbac.js';
 /** The fields the booking paths read off the customer. Never the password. */
 const CUSTOMER_FIELDS = 'email user company customerName role status customerCategory phone location '
   + 'shopNumber vendorNumber gstNumber shippingAddress billingAddress brandAccess moq showMsilCode '
+  // The per-customer MOQ configuration (utils/moq.js). Without it every rule
+  // read off this object would fall back to the legacy derivation.
+  + 'moqMode moqValue '
   + 'bookingCcEmails preferences';
 
 const refuse = (status, message, code) => {

@@ -182,6 +182,19 @@ const DELIBERATE_ADDITIONS = {
     PERMISSIONS.ASSIGN_INDENT_STOCK,
     // Booking status on the Sales Desk (Customer Portal).
     PERMISSIONS.MANAGE_ORDERS,
+    /**
+     * Add a product or move a quantity on a booking whose PO is already out.
+     *
+     * DELIBERATE, AND DELIBERATELY NARROW. Sales still does NOT hold
+     * OVERRIDE_PO_LOCK — the check below this one asserts that — so raising a
+     * second PO, rewriting the submitted details and rearranging the lines
+     * remain shut to the role that raised the PO. What this opens is the
+     * booking's items, through the same stock ledger, transaction and audit
+     * path a pre-PO amendment already uses, and the customer is emailed every
+     * change. A dispatched, delivered or cancelled booking is closed to it and
+     * to the wildcard alike (utils/bookingLock.js).
+     */
+    PERMISSIONS.AMEND_BOOKING_POST_PO,
     ...WORK_QUEUE_DOER,
   ]),
   // O2D stage 7's acknowledgement and stage 9's dispatch.

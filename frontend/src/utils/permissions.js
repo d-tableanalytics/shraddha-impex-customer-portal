@@ -34,6 +34,10 @@ export const PERMISSIONS = {
   EDIT_BOOKING_PRE_PO: "edit_booking_pre_po",
   RAISE_PO: "raise_po",
   OVERRIDE_PO_LOCK: "override_po_lock",
+  // Add a product or move a quantity on a booking whose PO is already out.
+  // Narrower than OVERRIDE_PO_LOCK and held by Sales — see the note in
+  // backend/config/permissions.js, which this mirrors.
+  AMEND_BOOKING_POST_PO: "amend_booking_post_po",
   // See the four tier prices and choose which one a customer is offered.
   // MIRRORS backend/config/permissions.js — the server refuses the pricing
   // routes without it, so this only decides what the screen offers.
@@ -184,6 +188,7 @@ export const FALLBACK_ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_CUSTOMER_USERS,
     PERMISSIONS.EDIT_BOOKING_PRE_PO,
     PERMISSIONS.RAISE_PO,
+    PERMISSIONS.AMEND_BOOKING_POST_PO,
     PERMISSIONS.MANAGE_ORDERS,
     PERMISSIONS.VIEW_PRICING,
     PERMISSIONS.VIEW_REPORTS,
@@ -407,7 +412,15 @@ export const homePathFor = (user) => {
 
 /**
  * Whether THIS booking may be edited by THIS user right now.
- * Mirrors assertBookingEditable() on the server.
+ * Mirrors assertBookingEditable() on the server, with no options.
+ *
+ * This is the WIDE question — "may this person reopen the booking", the one
+ * that governs rearranging the lines and correcting the submitted details.
+ * Once the PO is raised only OVERRIDE_PO_LOCK clears it, which is the
+ * separation of duties Sales is deliberately held to.
+ *
+ * For adding a product or moving a quantity, ask canAmendBookingItems() below:
+ * that is a narrower authority and Sales holds it.
  */
 export const canEditBooking = (user, booking) => {
   if (!booking) return false;
@@ -416,21 +429,41 @@ export const canEditBooking = (user, booking) => {
 };
 
 /**
+ * Whether the ITEMS of this booking may be changed right now — a product
+ * added, a quantity moved, a line removed.
+ *
+ * Mirrors assertBookingEditable(rows, user, { itemsOnly: true, checkStatus: true }).
+ * Three conditions, and the screen is the authority for none of them:
+ *
+ *   1. ADMIN AND SALES ONLY. A customer cannot revise a booking once it is
+ *      placed — they ask the desk, and the desk is emailed-of-record for the
+ *      adjustment.
+ *   2. AFTER THE PO, the narrow key. Sales holds AMEND_BOOKING_POST_PO, which
+ *      reopens the items and nothing else; Admin holds OVERRIDE_PO_LOCK, which
+ *      reopens everything.
+ *   3. BEFORE THE WAREHOUSE DOOR. A dispatched, delivered or cancelled booking
+ *      is closed to everyone. `amendable` comes from the server with the
+ *      booking (utils/bookingLock.js). A payload from before that field
+ *      existed has it undefined, which reads as "no objection" and leaves such
+ *      a client exactly as permissive as it was — the server still refuses.
+ */
+export const canAmendBookingItems = (user, booking) => {
+  if (!booking) return false;
+  if (booking.amendable === false) return false;
+  if (booking.locked) {
+    return hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK)
+      || hasPermission(user, PERMISSIONS.AMEND_BOOKING_POST_PO);
+  }
+  return hasPermission(user, PERMISSIONS.EDIT_BOOKING_PRE_PO);
+};
+
+/**
  * Who may amend the QUANTITIES on this booking right now.
  *
- * ADMIN AND SALES ONLY. Once a booking has been placed the customer cannot
- * change its quantities - they ask the desk, and the desk is emailed-of-record
- * for the adjustment. This briefly allowed the customer to revise their own
- * booking; that is no longer the rule.
- *
- * Identical to canEditBooking, and kept as its own name because the screens
- * that gate a quantity field read better asking that question, and because the
- * server enforces the quantity rule on a route of its own.
- *
- * Once the PO is raised the quantities are committed and only an Admin may
- * move them, which is what canEditBooking already encodes.
+ * The same question as canAmendBookingItems, kept as its own name because the
+ * screens that gate a quantity field read better asking it.
  */
-export const canEditBookingQuantity = (user, booking) => canEditBooking(user, booking);
+export const canEditBookingQuantity = (user, booking) => canAmendBookingItems(user, booking);
 
 export const canRaisePo = (user, booking) =>
   Boolean(booking) && !booking.locked && hasPermission(user, PERMISSIONS.RAISE_PO);

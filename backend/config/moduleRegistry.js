@@ -260,6 +260,27 @@ export const MODULES = [
       },
       {
         /**
+         * Amending a COMMITTED booking's items — its own sub-module with one
+         * cell, because what is being granted is an authority rather than a
+         * screen. The controls it unlocks live in the booking drawer above.
+         *
+         * `edit`, not `delete`: the Booking Desk row already spends `delete` on
+         * OVERRIDE_PO_LOCK, which is the wider "reopen everything about this
+         * booking" grant. Keeping them in separate rows is what lets a reviewer
+         * SEE that a role may add a line to a committed booking without also
+         * being able to rewrite its PO number, its customer or its addresses.
+         *
+         * Bounded by the order status as well as the permission: dispatched,
+         * delivered and cancelled bookings are closed to every role, this one
+         * and the wildcard alike (utils/bookingLock.js).
+         */
+        key: 'post_po_amendment',
+        label: 'Post-PO Amendment',
+        path: null,
+        actions: { edit: ['amend_booking_post_po'] },
+      },
+      {
+        /**
          * Its own sub-module, with ONE cell, because the thing being granted is
          * "may see what we charge" - a commercial fact, not a screen. It has no
          * path: the price selector lives inside the PO dialog on the booking

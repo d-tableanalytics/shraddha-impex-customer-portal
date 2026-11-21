@@ -170,6 +170,43 @@ const userSchema = new mongoose.Schema({
     default: () => ({ koken: false, bix: false, imada: false }),
   },
   moq: { type: String, default: null }, // String type to support 'SKIP'
+
+  /**
+   * ── MOQ CONFIGURATION, PER ACCOUNT ──────────────────────────────────────
+   *
+   * Whether the Minimum Order Quantity rule applies to this account, and the
+   * Multiple it applies with. Both are decided in utils/moq.js — never read
+   * directly by a booking path, so that one module stays the only place the
+   * rule exists.
+   *
+   * WHY `null` IS THE DEFAULT AND NOT A MODE.
+   *
+   * Every account that exists today predates these fields. Defaulting to
+   * APPLICABLE would start enforcing MOQ against accounts that were exempt by
+   * the old rule (a 'SKIP' override, a company email address); defaulting to
+   * NOT_APPLICABLE would silently drop the minimum for every ordinary customer.
+   * Both are data changes dressed up as a default. `null` means "never
+   * configured", and moqModeOf() reads such an account through the rule it was
+   * actually living under — so behaviour is identical before and after the
+   * deploy, with or without the backfill script having run.
+   *
+   * MSIL IS NOT STORED HERE. An MSIL account is exempt because of what it is,
+   * and utils/moq.js answers that from `customerCategory` before it ever looks
+   * at this field. The write paths still stamp NOT_APPLICABLE on an MSIL
+   * account so the record reads honestly, but nothing depends on their having
+   * done so.
+   *
+   * `moqValue` is this customer's own Multiple. Null means "use the product's
+   * `moq`", which is how the rule worked before customers could carry one, and
+   * is the ordinary case: a value here is for the customer who has negotiated a
+   * pack size of their own.
+   */
+  moqMode: {
+    type: String,
+    enum: ['APPLICABLE', 'NOT_APPLICABLE', null],
+    default: null,
+  },
+  moqValue: { type: Number, default: null, min: 1 },
   showMsilCode: { type: Boolean, default: false }, // Maps to 'Show MSIL Code'
   bookingCcEmails: { type: [String], default: [] }, // Maps to 'Booking CC Emails'
   status: { type: String, enum: ['Active', 'Inactive', 'Suspended'], default: 'Active' },

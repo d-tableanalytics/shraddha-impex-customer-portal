@@ -43,6 +43,17 @@ export const BOOKING_LIFECYCLE = [
 /** Statuses that end the lifecycle rather than advancing it. */
 export const TERMINAL_STATUSES = ["Cancelled"];
 
+/**
+ * The statuses in which a booking's ITEMS may still be changed.
+ *
+ * MIRRORS `AMENDABLE_STATUSES` in backend/utils/bookingLock.js, which is the
+ * authority — it refuses the write whatever this says. Amendment stops at the
+ * warehouse door: a booking still being prepared can take a new product or a
+ * revised quantity, and one that has been dispatched, delivered or cancelled
+ * cannot, for anybody. 'Booked' is the legacy spelling of the first stage.
+ */
+export const AMENDABLE_STATUSES = ["PO Received", "Booked", "Ready for Dispatch"];
+
 /** Legacy rows predating the lifecycle count as the first stage. */
 export const normalizeStatus = (status) =>
   status === "Booked" ? "PO Received" : status;

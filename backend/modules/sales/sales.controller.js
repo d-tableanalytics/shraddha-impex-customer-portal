@@ -20,6 +20,10 @@ import {
 import { recordAudit } from '../../utils/auditLog.js';
 import { brandOfProduct } from '../../utils/brandAccess.js';
 import { attachCustomerDetails } from '../../utils/customerContact.js';
+// The booking's own customer, whose MOQ configuration governs an amendment to
+// it — not the staff member making the amendment. See utils/moq.js.
+import { loadBookingCustomer } from '../../utils/bookingActor.js';
+import { moqError, moqAppliesTo, effectiveMoq, customerMoqValue } from '../../utils/moq.js';
 import { containsMatch } from '../../utils/searchQuery.js';
 import {
   QTY_EDIT_ACTIONS, buildBookingJourney, journeyTablesHtml,
@@ -60,6 +64,47 @@ const loadBooking = async (orderId, session = null) => {
  * silently read "not priced". One helper means the whole response shape is
  * decided in a single place.
  */
+/**
+ * The MOQ rule in force for a booking, for the desk's screen.
+ *
+ * WHY THE SERVER COMPUTES IT AND THE BROWSER DOES NOT.
+ *
+ * The answer depends on the CUSTOMER's configuration (utils/moq.js) and on each
+ * SKU's Multiple — two things the drawer does not hold: it knows the booking's
+ * customer only as an id, and it has no product record for a line that was
+ * already saved. The desk would therefore learn about a bad quantity from a 400
+ * after pressing Save, which is exactly the "validate on the client too"
+ * complaint the requirement raises.
+ *
+ * So the rule is resolved once, here, where the customer and the products both
+ * are, and shipped WITH the booking:
+ *
+ *   applies   does MOQ apply to this customer at all
+ *   value     the customer's own configured Multiple, or null for "per product"
+ *   bySku     the effective Multiple for each SKU already on the booking
+ *
+ * The browser pre-validates against this; the server re-checks every quantity
+ * in runUpdateItems regardless, because a payload is a hint and not a guard.
+ *
+ * DETAIL ONLY. The list response shapes itself a few functions down and does
+ * not ask for this — it renders no quantity field, and a product lookup per
+ * line per booking would be an N+1 across the whole desk.
+ */
+const bookingMoq = async (req, rows) => {
+  const customer = await loadBookingCustomer(req, rows[0]?.user);
+  const applies = moqAppliesTo(customer);
+  const bySku = {};
+  if (applies) {
+    for (const skuCode of [...new Set(rows.map((r) => r.skuCode))]) {
+      const product = await findProductBySku(skuCode);
+      // A SKU that no longer resolves gets 0 — "no Multiple known" — rather
+      // than a guess. The save path will refuse it as an unknown SKU anyway.
+      bySku[skuCode] = effectiveMoq(customer, product);
+    }
+  }
+  return { applies, value: customerMoqValue(customer), bySku };
+};
+
 const shapedWithValue = async (rows, req, { includePricing, boxNumbers = null } = {}) => {
   const indentBySku = await openIndentBySku(rows[0]?.orderId);
 
@@ -88,6 +133,7 @@ const shapedWithValue = async (rows, req, { includePricing, boxNumbers = null } 
     includePricing,
     indentBySku,
     indent,
+    moq: await bookingMoq(req, rows),
     value: includePricing ? await valueBooking({ rows, indentBySku }) : null,
   });
 };
@@ -517,7 +563,57 @@ const runUpdateItems = async (req, session) => {
     throw Object.assign(new Error('Booking not found.'), { status: 404 });
   }
 
-  assertBookingEditable(existing, req.user);
+  /**
+   * THE TWO BOUNDS ON AN AMENDMENT, both checked here.
+   *
+   * `itemsOnly` — Sales holds AMEND_BOOKING_POST_PO, which reopens a committed
+   * booking's ITEMS and nothing else. Admin still clears the lock outright
+   * through OVERRIDE_PO_LOCK. Every other amendment path (reorder, details,
+   * a second PO) keeps calling this function without the flag and so keeps
+   * refusing Sales exactly as it did before.
+   *
+   * `checkStatus` — dispatched, delivered and cancelled bookings are closed to
+   * EVERYONE, wildcard included. See AMENDABLE_STATUSES: once the goods have
+   * left the building, moving a quantity here would reserve or release stock
+   * against units nobody is going to pick.
+   */
+  assertBookingEditable(existing, req.user, { itemsOnly: true, checkStatus: true });
+
+  /**
+   * A cancelled line is settled, not editable.
+   *
+   * Its stock went back to availability when it was cancelled (`stockState:
+   * 'released'`, see utils/stockSettlement.js). Leaving it out of `lines` would
+   * read as a removal below and release the same units a SECOND time; carrying
+   * it through with a new quantity would re-reserve stock onto a dead line.
+   * Both are the double-count this request must never produce, so a cancelled
+   * line is simply not something this endpoint acts on, in either direction.
+   */
+  const cancelled = existing.filter((r) => r.status === 'Cancelled');
+  if (cancelled.length) {
+    const sent = new Set(incoming.map((l) => (l.id ? String(l.id) : null)).filter(Boolean));
+    const touched = cancelled.filter((r) => sent.has(String(r._id)));
+    if (touched.length) {
+      throw Object.assign(
+        new Error(`${touched.map((r) => r.skuCode).join(', ')} ${touched.length === 1 ? 'has' : 'have'} been cancelled and cannot be amended. Add the SKU as a new line instead.`),
+        { status: 409 },
+      );
+    }
+  }
+
+  /**
+   * The lines this request may act on: everything but the cancelled ones.
+   *
+   * Used from here down in place of `existing`, because a cancelled row must
+   * not be read as a removal by the loop below (which would release its stock
+   * for the second time), must not be counted when a customer is told to send
+   * every line, and must not become the `template` a newly added line copies
+   * its status and addresses from.
+   */
+  const live = existing.filter((r) => r.status !== 'Cancelled');
+  if (live.length === 0) {
+    throw Object.assign(new Error('Every line of this booking has been cancelled.'), { status: 409 });
+  }
 
   if (!isStaff) {
     // A customer may revise QUANTITIES on their own booking and nothing else.
@@ -526,8 +622,8 @@ const runUpdateItems = async (req, session) => {
     // side would turn "edit my quantity" into "rewrite my order", so each
     // incoming line has to name a row that already exists and carry the SKU it
     // already has, and no row may be left out.
-    const byId = new Map(existing.map((r) => [String(r._id), r]));
-    if (incoming.length !== existing.length) {
+    const byId = new Map(live.map((r) => [String(r._id), r]));
+    if (incoming.length !== live.length) {
       throw Object.assign(
         new Error('Send every line of the booking. Lines cannot be added or removed here.'),
         { status: 400 },
@@ -554,7 +650,7 @@ const runUpdateItems = async (req, session) => {
   // with its own pick list and status. An edit may not take a line below what
   // they hold, change its SKU or drop it — that would leave allocations
   // describing units the line no longer has.
-  for (const row of existing) {
+  for (const row of live) {
     const held = (row.allocations || [])
       .filter((a) => a.status !== 'Cancelled')
       .reduce((n, a) => n + (a.quantity || 0), 0);
@@ -588,8 +684,8 @@ const runUpdateItems = async (req, session) => {
       ? adjustConsumedQty(product, 0, qty, session, ledgerCtx).then((r) => r.ok)
       : reserveStock(product, qty, session, ledgerCtx);
 
-  const template = existing[0];
-  const byId = new Map(existing.map((r) => [String(r._id), r]));
+  const template = live[0];
+  const byId = new Map(live.map((r) => [String(r._id), r]));
   const changes = [];
 
   // Rows the caller kept, by id. Anything not referenced is a removal.
@@ -598,13 +694,27 @@ const runUpdateItems = async (req, session) => {
   );
 
   // ── removals ────────────────────────────────────────────────────────────
-  for (const row of existing) {
+  for (const row of live) {
     if (keptIds.has(String(row._id))) continue;
     const product = await findProductBySku(row.skuCode, session);
     if (product) await giveBack(product, row, row.confirmedQty || 0);
     changes.push({ type: 'removed', skuCode: row.skuCode, fromQty: row.confirmedQty, toQty: 0 });
     await Order.deleteOne({ _id: row._id }, session ? { session } : {});
   }
+
+  /**
+   * ── MOQ, ON THE DESK'S EDITS TOO ────────────────────────────────────────
+   *
+   * The customer the booking BELONGS TO sets the rule, never the person typing
+   * — the desk amending an MSIL customer's booking stays MOQ-exempt, and a
+   * regular customer keeps their Multiple whoever moves the quantity. Same
+   * decision `updateReservationQuantity` already makes for a selection-list
+   * line, and the same module answers it (utils/moq.js), so the Customer MOQ
+   * configuration reaches this path without this path knowing the rule.
+   *
+   * Loaded ONCE per request rather than per line.
+   */
+  const bookingCustomer = await loadBookingCustomer(req, template.user);
 
   // ── updates and additions ───────────────────────────────────────────────
   for (const line of incoming) {
@@ -615,6 +725,24 @@ const runUpdateItems = async (req, session) => {
     const product = await findProductBySku(skuCode, session);
     if (!product) {
       throw Object.assign(new Error(`SKU ${skuCode} not found.`), { status: 400 });
+    }
+
+    /**
+     * Checked only on a line this request actually MOVES.
+     *
+     * A booking placed before its SKU carried a Multiple — or before the
+     * customer was configured as MOQ Applicable — holds quantities that would
+     * fail the rule today. Validating every submitted line would make such a
+     * booking uneditable: the desk could not touch line 3 because line 1,
+     * which it was not changing, is an awkward number. So an untouched line is
+     * left exactly as it is, and a line being changed has to land on a legal
+     * quantity.
+     */
+    const previousTotal = row ? (row.confirmedQty || 0) + (row.pendingQty || 0) : null;
+    const moves = !row || String(row.skuCode) !== skuCode || qty !== previousTotal;
+    if (moves) {
+      const message = moqError(bookingCustomer, product, qty);
+      if (message) throw Object.assign(new Error(message), { status: 400 });
     }
 
     if (!row) {
@@ -678,6 +806,32 @@ const runUpdateItems = async (req, session) => {
         confirmedQty: qty,
         pendingQty: 0,
         poNumber: template.poNumber,
+        /**
+         * ── THE NEW LINE JOINS THE BOOKING'S SETTLEMENT STATE ──────────────
+         *
+         * `takeFor(product, template, qty)` above already moved the stock the
+         * way the REST of this booking holds it: reserved while the PO is
+         * pending, consumed once it is raised. The row has to SAY so.
+         *
+         * Without these three fields the row was created with the schema
+         * default `stockState: 'reserved'` while its units had actually been
+         * consumed — and `stockState` is exactly what settlement guards on
+         * (utils/stockSettlement.js). Cancelling the booking afterwards would
+         * have taken the 'reserved' branch and run `releaseStock`, moving
+         * booked → available for units that were never booked: the quantity
+         * would have been added to `availableForSale` out of nothing, breaking
+         * `available + booked === total` and overselling the SKU by the size of
+         * the added line.
+         *
+         * Reachable before this change too — an Admin with the lock override
+         * could add a line to a committed booking — so this is a latent defect
+         * being closed, not one introduced by letting Sales do the same.
+         */
+        stockState: template.stockState ?? 'reserved',
+        stockSettledAt: template.stockSettledAt ?? null,
+        poGeneratedAt: template.poGeneratedAt ?? null,
+        poGeneratedBy: template.poGeneratedBy ?? null,
+        poDate: template.poDate ?? null,
         msilCode: product.msilCode || null,
         boxNo: product.boxNo || null,
         emailId: template.emailId,
