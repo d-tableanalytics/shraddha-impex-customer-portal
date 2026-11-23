@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Unauthorized } from '../../components/common/Unauthorized';
-import { Search, X, Loader2, RotateCcw, ArrowDownRight, ArrowUpRight, Clock } from 'lucide-react';
+import { Search, X, Loader2, RotateCcw, Clock, Info, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import { Card, CardContent } from '../../components/ui/Card';
@@ -14,6 +14,11 @@ import { useUserStore } from '../../store/userStore';
 import { allowedBrands } from '../../utils/brandAccess';
 import { hasPermission, PERMISSIONS } from '../../utils/permissions';
 import { DateField } from "../../components/ui/DateField";
+import { inventoryApi } from '../../services/inventory';
+import {
+  directionStyle, balanceLabel, balanceNote, quantityText, fmtQty,
+} from '../../utils/stockActivity';
+import { Link } from 'react-router-dom';
 
 /**
  * Stock Ledger — IMS Module M2, blueprint screen S6.
@@ -24,12 +29,26 @@ import { DateField } from "../../components/ui/DateField";
  *
  * The server refuses an unbounded ledger query, so the screen always sends at
  * least a date range.
+ *
+ * ────────────────────────────────────────────────────────────────────────
+ * SAYING WHAT HAPPENED, NOT WHAT THE DATABASE CALLS IT
+ * ────────────────────────────────────────────────────────────────────────
+ * This screen used to print the movement type verbatim and colour the quantity
+ * by its sign: "RESERVE  +20", in green. Which reads as twenty units arriving.
+ * They did not arrive. Twenty units already in the building stopped being
+ * available — and the +20 beside it is the BOOKED count going up, not stock.
+ *
+ * So each row now carries `plain`, written by the server
+ * (modules/inventory/activity.service.js), and rendered with the shared styling
+ * in utils/stockActivity.js. The Activity Log reads the same sentences from the
+ * same mapper; two renderers would be two vocabularies, which is the problem
+ * this is fixing.
+ *
+ * `movementType` has not gone away — it is still shown, quietly, under the
+ * label. An investigator needs the database's own word for the row; a client
+ * needs the sentence. Both are on the row.
  */
 
-const CLASS_STYLES = {
-  PHYSICAL: 'bg-primary-50 text-primary-700',
-  ALLOCATION: 'bg-indigo-50 text-indigo-700',
-};
 
 const SORT_OPTIONS = [
   { value: 'date-desc', label: 'Newest first' },
@@ -43,17 +62,75 @@ const fmtDate = (d) =>
 const fmtDateTime = (d) =>
   d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
-/** Signed quantity, coloured by direction and always showing its sign. */
-const Quantity = ({ value }) => (
-  <span
-    className={`inline-flex items-center gap-1 font-bold tabular-nums ${
-      value > 0 ? 'text-success-700' : 'text-error-600'
-    }`}
-  >
-    {value > 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-    {value > 0 ? `+${value}` : value}
-  </span>
-);
+/**
+ * A quantity, coloured by DIRECTION rather than by sign — and signed only when
+ * the number describes physical stock.
+ *
+ * Both rules exist for the same reason. A RELEASE is negative yet nothing left
+ * the building, so it is not painted red; a RESERVE is positive yet nothing
+ * arrived, so it carries no + at all. `balanceKind` is what decides the second,
+ * and on a grouped row it is derived from the movement types the posting
+ * contains. See `isSigned` in utils/stockActivity.js.
+ */
+const Quantity = ({ value, direction, balanceKind = 'onHand' }) => {
+  const style = directionStyle(direction || (value > 0 ? 'in' : 'out'));
+  const Icon = style.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 font-bold tabular-nums ${style.text}`}>
+      <Icon size={13} aria-hidden="true" />
+      {quantityText(value, balanceKind)}
+    </span>
+  );
+};
+
+/** The transaction label: Stock In, Stock Out, Booking, Adjustment… */
+const TypeChip = ({ plain, movementType }) => {
+  const style = directionStyle(plain?.direction);
+  return (
+    <>
+      <span
+        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-bold whitespace-nowrap ${style.chip}`}
+      >
+        {plain?.label || movementType}
+      </span>
+      {/* The database's own word for the row, kept for whoever is investigating
+          one. Small, grey, and underneath — present without competing. */}
+      {plain?.label !== movementType && (
+        <span className="block text-[10px] text-slate-400 font-semibold mt-0.5 uppercase tracking-wide">
+          {movementType}
+        </span>
+      )}
+    </>
+  );
+};
+
+/**
+ * Before and after, captioned by what they COUNT.
+ *
+ * An allocation movement's pair is the booked total, not stock on hand. Printing
+ * it under a column headed "Before / After" is what let a confirmed booking read
+ * as a delivery, so the caption names the balance on every row that has one.
+ */
+const BalancePair = ({ m }) => {
+  if (m.beforeQuantity === null && m.afterQuantity === null) {
+    return <span className="text-slate-400">—</span>;
+  }
+  const kind = balanceLabel(m.plain?.balanceKind);
+  return (
+    <div className="flex flex-col gap-0.5" title={balanceNote(m.plain?.balanceKind) || undefined}>
+      <span className="tabular-nums text-sm whitespace-nowrap">
+        <span className="text-slate-400">{fmtQty(m.beforeQuantity)}</span>
+        <span className="mx-1.5 text-slate-300">→</span>
+        <span className="font-bold text-slate-800">{fmtQty(m.afterQuantity)}</span>
+      </span>
+      {kind && (
+        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+          {kind}{m.plain?.balanceKind === 'booked' && ' — stock unchanged'}
+        </span>
+      )}
+    </div>
+  );
+};
 
 const Field = ({ label, children }) => (
   <div className="flex flex-col gap-1.5">
@@ -63,24 +140,15 @@ const Field = ({ label, children }) => (
 );
 
 /**
- * Workflow keys are internal; these are what the action was, in the words
- * someone would use for it. An unmapped key falls through unchanged rather
- * than being hidden, so a new workflow is visible rather than blank.
+ * What the posting WAS, in the words someone would use for it.
+ *
+ * The server sends `action` from the one workflow map the whole feature shares
+ * (modules/inventory/activity.service.js). This screen used to keep its own
+ * copy of that list — two vocabularies, one of them always a workflow behind.
+ * An unmapped workflow falls through as its own key rather than being hidden,
+ * so a new one is visible rather than blank.
  */
-const ACTION_LABEL = {
-  import: 'Import',
-  'stock-update': 'Stock update',
-  'stock-adjustment': 'Stock adjustment',
-  'stock-count': 'Stock count',
-  'booking-confirm': 'Booking confirmed',
-  'po-settlement-release': 'PO expired — stock released',
-  'po-settlement-consume': 'PO raised — stock issued',
-  'po-expiry': 'PO expired',
-  reversal: 'Reversal',
-  reserve: 'Reservation',
-  'sales-desk-edit': 'Sales desk edit',
-};
-const actionLabel = (w) => ACTION_LABEL[w] ?? (w || 'Posting');
+const actionLabel = (g) => g.action ?? (g.workflowType || 'Posting');
 
 const inputCls =
   'w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg shadow-sm outline-none ' +
@@ -153,8 +221,13 @@ const BatchPanel = ({ batch, onClose }) => (
                   <tr key={m.transactionId}>
                     <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{m.transactionId}</td>
                     <td className="px-3 py-2 font-bold text-slate-800">{m.skuCode}</td>
-                    <td className="px-3 py-2 text-slate-600 text-xs">{m.movementType}</td>
-                    <td className="px-3 py-2 text-right"><Quantity value={m.quantity} /></td>
+                    <td className="px-3 py-2 text-slate-600 text-xs">
+                      <span className="font-semibold text-slate-700">{m.plain?.label || m.movementType}</span>
+                      <span className="block text-[10px] text-slate-400">{m.plain?.description}</span>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Quantity value={m.quantity} direction={m.plain?.direction} balanceKind={m.plain?.balanceKind} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -165,6 +238,78 @@ const BatchPanel = ({ batch, onClose }) => (
     </div>
   </motion.aside>
 );
+
+/**
+ * Opening stock, what came in, what went out, closing stock — for ONE SKU.
+ *
+ * Only ever shown when the SKU filter holds a single code, because the four
+ * numbers are only meaningful for one item: "opening stock" across a filter
+ * matching 900 SKUs is a sum of unrelated balances, and showing it would be
+ * worse than showing nothing.
+ *
+ * PHYSICAL movements only, which is what makes it add up: a booking does not
+ * change how much is in the building, so counting one as "out" would leave
+ * closing ≠ opening + in − out. Units currently spoken for are reported
+ * separately, named as what they are.
+ */
+const StockSummaryBand = ({ summary, skuCode }) => {
+  if (!summary) return null;
+  const tiles = [
+    { label: 'Opening Stock', value: summary.openingStock, tone: 'text-slate-900' },
+    { label: 'Stock In', value: summary.stockIn, tone: 'text-success-700', prefix: '+' },
+    { label: 'Stock Out', value: summary.stockOut, tone: 'text-error-600', prefix: '−' },
+    { label: 'Closing Stock', value: summary.closingStock, tone: 'text-slate-900' },
+  ];
+  return (
+    <Card>
+      <CardContent className="p-0">
+        <div className="px-5 pt-4 flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+            Stock movement for
+          </span>
+          <span className="font-black text-slate-900">{skuCode}</span>
+          <Link
+            to={`/inventory/activity`}
+            className="ml-auto inline-flex items-center gap-1 text-xs font-bold text-primary-700 hover:underline"
+          >
+            Open the activity log <ExternalLink size={12} />
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-slate-100">
+          {tiles.map((t) => (
+            <div key={t.label} className="px-5 py-4">
+              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">{t.label}</p>
+              <p className={`text-2xl font-black tabular-nums mt-1 ${t.tone}`}>
+                {t.prefix && t.value !== 0 ? t.prefix : ''}{fmtQty(t.value)}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-slate-600 rounded-b-xl">
+          <span>
+            <span className="font-bold text-slate-700">{fmtQty(summary.openingStock)}</span>
+            {' + '}
+            <span className="font-bold text-success-700">{fmtQty(summary.stockIn)}</span>
+            {' − '}
+            <span className="font-bold text-error-600">{fmtQty(summary.stockOut)}</span>
+            {' = '}
+            <span className="font-bold text-slate-900">{fmtQty(summary.closingStock)}</span>
+          </span>
+          <span>
+            Currently set aside for bookings:{' '}
+            <span className="font-bold text-warning-700 tabular-nums">{fmtQty(summary.reserved)}</span>
+          </span>
+          {summary.derivedFromBalance && (
+            <span className="inline-flex items-center gap-1 text-slate-500">
+              <Info size={12} aria-hidden="true" />
+              No stock transactions in this period — showing the current balance.
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
 
 export const StockLedger = () => {
   const { user } = useUserStore();
@@ -197,6 +342,31 @@ export const StockLedger = () => {
     fetchMovements();
     fetchMovementTypes();
   }, [fetchMovements, fetchMovementTypes]);
+
+  /**
+   * The opening/in/out/closing band, which only exists for a single SKU.
+   *
+   * Kept local to this screen rather than in the ledger store: it is not ledger
+   * state, it is a second question about the same filter, and folding it into
+   * the store would make every filter change wait on it.
+   *
+   * The request is keyed on the settled SKU and the date range, and a stale
+   * response is discarded — typing a SKU fires several, and the last one typed
+   * is not reliably the last one back.
+   */
+  const [summary, setSummary] = useState(null);
+  useEffect(() => {
+    if (!filters.skuCode) { setSummary(null); return undefined; }
+    let live = true;
+    setSummary(null);
+    inventoryApi
+      .getSkuActivitySummary(filters.skuCode, { from: filters.from, to: filters.to })
+      // A failed summary hides a panel; it must not disturb the rows, which are
+      // the screen.
+      .then((data) => { if (live) setSummary(data); })
+      .catch(() => { if (live) setSummary(null); });
+    return () => { live = false; };
+  }, [filters.skuCode, filters.from, filters.to]);
 
   // A ledger row IS a transaction, so the selection is transaction ids — not
   // SKUs. Selecting two movements of one SKU and exporting by SKU would pull in
@@ -362,6 +532,8 @@ export const StockLedger = () => {
         </CardContent>
       </Card>
 
+      {filters.skuCode && <StockSummaryBand summary={summary} skuCode={filters.skuCode} />}
+
       {error && (
         <div className="px-4 py-3 rounded-lg bg-error-50 border border-error-200 text-sm text-error-700 font-medium">
           {error}
@@ -404,7 +576,7 @@ export const StockLedger = () => {
                       className="hover:bg-slate-50 transition-colors cursor-pointer"
                     >
                       <td className="px-5 py-4">
-                        <span className="font-bold text-slate-800">{actionLabel(g.workflowType)}</span>
+                        <span className="font-bold text-slate-800">{actionLabel(g)}</span>
                         <span className="block font-mono text-[11px] text-slate-400">{g.batchId}</span>
                       </td>
                       <td className="px-5 py-4 text-slate-600 text-xs whitespace-nowrap">{fmtDate(g.postedAt)}</td>
@@ -426,7 +598,28 @@ export const StockLedger = () => {
                           <span className="block text-[11px] text-slate-400">of {g.batchLineCount.toLocaleString()}</span>
                         )}
                       </td>
-                      <td className="px-5 py-4 text-right"><Quantity value={g.netQuantity} /></td>
+                      <td className="px-5 py-4 text-right">
+                        {/* Physical and booked nets, never added together: one
+                            posting can do both (raising a PO releases the units
+                            AND issues them), and their sum describes no real
+                            balance. The signed figure is the stock one; the
+                            booked one rides underneath, unsigned. */}
+                        {g.netPhysical !== 0 || g.netAllocation === 0 ? (
+                          <Quantity value={g.netPhysical ?? g.netQuantity} balanceKind="onHand" />
+                        ) : (
+                          <Quantity
+                            value={g.netAllocation}
+                            direction={g.netAllocation > 0 ? 'allocate' : 'release'}
+                            balanceKind="booked"
+                          />
+                        )}
+                        {g.netPhysical !== 0 && g.netAllocation !== 0 && (
+                          <span className="block text-[11px] text-slate-400 font-semibold">
+                            {Math.abs(g.netAllocation).toLocaleString('en-IN')}
+                            {g.netAllocation > 0 ? ' booked' : ' released'}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-5 py-4 text-xs text-slate-500">
                         {g.user?.name || (g.actorType === 'system' ? 'System' : '—')}
                       </td>
@@ -457,13 +650,13 @@ export const StockLedger = () => {
                       onChange={togglePage}
                     />
                   </th>
-                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Transaction</th>
+                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Txn ID</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Date</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">SKU</th>
-                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Type</th>
-                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">Qty</th>
-                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">Before</th>
-                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">After</th>
+                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Transaction</th>
+                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">What happened</th>
+                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs text-right">Quantity</th>
+                  <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Balance before → after</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Reference</th>
                   <th className="px-5 py-4 font-bold text-slate-600 uppercase text-xs">Actor</th>
                 </tr>
@@ -513,26 +706,35 @@ export const StockLedger = () => {
                       </span>
                     </td>
                     <td className="px-5 py-4">
-                      <span className={`inline-flex px-2 py-1 rounded-md text-[11px] font-bold ${CLASS_STYLES[m.movementClass] || 'bg-slate-100 text-slate-600'}`}>
-                        {m.movementType}
+                      <TypeChip plain={m.plain} movementType={m.movementType} />
+                    </td>
+                    <td className="px-5 py-4">
+                      {/* The sentence the server wrote, and underneath it the
+                          action that produced the row where the batch knows it
+                          — "PO raised" and "PO expired" are both ISSUE, and
+                          without this a client cannot tell them apart. */}
+                      <span className="text-slate-800 font-semibold">
+                        {m.plain?.description || m.movementType}
                       </span>
+                      {m.plain?.action && (
+                        <span className="block text-[11px] text-slate-500">{m.plain.action}</span>
+                      )}
                       {m.reasonCode && (
-                        <span className="block text-[10px] text-slate-400 font-semibold mt-0.5">
-                          {m.reasonCode}
+                        <span className="block text-[10px] text-slate-400 font-semibold uppercase tracking-wide">
+                          {m.reasonCode.replace(/_/g, ' ')}
                         </span>
                       )}
                     </td>
-                    <td className="px-5 py-4 text-right"><Quantity value={m.quantity} /></td>
-                    <td className="px-5 py-4 text-right text-slate-500 tabular-nums">
-                      {m.beforeQuantity ?? '—'}
+                    <td className="px-5 py-4 text-right">
+                      <Quantity value={m.quantity} direction={m.plain?.direction} balanceKind={m.plain?.balanceKind} />
                     </td>
-                    <td className="px-5 py-4 text-right font-semibold text-slate-800 tabular-nums">
-                      {m.afterQuantity ?? '—'}
-                    </td>
+                    <td className="px-5 py-4"><BalancePair m={m} /></td>
                     <td className="px-5 py-4">
                       {m.referenceId ? (
                         <>
-                          <span className="text-[11px] font-bold text-slate-600 uppercase">{m.referenceType}</span>
+                          <span className="text-[11px] font-bold text-slate-600 uppercase">
+                            {m.plain?.referenceLabel || m.referenceType}
+                          </span>
                           <span className="block font-mono text-[11px] text-slate-500">{m.referenceId}</span>
                         </>
                       ) : <span className="text-slate-400">—</span>}

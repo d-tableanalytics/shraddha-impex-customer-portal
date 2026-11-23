@@ -19,6 +19,9 @@ import {
   searchLedger, searchLedgerGrouped, getSkuMovements, getMovement, getBatch, listMovementTypes,
 } from './ledger.controller.js';
 import {
+  listActivity, getSkuActivity, getSkuActivitySummary, listActivitySkus, listActivityTypes,
+} from './activity.controller.js';
+import {
   listBalances, getBalanceBySku, getAvailabilityBatch, rebuild, getReconciliation,
 } from './balance.controller.js';
 import {
@@ -156,6 +159,21 @@ router.get('/ledger', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), searchLedger);
 router.get('/ledger/:transactionId', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), getMovement);
 router.get('/items/:sku/movements', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), getSkuMovements);
 router.get('/batches/:identifier', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), getBatch);
+
+// ── SKU Activity Log ──────────────────────────────────────────────────────
+// A projection of the ledger plus the indent side the ledger cannot see (an
+// indent holds no stock, so it posts no movement). Read-only, and gated on the
+// SAME permission as the ledger: it is the same history, said differently, so a
+// cell of its own would be a second answer to one question — and would leave
+// every existing role unable to open it until a role baseline was re-applied.
+//
+// Static paths before '/items/:sku/...' siblings for the usual reason.
+router.get('/activity/types', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), listActivityTypes);
+router.get('/activity/skus', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), listActivitySkus);
+router.get('/activity', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), listActivity);
+// Before '/items/:sku/activity', or 'summary' is swallowed as part of it.
+router.get('/items/:sku/activity/summary', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), getSkuActivitySummary);
+router.get('/items/:sku/activity', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), getSkuActivity);
 
 // ── Balance engine (M3) ───────────────────────────────────────────────────
 // Balances are a projection of the ledger, never a source of truth. Reads are

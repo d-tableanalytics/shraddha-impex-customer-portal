@@ -425,6 +425,67 @@ export const inventoryApi = {
     return response.data.data || [];
   },
 
+  // ── SKU Activity Log ────────────────────────────────────────────────────
+  // A projection of the ledger plus the indent side it cannot see. Read-only,
+  // and gated on the same permission as the ledger.
+
+  /** The cross-SKU feed: what happened across every SKU this user may see. */
+  listActivity: async ({
+    skuCode = "", brand = "", activityType = "", from = "", to = "", page = 1, limit = 20,
+  } = {}) => {
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    for (const [key, value] of Object.entries({ skuCode, brand, activityType, from, to })) {
+      if (value) params.set(key, value);
+    }
+    const r = await api.get(`/inventory/activity?${params.toString()}`);
+    return {
+      records: r.data.data || [],
+      total: r.data.pagination?.total ?? 0,
+      pages: r.data.pagination?.pages ?? 1,
+    };
+  },
+
+  /** One SKU's history. Defaults to the latest 20; page through for all of it. */
+  getSkuActivity: async (skuCode, { activityType = "", from = "", to = "", page = 1, limit = 20 } = {}) => {
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    for (const [key, value] of Object.entries({ activityType, from, to })) {
+      if (value) params.set(key, value);
+    }
+    const r = await api.get(
+      `/inventory/items/${encodeURIComponent(skuCode)}/activity?${params.toString()}`,
+    );
+    return {
+      records: r.data.data || [],
+      item: r.data.item || null,
+      total: r.data.pagination?.total ?? 0,
+      pages: r.data.pagination?.pages ?? 1,
+    };
+  },
+
+  /** Opening stock, stock in, stock out, closing stock for one SKU. */
+  getSkuActivitySummary: async (skuCode, { from = "", to = "" } = {}) => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    const r = await api.get(
+      `/inventory/items/${encodeURIComponent(skuCode)}/activity/summary?${params.toString()}`,
+    );
+    return r.data.data || null;
+  },
+
+  /** The SKU picker — most recently active first. */
+  listActivitySkus: async ({ search = "", limit = 25 } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (search) params.set("search", search);
+    const r = await api.get(`/inventory/activity/skus?${params.toString()}`);
+    return r.data.data || [];
+  },
+
+  getActivityTypes: async () => {
+    const r = await api.get("/inventory/activity/types");
+    return r.data.data || [];
+  },
+
   // ── Stock health (M4) ───────────────────────────────────────────────────
   // Reads the health projection. All classification happens server-side — the
   // client never computes a band, a target or a percentage.

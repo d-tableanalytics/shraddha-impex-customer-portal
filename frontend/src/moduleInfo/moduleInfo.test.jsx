@@ -18,7 +18,7 @@ const SCREENS = [
   "/inventory", "/settings", "/help",
   "/sales", "/reports",
   "/inventory/dashboard", "/inventory/master", "/inventory/health", "/inventory/upcoming",
-  "/inventory/ledger", "/inventory/brands", "/inventory/indent-assignment", "/inventory/import",
+  "/inventory/ledger", "/inventory/activity", "/inventory/brands", "/inventory/indent-assignment", "/inventory/import",
   "/admin/product-details",
   "/admin", "/admin/customers", "/admin/users", "/admin/permissions",
 ];

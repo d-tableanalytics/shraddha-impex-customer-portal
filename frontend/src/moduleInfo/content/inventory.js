@@ -612,6 +612,135 @@ export default [
     ]
   },
   {
+    "key": "inventory.activity",
+    "portal": "customer",
+    "paths": [
+      "/inventory/activity"
+    ],
+    "title": "Activity Log",
+    "overview": {
+      "what": "A per-item diary of everything that has happened to a SKU - stock received, stock issued, adjustments, bookings, releases and indents - written in plain language rather than ledger codes.",
+      "why": "Lets anyone see what happened to an item, when, by how much and who did it, without knowing what a movement class or an allocation balance is.",
+      "users": [
+        "Admin",
+        "Inventory Manager",
+        "Warehouse User",
+        "Management",
+        "Import Team"
+      ]
+    },
+    "functions": [
+      {
+        "title": "Pick an item",
+        "detail": "Search a SKU code to open its own history; the screen opens on recent activity across every item you can see."
+      },
+      {
+        "title": "Latest 20, or everything",
+        "detail": "Each item shows its 20 most recent activities, with one button to page through the complete history."
+      },
+      {
+        "title": "Stock summary",
+        "detail": "Opening stock, stock in, stock out and closing stock for the chosen dates, with the arithmetic shown."
+      },
+      {
+        "title": "Filter",
+        "detail": "Narrow by activity type and date range."
+      }
+    ],
+    "connections": [
+      {
+        "module": "Stock Ledger",
+        "key": "inventory.ledger",
+        "why": "Every activity that changed a stock figure is read from the ledger; this screen only re-words it.",
+        "data": "Stock movements with their before and after quantities",
+        "direction": "one-way",
+        "trigger": "Any posting to the ledger",
+        "verified": true
+      },
+      {
+        "module": "Indent History",
+        "key": "customer_portal.indent_history",
+        "why": "An indent holds no stock, so it posts no ledger movement. Indents raised and bookings still awaiting confirmation are read from the reservations themselves.",
+        "data": "Indent and pending-booking records, with no stock change",
+        "direction": "one-way",
+        "trigger": "Booking confirmed with insufficient stock, or a booking left unconfirmed",
+        "verified": true
+      },
+      {
+        "module": "Inventory Master",
+        "key": "inventory.master",
+        "why": "The item picker lists SKUs by when they last moved, and the summary falls back to the current balance when nothing moved in the period.",
+        "data": "On-hand, reserved and last-activity figures",
+        "direction": "one-way",
+        "trigger": "Screen opened",
+        "verified": true
+      }
+    ],
+    "impacts": [
+      {
+        "action": "Opening the screen",
+        "effect": "Nothing changes. Every endpoint behind it is read-only, and no screen or job writes an activity record - the log is calculated from history that already exists.",
+        "kind": "manual",
+        "verified": true
+      },
+      {
+        "action": "Any stock transaction anywhere",
+        "effect": "Appears in the log on the next load, because the log is read from the ledger rather than appended to separately.",
+        "kind": "automatic",
+        "verified": true
+      }
+    ],
+    "rules": [
+      {
+        "title": "Bookings are not stock movements",
+        "detail": "Confirming a booking sets units aside; it does not take them out of the building. Those rows show a booked before and after, marked 'stock unchanged', and are left out of the Stock In and Stock Out totals so opening plus in minus out always equals closing.",
+        "kind": "stock",
+        "verified": true
+      },
+      {
+        "title": "Indents change nothing",
+        "detail": "An indent and a booking that is not yet confirmed show the quantity asked for and 'No stock change'. They carry no sign and no before or after figure.",
+        "kind": "stock",
+        "verified": true
+      },
+      {
+        "title": "Read-only",
+        "detail": "Nothing on this screen writes. Corrections are made where the original transaction was made.",
+        "kind": "stock",
+        "verified": true
+      },
+      {
+        "title": "Who can open it",
+        "detail": "Needs 'View Stock Ledger' - the same permission as the Stock Ledger, because it is the same history. Sales does not have it.",
+        "kind": "permission",
+        "verified": true
+      },
+      {
+        "title": "Brand scope",
+        "detail": "Only activity for brands your account may see is listed, including the indent side.",
+        "kind": "permission",
+        "verified": true
+      }
+    ],
+    "steps": [
+      "Open Inventory Management > Activity Log.",
+      "Search and choose a SKU code, or click one in the feed.",
+      "Read the latest 20 activities; set dates to narrow the period.",
+      "Check Opening Stock, Stock In, Stock Out and Closing Stock at the top.",
+      "Click View complete history to page back through everything."
+    ],
+    "warnings": [
+      {
+        "title": "Booking before and after are booked units",
+        "detail": "On a Booking row the two numbers count units spoken for, not units in the warehouse. The caption says so on every such row.",
+        "severity": "warning"
+      }
+    ],
+    "unverified": [
+      "Whether an indent cancelled long after it was raised should appear as a second, separate activity; only the raising is listed today."
+    ]
+  },
+  {
     "key": "inventory.ledger",
     "portal": "customer",
     "paths": [

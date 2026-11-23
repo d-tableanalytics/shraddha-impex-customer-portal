@@ -10,6 +10,7 @@ import StockCount from '../../models/StockCount.js';
 import InventoryAlert, { ALERT_TYPES } from '../../models/InventoryAlert.js';
 import ExportJob from '../../models/ExportJob.js';
 import { nextSequence } from '../../models/Counter.js';
+import { describeMovement } from './activity.service.js';
 import { recordAudit } from '../../utils/auditLog.js';
 
 /**
@@ -133,7 +134,15 @@ export const EXPORTS = {
       { header: 'Location', get: (r) => nul(r.locationCode) },
       { header: 'Movement Type', get: (r) => r.movementType },
       { header: 'Class', get: (r) => nul(r.movementClass) },
+      // The same two sentences the Stock Ledger and the Activity Log show, so a
+      // downloaded sheet is as readable as the screen it came from. A pure
+      // function over the row — no lookup, nothing added to the stream.
+      { header: 'Transaction', get: (r) => describeMovement(r).label },
+      { header: 'What Happened', get: (r) => describeMovement(r).description },
       { header: 'Quantity', get: (r) => r.quantity },
+      // Named by what they count: an allocation movement's pair is the BOOKED
+      // total, not stock on hand, and a column headed "Before" said otherwise.
+      { header: 'Balance Counts', get: (r) => (r.movementClass === 'ALLOCATION' ? 'Booked units' : 'Stock on hand') },
       { header: 'Before', get: (r) => nul(r.beforeQuantity) },
       { header: 'After', get: (r) => nul(r.afterQuantity) },
       { header: 'Reason Code', get: (r) => nul(r.reasonCode) },

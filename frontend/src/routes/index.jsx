@@ -30,6 +30,7 @@ const Inventory = lazy(lazyPage("Inventory"));
 // Inventory view above. Both pages re-check their permission themselves.
 const InventoryMaster = lazy(lazyPage("InventoryMaster"));
 const StockLedger = lazy(lazyPage("StockLedger"));
+const SkuActivityLog = lazy(lazyPage("SkuActivityLog"));
 const InventoryHealth = lazy(lazyPage("InventoryHealth"));
 // Upcoming Stock (GET /inventory/upcoming). Opens for anyone who can open
 // Inventory Health (view_inventory), the screen it sits beside in the menu.
@@ -153,6 +154,15 @@ export const router = createBrowserRouter([
             // Stock ledger (M2). Read-only movement history.
             path: "inventory/ledger",
             element: <ModuleRoute module="inventory" submodule="ledger"><StockLedger /></ModuleRoute>,
+          },
+          {
+            // SKU Activity Log. The ledger plus the indent side, said in plain
+            // language. Gated on the LEDGER cell: it is the same history, so a
+            // cell of its own would be a second answer to one question — and
+            // would hide the screen from every existing role until a role
+            // baseline was re-applied.
+            path: "inventory/activity",
+            element: <ModuleRoute module="inventory" submodule="ledger"><SkuActivityLog /></ModuleRoute>,
           },
           {
             // Stock health (M4). Classification projected from balances.
