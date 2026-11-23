@@ -208,6 +208,44 @@ const withUpcomingItem = (groups, user) => {
 };
 
 /**
+ * Activity Log, added on the client for the same reason as Upcoming Stock.
+ *
+ * It has no registry entry: it is a PROJECTION of the stock ledger — the same
+ * history, said in plain language — so its API is guarded by `view_stock_ledger`
+ * rather than a permission cell of its own. Giving it a cell would mean every
+ * existing role losing the screen until a role baseline was re-applied, for a
+ * question those roles can already answer the hard way.
+ *
+ * Offered to whoever may open the Stock Ledger, and placed directly after it,
+ * because that is the row a person would look under for it.
+ */
+const ACTIVITY_ITEM = {
+  id: "inventory.activity",
+  key: "activity",
+  label: "Activity Log",
+  path: "/inventory/activity",
+  // `Activity`, not `History` — Booking History already carries that icon, and
+  // two rows with one glyph is how a rail stops being scannable.
+  icon: "Activity",
+};
+
+/** May open the Activity Log: the ledger's own cell, or its permission key. */
+const mayOpenActivity = (user) => (Array.isArray(user?.grants)
+  ? canAction(user, "inventory", "ledger", "view")
+  : hasPermission(user, PERMISSIONS.VIEW_STOCK_LEDGER));
+
+const withActivityItem = (groups, user) => {
+  if (!mayOpenActivity(user)) return groups;
+  return groups.map((g) => {
+    const at = g.items.findIndex((i) => i.path === "/inventory/ledger");
+    if (at < 0 || g.items.some((i) => i.path === ACTIVITY_ITEM.path)) return g;
+    const items = [...g.items];
+    items.splice(at + 1, 0, ACTIVITY_ITEM);
+    return { ...g, items };
+  });
+};
+
+/**
  * Pages with no sidebar entry of their own that belong to one that has.
  *
  * Inventory Health and Brands are opened from buttons on Inventory Master and
@@ -278,7 +316,7 @@ export const buildNavigation = (user) => {
     }))
     .filter((mod) => mod.items.length > 0);
 
-  return withRolesItem(withUpcomingItem(groups, user), user);
+  return withRolesItem(withActivityItem(withUpcomingItem(groups, user), user), user);
 };
 
 export default buildNavigation;

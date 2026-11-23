@@ -103,6 +103,13 @@ export default [
     ]
   },
   {
+    "key": "inventory.activity",
+    "title": "Activity Log",
+    "paths": [
+      "/inventory/activity"
+    ]
+  },
+  {
     "key": "inventory.ledger",
     "title": "Stock Ledger",
     "paths": [

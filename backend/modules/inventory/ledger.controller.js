@@ -5,6 +5,8 @@ import { allowedBrands, canAccessBrand } from '../../utils/brandAccess.js';
 import StockBatch from '../../models/StockBatch.js';
 import User from '../../models/User.js';
 import { findBatch } from './ledger.service.js';
+import { describeMovement, workflowLabel } from './activity.service.js';
+import { Product } from '../../models/Product.js';
 
 /**
  * Ledger read endpoints (IMS Module M2).
@@ -42,7 +44,13 @@ const SORTABLE = {
 
 // A ledger row carries everything it needs — SKU, brand and location are
 // denormalised onto the movement — so listing never joins per row.
-const shapeMovement = (m) => ({
+//
+// `plain` is the row said in client language, and it comes from the SAME mapper
+// the Activity Log uses (activity.service.js). The screen renders the sentence
+// rather than composing its own from `movementType` and the sign of `quantity`,
+// because two mappings are two vocabularies — and "+50 RESERVE" meaning "set
+// aside, nothing arrived" is precisely what nobody could read.
+const shapeMovement = (m, extra = {}) => ({
   transactionId: m.transactionId,
   batchId: m.batchId,
   skuCode: m.skuCode,
@@ -64,7 +72,35 @@ const shapeMovement = (m) => ({
   reversedBy: m.reversedBy || null,
   actorType: m.actorType,
   user: m.user ? { id: m.user._id, name: m.user.user || m.user.email } : null,
+  plain: describeMovement(m, extra),
 });
+
+/**
+ * The per-page context the plain-language mapper needs.
+ *
+ * Two indexed lookups for the WHOLE page, never one per row:
+ *   - the workflow, which lives on the batch rather than the movement, and is
+ *     the only thing that tells "PO raised" from "PO expired" (both ISSUE);
+ *   - the product's name, because "SKU 09008" names nothing to a client.
+ */
+const pageContext = async (movements) => {
+  const batchIds = [...new Set(movements.map((m) => m.batchId).filter(Boolean))];
+  const skuCodes = [...new Set(movements.map((m) => m.skuCode).filter(Boolean))];
+  const [batches, products] = await Promise.all([
+    batchIds.length
+      ? StockBatch.find({ batchId: { $in: batchIds } }, 'batchId workflowType').lean()
+      : [],
+    skuCodes.length
+      ? Product.find({ skuCode: { $in: skuCodes } }, 'skuCode description').lean()
+      : [],
+  ]);
+  const workflowByBatch = new Map(batches.map((b) => [b.batchId, b.workflowType]));
+  const nameBySku = new Map(products.map((p) => [p.skuCode, p.description || null]));
+  return (m) => ({
+    workflowType: workflowByBatch.get(m.batchId) || null,
+    productName: nameBySku.get(m.skuCode) || null,
+  });
+};
 
 /**
  * Build the shared filter for a ledger query.
@@ -200,6 +236,21 @@ export const searchLedgerGrouped = async (req, res, next) => {
           _id: '$batchId',
           movementCount: { $sum: 1 },
           netQuantity: { $sum: '$quantity' },
+          /**
+           * The net split by CLASS, because the combined sum double-counts.
+           *
+           * Raising a PO posts RELEASE −4 and ISSUE −4 in one batch — the units
+           * stop being reserved AND leave the building — so `netQuantity` reads
+           * −8 for a four-unit line. The two figures describe different
+           * balances and were never addable; summing them was an arithmetic
+           * mistake that happened to look like a number.
+           */
+          netPhysical: {
+            $sum: { $cond: [{ $eq: ['$movementClass', 'PHYSICAL'] }, '$quantity', 0] },
+          },
+          netAllocation: {
+            $sum: { $cond: [{ $eq: ['$movementClass', 'ALLOCATION'] }, '$quantity', 0] },
+          },
           skuCodes: { $addToSet: '$skuCode' },
           movementTypes: { $addToSet: '$movementType' },
           firstAt: { $min: '$effectiveDate' },
@@ -242,13 +293,21 @@ export const searchLedgerGrouped = async (req, res, next) => {
         return {
           batchId: r._id,
           workflowType: batch?.workflowType ?? null,
+          // The workflow in client language, from the SAME map the Activity Log
+          // and the flat ledger use. The screen used to keep its own copy of
+          // this list, which is two vocabularies waiting to drift apart.
+          action: workflowLabel(batch?.workflowType),
           status: batch?.status ?? null,
           // What the batch posted in total, versus what matched the filter —
           // stated separately so a filtered view never looks like the whole
           // posting was smaller than it was.
           movementCount: r.movementCount,
           batchLineCount: batch?.lineCount ?? r.movementCount,
+          // Kept so nothing reading the old field breaks; the screen shows
+          // the two below, which are the figures that mean something.
           netQuantity: r.netQuantity,
+          netPhysical: r.netPhysical,
+          netAllocation: r.netAllocation,
           skuCount: r.skuCodes.length,
           sampleSkus: r.skuCodes.slice(0, 3),
           movementTypes: r.movementTypes,
@@ -293,9 +352,10 @@ export const searchLedger = async (req, res, next) => {
       StockMovement.countDocuments(filter),
     ]);
 
+    const ctx = await pageContext(movements);
     res.status(200).json({
       success: true,
-      data: movements.map(shapeMovement),
+      data: movements.map((m) => shapeMovement(m, ctx(m))),
       pagination: { total, page, pages: Math.ceil(total / limit) || 1, limit },
     });
   } catch (error) {
@@ -327,9 +387,10 @@ export const getSkuMovements = async (req, res, next) => {
       StockMovement.countDocuments(filter),
     ]);
 
+    const ctx = await pageContext(movements);
     res.status(200).json({
       success: true,
-      data: movements.map(shapeMovement),
+      data: movements.map((m) => shapeMovement(m, ctx(m))),
       pagination: { total, page, pages: Math.ceil(total / limit) || 1, limit },
     });
   } catch (error) {
@@ -350,7 +411,8 @@ export const getMovement = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Movement not found' });
     }
 
-    res.status(200).json({ success: true, data: shapeMovement(movement) });
+    const ctx = await pageContext([movement]);
+    res.status(200).json({ success: true, data: shapeMovement(movement, ctx(movement)) });
   } catch (error) {
     next(error);
   }
@@ -372,9 +434,10 @@ export const getBatch = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Batch not found' });
     }
 
+    const batchCtx = await pageContext(visible);
     res.status(200).json({
       success: true,
-      data: { ...batch, movements: visible.map(shapeMovement) },
+      data: { ...batch, movements: visible.map((m) => shapeMovement(m, batchCtx(m))) },
     });
   } catch (error) {
     next(error);

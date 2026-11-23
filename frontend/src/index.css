@@ -410,6 +410,17 @@ html.dark .text-warning-700 { color: #f3c98b; }
 html.dark .text-warning-500 { color: #e0a355; }
 html.dark .border-warning-200 { border-color: rgba(249, 115, 22, 0.30); }
 
+/* The `success` accent never had dark text rules, because `text-success-700`
+   generated no CSS until the 700 step was added to the theme. Now that it does,
+   the full-saturation greens would sit on the navy cards the same way the hot
+   ambers above did. Same treatment: move up the ramp, dim the border. */
+html.dark .text-success-700 { color: #86efac; }
+html.dark .text-success-600 { color: #74e39c; }
+html.dark .text-success-500 { color: #5fd389; }
+html.dark .border-success-200 { border-color: rgba(34, 197, 94, 0.30); }
+html.dark .border-indigo-200 { border-color: rgba(99, 102, 241, 0.30); }
+html.dark .text-indigo-700 { color: #a5b4fc; }
+
 /* ── Printing the picklist / PO preview ─────────────────────────────────────
    The preview is a dialog, and the document sits inside a card that is
    `max-h-[92vh] overflow-hidden` and carries an inline framer-motion transform.
