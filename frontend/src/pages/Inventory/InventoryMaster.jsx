@@ -116,6 +116,7 @@ const DetailPanel = ({
     if (!item) { setForm(null); return; }
     setForm({
       description: item.description || '',
+      msilCode: item.msilCode || '',
       uom: item.uom || 'PCS',
       leadTime: item.planning.leadTime ?? 0,
       safetyFactor: item.planning.safetyFactor ?? 0,
@@ -152,6 +153,13 @@ const DetailPanel = ({
       // planning save never depends on the server tolerating a field the
       // caller is not allowed to set.
       ...(canEditBox ? { boxNo: form.boxNo || null } : {}),
+      // Trimmed, and an emptied field is sent as null rather than '' so that
+      // clearing a code and never having had one read identically downstream.
+      // Case is left exactly as typed: the server compares codes
+      // case-insensitively when checking for a clash but stores what it is
+      // given, and upper-casing here would make this screen disagree with the
+      // code the Fresh Inventory import wrote.
+      msilCode: form.msilCode.trim() || null,
       vendorName: form.vendorName || null,
     });
   };
@@ -309,6 +317,23 @@ const DetailPanel = ({
                 disabled={!canEdit} placeholder="Optional — falls back to the SKU code"
               />
             </div>
+            {/* THE MSIL CODE IS EDITABLE HERE, unlike the SKU code above it.
+                Nothing stores it as a foreign key, so changing it is an
+                ordinary field save rather than the identity change renaming a
+                SKU is - which is why it belongs in this form and the SKU code
+                does not. The server refuses a code already on another SKU, and
+                adds a new one to the allowlist that booking checks. */}
+            <Input
+              label="MSIL Code"
+              // The shared Input renders its label unlinked (no htmlFor/id), so
+              // the visible label alone names nothing for a screen reader. The
+              // SKU rename field above does the same thing for the same reason.
+              aria-label="MSIL Code"
+              value={form.msilCode}
+              onChange={set('msilCode')}
+              disabled={!canEdit}
+              placeholder={canEdit ? 'e.g. MA0LW004000 — blank if none' : undefined}
+            />
             <Input
               label="Box No"
               value={form.boxNo}
@@ -331,6 +356,17 @@ const DetailPanel = ({
           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
             A SKU still holding or owing stock cannot be deactivated.
           </p>
+          {/* Said plainly, because both consequences are invisible from this
+              screen: the Fresh Inventory sheet finds a product BY its MSIL
+              code, and booking checks the code against a separate allowlist. */}
+          {canEdit && (
+            <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
+              The MSIL Code is how the Fresh Inventory import recognises this SKU,
+              so changing it changes which sheet rows land on it. Two SKUs cannot
+              share one code. A new code is accepted for ordering automatically;
+              one that was deliberately deactivated stays deactivated.
+            </p>
+          )}
           {/* The box number is the one field on this panel the warehouse acts
               on directly, so both the "who" and the "when" are stated rather
               than left to a disabled input to imply. */}
