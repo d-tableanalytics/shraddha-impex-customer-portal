@@ -188,13 +188,19 @@ describe('raising a PO with a delivery schedule date', () => {
     assert.equal(mail.attachments[1].content.subarray(0, 4).toString(), '%PDF');
   });
 
-  test('a PO raised without a date gets one three days after the PO was raised', async () => {
-    // Changed 2026-11-23. These POs used to go out quoting no date at all, or -
-    // once a booking carried a default - the BOOKING's date + 3, which on a
-    // booking that waited a fortnight for its PO was already in the past.
+  test('a PO raised without a date gets one three days after the booking was confirmed', async () => {
+    /*
+     * THE BOOKING DAY IS THE BASIS (settled 2026-11-24). These POs used to go
+     * out quoting no date at all; for one day (2026-11-23) they quoted the PO
+     * day + 3 instead, so that an old booking's PO could not promise a date
+     * that had already passed. The client asked for one rule - booking + 3 -
+     * and this booking is deliberately a FORTNIGHT OLD so that the two bases
+     * give different answers and the test can tell them apart.
+     */
     const customer = await makeCustomer();
     ADMIN._id = customer._id;
-    await makeLine(customer._id, { lineSeq: 0 });
+    const confirmedAt = new Date(Date.now() - 14 * 86_400_000);
+    await makeLine(customer._id, { lineSeq: 0, orderTimestamp: confirmedAt });
 
     await run(raisePo, {
       params: { orderId: ORDER_ID },
@@ -203,10 +209,15 @@ describe('raising a PO with a delivery schedule date', () => {
     });
 
     const [row] = await Order.find({ orderId: ORDER_ID }).lean();
-    // Derived from the row's OWN PO timestamp rather than from a date computed
-    // in the test, so this cannot drift and cannot straddle midnight IST.
-    const expectedIso = defaultDispatchDate(row.poGeneratedAt).toISOString();
+    // Derived from the row's OWN confirmation timestamp rather than from a date
+    // computed in the test, so this cannot drift and cannot straddle midnight IST.
+    const expectedIso = defaultDispatchDate(row.orderTimestamp).toISOString();
     assert.equal(row.scheduledDate.toISOString(), expectedIso);
+    // And emphatically NOT the PO day, which is today.
+    assert.notEqual(
+      row.scheduledDate.toISOString(),
+      defaultDispatchDate(row.poGeneratedAt).toISOString(),
+    );
     // null means SYSTEM: nobody at the desk chose this date, and the schedule
     // panel tells the two apart.
     assert.equal(row.scheduledBy, null);
@@ -227,7 +238,9 @@ describe('raising a PO with a delivery schedule date', () => {
 
   test("the desk's own date is never overwritten by the default", async () => {
     // The PO dialog collects a date two fields above the PO number. Replacing
-    // what a human just typed with PO + 3 would make that field decorative.
+    // what a human just typed with booking + 3 would make that field decorative
+    // — and it is the field the desk uses to correct an old booking whose
+    // booking + 3 has already gone past.
     const customer = await makeCustomer();
     ADMIN._id = customer._id;
     await makeLine(customer._id, { lineSeq: 0 });
@@ -243,7 +256,7 @@ describe('raising a PO with a delivery schedule date', () => {
     assert.equal(row.scheduledDate.toISOString().slice(0, 10), chosen);
     assert.notEqual(
       row.scheduledDate.toISOString(),
-      defaultDispatchDate(row.poGeneratedAt).toISOString(),
+      defaultDispatchDate(row.orderTimestamp || row.createdAt).toISOString(),
     );
     // A date the desk chose is attributed to the desk.
     assert.equal(String(row.scheduledBy), String(ADMIN._id));

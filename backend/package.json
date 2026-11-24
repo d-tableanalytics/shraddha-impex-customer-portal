@@ -21,6 +21,8 @@
     "verify:pricing": "node scripts/verify-pricing.js",
     "pricelist": "node scripts/import-pricelist.js",
     "pricelist:apply": "node scripts/import-pricelist.js --apply",
+    "dispatch:backfill": "node scripts/backfill-dispatch-dates.js",
+    "dispatch:backfill:apply": "node scripts/backfill-dispatch-dates.js --apply",
     "moq:backfill": "node scripts/migrate-customer-moq.js",
     "moq:backfill:apply": "node scripts/migrate-customer-moq.js --apply",
     "roles:baseline": "node scripts/seed-role-baselines.js",

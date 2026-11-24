@@ -32,6 +32,7 @@ import {
 import { bookingStatusOf, stageLabel, stageIndex } from '../../utils/bookingLifecycle.js';
 import User from '../../models/User.js';
 import { QTY_EDIT_ACTIONS } from '../sales/sales.controller.js';
+import { defaultDispatchDate } from '../../utils/dispatchDate.js';
 
 // Pass `user` to restrict the lookup to that user's permitted brands, so a
 // product they cannot access resolves to null instead of being orderable by id.
@@ -567,6 +568,48 @@ export const updateOrderPO = async (req, res, next) => {
         { $set: { poNumber, poGeneratedAt: now, poGeneratedBy: req.user._id } },
         opts,
       );
+
+      /*
+       * THE DISPATCH DATE: the booking confirmation day + 3 (added 2026-11-24).
+       *
+       * This route collects no date — it takes a PO number and nothing else —
+       * so until now it left `scheduledDate` at whatever confirmation put there,
+       * or at null on a booking confirmed before dispatch dates existed. A null
+       * prints as an EMPTY "DISPATCH DATE" cell on the delivery-schedule
+       * document the customer files their PO against, which is the complaint
+       * this change answers.
+       *
+       * The rule is the one `raisePo` applies, derived per line from that
+       * line's own `orderTimestamp`, so the two PO routes cannot date the same
+       * booking differently. Because it is a function of the booking day rather
+       * than of now, it recomputes to the same date however often a PO is
+       * raised against the booking.
+       *
+       * A DESK-PICKED DATE IS NEVER OVERWRITTEN. `scheduledBy` is the test, not
+       * `scheduledDate`: null means the system derived it (so re-deriving is
+       * correct), an id means a human chose it, and this route — which cannot
+       * carry a human's intent about dates — has no business replacing that.
+       */
+      const schedulable = await Order.find(
+        { orderId: orderNumber, status: { $in: SCHEDULABLE_STATUSES }, scheduledBy: null },
+        '_id orderTimestamp createdAt',
+        opts,
+      ).lean();
+      if (schedulable.length) {
+        await Order.bulkWrite(schedulable.map((line) => ({
+          updateOne: {
+            filter: { _id: line._id },
+            update: {
+              $set: {
+                scheduledDate: defaultDispatchDate(line.orderTimestamp || line.createdAt || now),
+                scheduledBy: null,
+                scheduledAt: now,
+              },
+            },
+          },
+        })), opts);
+      }
+
       return settleBooking({
         orderId: orderNumber,
         action: 'consume',
