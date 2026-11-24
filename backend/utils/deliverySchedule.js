@@ -117,14 +117,20 @@ export async function gatherSchedule(customerId) {
  * Statuses that mean the goods on a line have physically left.
  *
  * THERE IS NO PER-LINE DISPATCHED QUANTITY IN THIS SYSTEM. Dispatch is a
- * lifecycle STAGE — a line is 'Dispatched' or it is not — so "Qty Dispatch" is
- * derived: a dispatched line has dispatched all of its quantity, and anything
- * short of that stage has dispatched none of it. That is exactly what the stage
- * means today, and inventing a partial figure the database cannot support would
- * put a number on a customer's document that nothing could reconcile.
+ * lifecycle STAGE — a line is 'Dispatched' or it is not.
+ *
+ * This list now decides one narrow thing: whether a line's `statusTimestamp`
+ * may be read as an ACTUAL dispatch date. It used to drive the "Qty Dispatch"
+ * column and the dispatch date column outright, which left both blank on every
+ * purchase-order mail, because a PO is raised before anything ships.
+ *
+ * Both columns are now filled from the PURCHASE ORDER itself — the quantity it
+ * commits and the date it is due out — and this list only says when the plan
+ * can be replaced by what actually happened. See `qtyDispatched` and
+ * `dispatchDate` below.
  *
  * 'Delivered' counts as dispatched. It is a LATER stage, not a different one,
- * and a delivered line that reported nothing dispatched would read as an error.
+ * and a delivered line that reported no dispatch date would read as an error.
  */
 const DISPATCHED_STATUSES = ['Dispatched', 'Delivered'];
 
@@ -203,7 +209,7 @@ export async function buildBookingScheduleDoc(orderId, { customer = null, rows =
 
   const docLines = lines.map((row, i) => {
     const qty = row.confirmedQty ?? row.requestedQty ?? 0;
-    const dispatched = DISPATCHED_STATUSES.includes(row.status) ? qty : 0;
+    const hasDispatched = DISPATCHED_STATUSES.includes(row.status);
     return {
       // Renumbered densely from 1. `lineSeq` is deliberately sparse — a line
       // that became an indent leaves a gap in it — and a customer's document
@@ -213,12 +219,40 @@ export async function buildBookingScheduleDoc(orderId, { customer = null, rows =
       msilCode: row.msilCode || '',
       skuCode: row.skuCode,
       qty,
-      qtyDispatched: dispatched,
-      // Only a dispatched line has a dispatch date, and statusTimestamp is when
-      // the stage was last set. On a line still being prepared it is the date of
-      // some earlier stage, which is not a dispatch date and must not print as
-      // one.
-      dispatchDate: dispatched ? row.statusTimestamp || null : null,
+      // THE QUANTITY THIS PO COMMITS, not a running total of what has left the
+      // building (changed 2026-11-23, at the client's request).
+      //
+      // This column is read as "how many are you sending me", and the mail it
+      // appears in is the one raising the PO - at which moment nothing has
+      // dispatched, so a column derived from the dispatch STAGE was blank on
+      // every line of every purchase-order mail. A blank column on the document
+      // a customer files their PO against reads as an omission.
+      //
+      // So it is now the confirmed quantity: the same figure as `qty`, which is
+      // the honest answer at PO time, and the figure the customer is being
+      // committed.
+      qtyDispatched: qty,
+      /*
+       * THE DATE THE GOODS ARE DUE OUT - the PO's own dispatch date, which is
+       * the PO day + 3 unless the desk picked one (see raisePo).
+       *
+       * This column used to print ONLY a real dispatch timestamp, so it was
+       * empty on every purchase-order mail for the same reason Qty Dispatch
+       * was: the PO is raised before anything moves. A customer reading the
+       * schedule got a DISPATCH DATE column with nothing in it.
+       *
+       * Once a line HAS gone out, the actual timestamp replaces the plan. It is
+       * the better fact, and a line that shipped early or late must not keep
+       * showing the date it was promised for.
+       *
+       * `statusTimestamp` is only trusted on a line that reached a dispatched
+       * stage. On any earlier stage it is the time that EARLIER stage was set,
+       * which is not a dispatch date and must never print as one - that was the
+       * original reason for the gate, and it still holds.
+       */
+      dispatchDate: (hasDispatched ? row.statusTimestamp : null)
+        || row.scheduledDate
+        || null,
       scheduledDate: row.scheduledDate || null,
     };
   });

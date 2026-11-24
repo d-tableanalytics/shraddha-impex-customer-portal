@@ -125,13 +125,18 @@ export const scheduleColumns = ({ showMsilCode = false, skuLabel = 'SKU Code' } 
   { header: QTY_COL, group: ORDER_GROUP, width: 8, pdfWidth: 34, get: (l) => l.qty ?? 0, numeric: true },
 
   /*
-   * A ZERO IS PRINTED AS BLANK on the two dispatch columns, which is what the
-   * reference document does and is not merely cosmetic: "0 dispatched" and
-   * "nothing has moved yet" are the same fact, and a column of zeroes down a
-   * fresh purchase order reads as a report of failure rather than of a schedule
-   * not yet begun.
+   * QTY DISPATCH CARRIES THE CONFIRMED QUANTITY (changed 2026-11-23) and so is
+   * printed exactly like the Qty column beside it, zero included.
+   *
+   * It used to blank a zero, on the reasoning that "0 dispatched" and "nothing
+   * has moved yet" are the same fact. That reasoning went with the old meaning.
+   * The figure is no longer a report of movement, it is the quantity being
+   * committed, and a line committing zero is a fact worth printing - blanking it
+   * would leave the customer unable to tell it from a column that failed to
+   * render. The DISPATCH DATE beside it still blanks, because an absent date
+   * genuinely is an absent event.
    */
-  { header: DISPATCH_COL, group: SCHEDULE_GROUP, width: 12, pdfWidth: 46, get: (l) => l.qtyDispatched || '', numeric: true },
+  { header: DISPATCH_COL, group: SCHEDULE_GROUP, width: 12, pdfWidth: 46, get: (l) => l.qtyDispatched ?? 0, numeric: true },
   { header: 'DISPATCH DATE', group: SCHEDULE_GROUP, width: 14, pdfWidth: 58, get: (l) => fmtDate(l.dispatchDate), date: true },
 ];
 
@@ -154,7 +159,7 @@ const totalFor = (column, doc) => {
   switch (column.header) {
     case PO_COL: return 'TOTAL';
     case QTY_COL: return doc.totals?.qty ?? 0;
-    case DISPATCH_COL: return doc.totals?.dispatched || '';
+    case DISPATCH_COL: return doc.totals?.dispatched ?? 0;
     default: return '';
   }
 };

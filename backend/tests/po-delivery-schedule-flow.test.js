@@ -25,6 +25,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 import { startTestMongo, stopTestMongo, clearCollections } from './helpers/mongo.js';
+import { defaultDispatchDate } from '../utils/dispatchDate.js';
 
 const require = createRequire(import.meta.url);
 
@@ -187,7 +188,10 @@ describe('raising a PO with a delivery schedule date', () => {
     assert.equal(mail.attachments[1].content.subarray(0, 4).toString(), '%PDF');
   });
 
-  test('a PO raised without a date still goes out, and quotes no delivery date', async () => {
+  test('a PO raised without a date gets one three days after the PO was raised', async () => {
+    // Changed 2026-11-23. These POs used to go out quoting no date at all, or -
+    // once a booking carried a default - the BOOKING's date + 3, which on a
+    // booking that waited a fortnight for its PO was already in the past.
     const customer = await makeCustomer();
     ADMIN._id = customer._id;
     await makeLine(customer._id, { lineSeq: 0 });
@@ -199,14 +203,50 @@ describe('raising a PO with a delivery schedule date', () => {
     });
 
     const [row] = await Order.find({ orderId: ORDER_ID }).lean();
-    assert.equal(row.scheduledDate, null);
+    // Derived from the row's OWN PO timestamp rather than from a date computed
+    // in the test, so this cannot drift and cannot straddle midnight IST.
+    const expectedIso = defaultDispatchDate(row.poGeneratedAt).toISOString();
+    assert.equal(row.scheduledDate.toISOString(), expectedIso);
+    // null means SYSTEM: nobody at the desk chose this date, and the schedule
+    // panel tells the two apart.
+    assert.equal(row.scheduledBy, null);
 
     assert.ok(await waitForMail(1));
     assert.equal(sent[0].attachments.length, 2);
-    // The schedule table is still in the body; there is simply no date to put
-    // in the "Dispatch Date" line above it.
     assert.match(sent[0].html, /FULL ORDER/);
-    assert.doesNotMatch(sent[0].html, /Dispatch Date:/);
+    // ...and the mail now quotes it, which is the point of the change.
+    assert.match(sent[0].html, /Dispatch Date:/);
+
+    // AND it reaches the DISPATCH DATE COLUMN of the schedule table, which is
+    // the cell the client was actually looking at. The headline date above the
+    // table was already filled while this column was still empty, so asserting
+    // only the headline is what let that slip through.
+    const [, yyyy, mm, dd] = expectedIso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    assert.match(sent[0].html, new RegExp(`${dd}-${mm}-${yyyy}`));
+  });
+
+  test("the desk's own date is never overwritten by the default", async () => {
+    // The PO dialog collects a date two fields above the PO number. Replacing
+    // what a human just typed with PO + 3 would make that field decorative.
+    const customer = await makeCustomer();
+    ADMIN._id = customer._id;
+    await makeLine(customer._id, { lineSeq: 0 });
+
+    const chosen = futureYmd(45);
+    await run(raisePo, {
+      params: { orderId: ORDER_ID },
+      body: { poNumber: 'PO-DESK-DATE', deliveryScheduleDate: chosen },
+      user: ADMIN,
+    });
+
+    const [row] = await Order.find({ orderId: ORDER_ID }).lean();
+    assert.equal(row.scheduledDate.toISOString().slice(0, 10), chosen);
+    assert.notEqual(
+      row.scheduledDate.toISOString(),
+      defaultDispatchDate(row.poGeneratedAt).toISOString(),
+    );
+    // A date the desk chose is attributed to the desk.
+    assert.equal(String(row.scheduledBy), String(ADMIN._id));
   });
 
   test('a date in the past is refused before anything is written', async () => {

@@ -30,6 +30,7 @@ import {
   openIndentBySku, openIndentsByOrder, openIndentLinesFor, awaitingDecisionByOrder,
 } from '../../utils/bookingJourney.js';
 import { runInTransaction } from '../../utils/transaction.js';
+import { defaultDispatchDate } from '../../utils/dispatchDate.js';
 import { settleBooking } from '../../utils/stockSettlement.js';
 import {
   buildScheduleMailParts, OPEN_BOOKING_STATUSES as SCHEDULABLE_STATUSES,
@@ -1197,12 +1198,39 @@ export const raisePo = async (req, res, next) => {
      * confines itself to, so the two paths cannot disagree about which lines can
      * carry a date.
      */
-    if (scheduleDate) {
-      await Order.updateMany(
-        { orderId, status: { $in: SCHEDULABLE_STATUSES } },
-        { $set: { scheduledDate: scheduleDate, scheduledBy: req.user._id, scheduledAt: now } },
-      );
-    }
+    /*
+     * EVERY PO LEAVES WITH A DISPATCH DATE, counted from the day the PO is
+     * RAISED (changed 2026-11-23, at the client's request).
+     *
+     * The desk's own date still wins when it typed one - that field is two
+     * lines up on the same dialog, it is validated against today, and silently
+     * replacing a date a human just chose would make the dialog a liar.
+     *
+     * When the desk leaves it empty the line keeps whatever it was given at
+     * BOOKING confirmation, which is the booking day + 3 (see
+     * utils/dispatchDate.js). On a booking that sat a fortnight waiting for a
+     * PO that date is already in the past, and the purchase-order mail was
+     * quoting it to the customer as a commitment - a date that had been
+     * overtaken, which is what read as 'hardcoded'. Re-deriving it from the PO
+     * day makes the promise one the PO can actually keep.
+     *
+     * `scheduledBy` stays null on the derived date: null means SYSTEM here, and
+     * the Delivery schedule panel distinguishes a date the desk chose from one
+     * the portal defaulted. Attributing this one to whoever clicked Confirm
+     * would claim a decision they did not make.
+     */
+    const deskPicked = Boolean(scheduleDate);
+    const effectiveScheduleDate = scheduleDate || defaultDispatchDate(now);
+    await Order.updateMany(
+      { orderId, status: { $in: SCHEDULABLE_STATUSES } },
+      {
+        $set: {
+          scheduledDate: effectiveScheduleDate,
+          scheduledBy: deskPicked ? req.user._id : null,
+          scheduledAt: now,
+        },
+      },
+    );
 
     /**
      * The price this customer is being given.

@@ -132,14 +132,78 @@ describe('the Maruti Code column', () => {
 /* ── The figures the document derives ─────────────────────────────────────── */
 
 describe('the dispatch figures', () => {
-  test('an undispatched line reports nothing dispatched', async () => {
+  test('Qty Dispatch is the CONFIRMED quantity, even before anything ships', async () => {
+    // The rule this replaced derived the column from the dispatch stage, which
+    // made it 0 - printed blank - on every purchase-order mail, because a PO is
+    // raised before anything moves. The column is the quantity being committed.
     const customer = await makeCustomer();
     await makeLine(customer._id, { lineSeq: 0, confirmedQty: 22, scheduledDate: null });
 
     const [line] = (await buildBookingScheduleDoc(ORDER_ID)).lines;
     assert.equal(line.qty, 22);
-    assert.equal(line.qtyDispatched, 0);
+    assert.equal(line.qtyDispatched, 22);
+    // The DATE is still a claim about an event, so an unshipped line has none.
     assert.equal(line.dispatchDate, null);
+  });
+
+  test('Qty Dispatch follows the confirmed figure, not the requested one', async () => {
+    // The desk cutting a line back is exactly the case the client asked about:
+    // the customer must be told the number the PO commits, not the one asked for.
+    const customer = await makeCustomer();
+    await makeLine(customer._id, { lineSeq: 0, requestedQty: 40, confirmedQty: 25, scheduledDate: null });
+
+    const [line] = (await buildBookingScheduleDoc(ORDER_ID)).lines;
+    assert.equal(line.qtyDispatched, 25);
+  });
+
+  test('DISPATCH DATE carries the scheduled dispatch date before anything ships', async () => {
+    // The column used to print only a real dispatch timestamp, so it was empty
+    // on every purchase-order mail - a DISPATCH DATE column with no date in it.
+    const customer = await makeCustomer();
+    const due = new Date(Date.UTC(2026, 10, 26));
+    await makeLine(customer._id, { lineSeq: 0, status: 'PO Received', scheduledDate: due });
+
+    const [line] = (await buildBookingScheduleDoc(ORDER_ID)).lines;
+    assert.equal(new Date(line.dispatchDate).toISOString(), due.toISOString());
+  });
+
+  test('an ACTUAL dispatch replaces the date it was promised for', async () => {
+    // A line that shipped early or late must not keep showing the plan.
+    const customer = await makeCustomer();
+    const shipped = new Date('2026-11-24T06:00:00Z');
+    await makeLine(customer._id, {
+      lineSeq: 0,
+      status: 'Dispatched',
+      statusTimestamp: shipped,
+      scheduledDate: new Date(Date.UTC(2026, 10, 26)),
+    });
+
+    const [line] = (await buildBookingScheduleDoc(ORDER_ID)).lines;
+    assert.equal(new Date(line.dispatchDate).toISOString(), shipped.toISOString());
+  });
+
+  test('an earlier stage timestamp is never printed as a dispatch date', async () => {
+    // statusTimestamp on a line still being prepared is when THAT stage was
+    // set. With no scheduled date there is simply nothing to show.
+    const customer = await makeCustomer();
+    await makeLine(customer._id, {
+      lineSeq: 0,
+      status: 'PO Received',
+      statusTimestamp: new Date('2026-11-20T06:00:00Z'),
+      scheduledDate: null,
+    });
+
+    const [line] = (await buildBookingScheduleDoc(ORDER_ID)).lines;
+    assert.equal(line.dispatchDate, null);
+  });
+
+  test('a line never confirmed falls back to the requested quantity', async () => {
+    const customer = await makeCustomer();
+    await makeLine(customer._id, { lineSeq: 0, requestedQty: 17, confirmedQty: null, scheduledDate: null });
+
+    const [line] = (await buildBookingScheduleDoc(ORDER_ID)).lines;
+    assert.equal(line.qty, 17);
+    assert.equal(line.qtyDispatched, 17);
   });
 
   test('a dispatched line reports its quantity and the date the stage was set', async () => {
@@ -173,7 +237,9 @@ describe('the dispatch figures', () => {
     await makeLine(customer._id, { lineSeq: 1, skuCode: '13145M.200-12', confirmedQty: 22 });
 
     const doc = await buildBookingScheduleDoc(ORDER_ID);
-    assert.deepEqual(doc.totals, { qty: 52, dispatched: 30 });
+    // `dispatched` now tracks `qty`, because every line reports the quantity it
+    // commits rather than the quantity that has physically left.
+    assert.deepEqual(doc.totals, { qty: 52, dispatched: 52 });
   });
 
   test('a cancelled line is left off entirely — nobody is sending those goods', async () => {
@@ -261,7 +327,12 @@ describe('the Excel and PDF attachments', () => {
     await makeLine(customer._id, {
       lineSeq: 0, confirmedQty: 30, status: 'Dispatched', statusTimestamp: new Date('2026-08-03T06:00:00Z'),
     });
-    await makeLine(customer._id, { lineSeq: 1, skuCode: '13145M.200-12', msilCode: 'MA0M1000000', confirmedQty: 22 });
+    // Not yet shipped, but DUE on the 26th - the ordinary state of every line
+    // on a freshly raised PO, and the row that used to print two empty cells.
+    await makeLine(customer._id, {
+      lineSeq: 1, skuCode: '13145M.200-12', msilCode: 'MA0M1000000', confirmedQty: 22,
+      scheduledDate: new Date(Date.UTC(2026, 10, 26)),
+    });
 
     const { doc, attachments, tableHtml } = await buildScheduleMailParts(ORDER_ID);
     assert.equal(attachments.length, 2);
@@ -297,13 +368,18 @@ describe('the Excel and PDF attachments', () => {
     const first = rows[rows.indexOf(headRow) + 1];
     assert.deepEqual(first, [PO, 1, 'MA0LW004000', '14145M.150-14', 30, 30, '03-08-2026']);
 
+    // The row the client was looking at: not shipped, yet both schedule cells
+    // are filled - the quantity the PO commits, and the day it is due out.
     const second = rows[rows.indexOf(headRow) + 2];
-    assert.deepEqual(second, [PO, 2, 'MA0M1000000', '13145M.200-12', 22, '', '']);
+    assert.deepEqual(second, [PO, 2, 'MA0M1000000', '13145M.200-12', 22, 22, '26-11-2026']);
 
     const totals = rows[rows.indexOf(headRow) + 3];
     assert.equal(totals[0], 'TOTAL');
     assert.equal(totals[4], 52);
-    assert.equal(totals[5], 30);
+    assert.equal(totals[5], 52);
+    // A NUMBER, not the string '52' - Excel sorts and sums text wrongly and
+    // flags it on a document the customer opens.
+    assert.equal(typeof totals[5], 'number');
 
     // The body of the email carries the same table, so the mail is readable
     // without opening anything.
