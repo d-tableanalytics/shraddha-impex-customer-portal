@@ -85,6 +85,10 @@ export default [
         "detail": "Cancels stock that arrived against this booking's indent. The record is kept as Cancelled, and the stock and the indent are restored."
       },
       {
+        "title": "Indent section (standalone and partial)",
+        "detail": "Under Booking Items, every line the customer is still waiting for on this booking, with SKU, MSIL code, product name, quantity and status. Standalone lines come first: stock covered none of that SKU, so it has no row in Booking Items at all and appears nowhere else on the screen. Partial lines are the shortfall on a line that is already in the table above. These are live reservations, not the quantity frozen on the booking at confirmation."
+      },
+      {
         "title": "MSIL Supply Date and held indents",
         "detail": "Sets the date an MSIL customer needs the goods by. Indent stock that arrives too late is held, and the desk chooses Convert (add it to the booking) or Cancel."
       },

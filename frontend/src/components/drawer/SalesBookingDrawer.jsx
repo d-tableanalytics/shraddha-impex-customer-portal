@@ -249,6 +249,45 @@ export const SalesBookingDrawer = () => {
    */
   const mayEditDetails = hasPermission(user, PERMISSIONS.OVERRIDE_PO_LOCK);
 
+  /**
+   * THE OPEN INDENT, STANDALONE LINES FIRST.
+   *
+   * A STANDALONE indent line is one no row of Booking Items accounts for:
+   * stock covered none of that SKU, so the confirmation never wrote an order
+   * row for it (`confirmedQty > 0` is the condition) and it exists purely as a
+   * reservation. A PARTIAL one is the shortfall on a line that IS in the table
+   * above, where it already shows as the row's pending quantity.
+   *
+   * The distinction comes from the SERVER (`line.standalone`), not from
+   * comparing this screen's two lists. Deriving it here was subtly wrong: the
+   * comparison ran against `draft`, which is the desk's unsaved working copy,
+   * so typing the missing SKU into the draft made the warning about it vanish
+   * before anything had been saved — exactly when it still mattered. The old
+   * derivation stays only as a fallback for a payload predating the flag.
+   *
+   * Sorted so the standalone lines come first: they are the ones that cannot be
+   * found anywhere else on the screen, and a desk checking the booking against
+   * the customer's paper PO is reading this section for precisely them.
+   */
+  const indentRows = (() => {
+    const lines = selected.indent?.lines ?? [];
+    return lines
+      .map((l) => ({
+        ...l,
+        isStandalone: typeof l.standalone === "boolean"
+          ? l.standalone
+          : !draft.some((d) => d.skuCode === l.skuCode),
+      }))
+      .sort((a, b) => Number(b.isStandalone) - Number(a.isStandalone));
+  })();
+  const standaloneCount = selected.indent?.standaloneCount
+    ?? indentRows.filter((l) => l.isStandalone).length;
+  const standaloneQty = selected.indent?.standaloneQuantity
+    ?? indentRows.reduce((n, l) => (l.isStandalone ? n + (l.quantity || 0) : n), 0);
+  // Both kinds present: the table is split under two headings rather than left
+  // as one list with a badge every other row.
+  const indentIsMixed = standaloneCount > 0 && standaloneCount < indentRows.length;
+
   const dirty =
     JSON.stringify(draft.map(({ id, skuCode, quantity }) => ({ id: id || null, skuCode, quantity }))) !==
     JSON.stringify(toDraft(selected).map(({ id, skuCode, quantity }) => ({ id: id || null, skuCode, quantity })));
@@ -1582,6 +1621,18 @@ export const SalesBookingDrawer = () => {
                           ? "Nothing outstanding — stock covered this booking in full."
                           : `${selected.indent.totalQuantity} pc(s) still reserved against this booking`}
                       </p>
+                      {/*
+                        Said in the heading, not left to be counted off the
+                        rows. "Three of these materials have nothing at all in
+                        Booking Items" is the fact the desk is here for, and it
+                        is the one a quick scan of a long table misses.
+                      */}
+                      {standaloneCount > 0 && (
+                        <p className="text-[11px] font-semibold text-amber-700">
+                          {standaloneCount} standalone indent line(s) ({standaloneQty} pc) — not in
+                          Booking Items
+                        </p>
+                      )}
                     </div>
                   </div>
                   {mayPrice && selected.indent.amount != null && selected.indent.lines.length > 0 && (
@@ -1597,42 +1648,89 @@ export const SalesBookingDrawer = () => {
                       <table className="w-full text-left">
                         <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                           <tr>
-                            <th className="px-5 py-3 w-[38%] min-w-[180px]">SKU / Product</th>
-                            <th className="px-5 py-3 w-[26%] min-w-[140px]">MSIL Code</th>
-                            <th className="px-5 py-3 text-center w-[110px]">Quantity</th>
+                            <th className="px-5 py-3 w-[26%] min-w-[150px]">SKU / Product Code</th>
+                            <th className="px-5 py-3 w-[20%] min-w-[130px]">MSIL Code</th>
+                            <th className="px-5 py-3 w-[22%] min-w-[150px]">Product Name</th>
+                            <th className="px-5 py-3 text-center w-[100px]">Quantity</th>
                             <th className="px-5 py-3">Status</th>
                             {mayPrice && <th className="px-5 py-3 text-right w-[130px]">Price</th>}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-sm">
-                          {selected.indent.lines.map((line) => {
+                          {indentRows.flatMap((line, i) => {
                             /*
                               THE WHOLE POINT OF THE SECTION.
 
-                              A SKU on the indent that has no line in the table
-                              above is one stock could not cover at all. It is on
-                              the customer's PO, it is reserved, and it is invisible
-                              everywhere else on this screen — so it is called out
-                              rather than left to be spotted by comparing two lists
-                              by eye.
+                              A standalone line is one stock could not cover at
+                              all. It is on the customer's PO, it is reserved,
+                              and it is invisible everywhere else on this screen
+                              — so it is called out rather than left to be
+                              spotted by comparing two lists by eye.
+
+                              The two kinds are separated under their own
+                              headings when both are present. A badge on every
+                              other row stops being read once a booking has a
+                              dozen indent lines; a heading does not, and it
+                              also makes the partial lines legible as "already
+                              shown above", which the badge never said.
                             */
-                            const inBooking = draft.some((l) => l.skuCode === line.skuCode);
-                            return (
-                              <tr key={line.reservationId || line.skuCode} className="align-top">
+                            const key = line.reservationId || line.skuCode;
+                            const startsGroup =
+                              indentIsMixed &&
+                              (i === 0 || indentRows[i - 1].isStandalone !== line.isStandalone);
+                            const colCount = mayPrice ? 6 : 5;
+                            return [
+                              startsGroup && (
+                                <tr key={`${key}-group`} className="bg-slate-50/80">
+                                  <td
+                                    colSpan={colCount}
+                                    className="px-5 py-2 text-[10px] font-bold uppercase tracking-wider"
+                                  >
+                                    {/*
+                                      "Not in Booking Items" and not "nothing
+                                      confirmed". The two are the same thing for
+                                      a line stock never covered, and they part
+                                      company for one the desk REMOVED: that SKU
+                                      did have confirmed units once, and saying
+                                      it never did would be false. What the flag
+                                      actually means — the table above has no row
+                                      for this SKU — is true in both cases, and
+                                      it is the fact the desk is checking for.
+                                    */}
+                                    {line.isStandalone ? (
+                                      <span className="text-amber-700">
+                                        Standalone indents — no line in Booking Items
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-500">
+                                        Partial indents — shortfall on a line in Booking Items
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ),
+                              <tr key={key} className="align-top">
                                 <td className="px-5 py-3">
                                   <CodeValue value={line.skuCode} />
-                                  {!inBooking && (
+                                  {line.isStandalone && (
                                     <div
                                       className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
-                                      title="Stock could not cover any of this line, so it never became a booking item. It exists only as a reservation."
+                                      title="No line in Booking Items carries this SKU — either stock covered none of it, or the line was removed. It exists only as a reservation."
                                     >
                                       <AlertTriangle size={10} />
-                                      Not in booking items
+                                      Standalone
                                     </div>
                                   )}
                                 </td>
                                 <td className="px-5 py-3">
                                   <CodeValue value={line.msilCode} tone="muted" />
+                                </td>
+                                <td className="px-5 py-3 text-slate-600">
+                                  {line.productName || (
+                                    <span className="text-slate-300" title="No name on the product master.">
+                                      —
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-5 py-3 text-center font-bold text-slate-700 tabular-nums">
                                   {line.quantity}
@@ -1679,8 +1777,8 @@ export const SalesBookingDrawer = () => {
                                     )}
                                   </td>
                                 )}
-                              </tr>
-                            );
+                              </tr>,
+                            ];
                           })}
                         </tbody>
                       </table>
@@ -1690,6 +1788,12 @@ export const SalesBookingDrawer = () => {
                       These are the LIVE reservations, not the quantity frozen onto the booking at
                       confirmation — the two diverge as soon as stock arrives and auto-books part of
                       the indent.
+                      {standaloneCount > 0 && (
+                        <span className="text-amber-700 font-semibold">
+                          {" "}The standalone line(s) have no row in Booking Items at all — check them
+                          against the customer's PO before raising yours.
+                        </span>
+                      )}
                       {mayPrice && selected.indent.unpricedLines > 0 && (
                         <span className="text-amber-700 font-semibold">
                           {" "}{selected.indent.unpricedLines} line(s) could not be rated, so the total

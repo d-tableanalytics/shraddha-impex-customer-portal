@@ -323,12 +323,26 @@ export const shapeBooking = (
      * The lines arrive ALREADY RATED (`valueIndentLines`), because this
      * function is pure and rating an orphan SKU needs the product master. Their
      * money is therefore the same money `value.indent` was totalled from.
+     *
+     * Each line carries `standalone` and `productName` from
+     * `openIndentLinesFor`. `standaloneCount` / `standaloneQuantity` are
+     * totalled here so the desk can head the section with the number that
+     * matters — how many materials on this booking have NOTHING in Booking
+     * Items — without the screen re-deriving it from the line table it happens
+     * to be rendering. That derivation was the bug: a desk that typed the
+     * missing SKU into the draft made the warning about it disappear before
+     * anything was saved.
      */
     indent: indent
       ? {
         indentNumber: indent.indentNumber,
         lines: indent.lines,
         totalQuantity: indent.lines.reduce((n, l) => n + (l.quantity || 0), 0),
+        standaloneCount: indent.lines.filter((l) => l.standalone).length,
+        standaloneQuantity: indent.lines.reduce(
+          (n, l) => (l.standalone ? n + (l.quantity || 0) : n),
+          0,
+        ),
         // Present only alongside the rest of the pricing, same rule as a line's.
         ...(includePricing ? {
           amount: indent.lines.reduce(
