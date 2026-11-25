@@ -121,8 +121,13 @@ const shapedWithValue = async (rows, req, { includePricing, boxNumbers = null } 
    * SKU the booking never carried has to reach the product master. Unrated when
    * the viewer may not see pricing, so the lines carry quantities and no money
    * at all rather than money the response is trusted not to render.
+   *
+   * `rows` is handed over so each line can be marked STANDALONE — on the indent
+   * with no booking row behind it — without a second query for SKUs this
+   * function already has in hand. The flag is decided here rather than on the
+   * screen; see openIndentLinesFor().
    */
-  const indentRaw = await openIndentLinesFor(rows[0]?.orderId);
+  const indentRaw = await openIndentLinesFor(rows[0]?.orderId, { rows });
   const indent = {
     ...indentRaw,
     lines: includePricing
@@ -1350,12 +1355,33 @@ export const raisePo = async (req, res, next) => {
         (async () => {
           const parts = await buildScheduleMailParts(orderId, { customer, rows: updated });
 
+          /*
+           * THE DISPATCH DATE IS PRINTED ONCE ON THIS MAIL, NOT TWICE.
+           *
+           * The schedule table below carries every live line of the booking
+           * with its own dispatch date, in the layout the customer files
+           * purchase orders in — it is the document this mail exists to
+           * deliver. The journey table's own Dispatch Date column would repeat
+           * those dates a few inches above it from the same `scheduledDate`
+           * field, so it is dropped HERE and nowhere else: the confirmation and
+           * status mails have no schedule table and keep their column.
+           *
+           * Conditional on the table actually being there. `tableHtml` is empty
+           * when the schedule doc could not be built — every line cancelled —
+           * and suppressing the column then would leave the mail saying nothing
+           * at all about when anything leaves.
+           */
+          const hasScheduleTable = Boolean(parts.tableHtml);
+
           const body = buildPoRaisedEmail({
             customerName: customer?.user || customer?.company || updated[0].company || 'Customer',
             orderId,
             poNumber,
             summary,
-            journeyHtml: journeyTablesHtml(journey, { audience: 'customer' }),
+            journeyHtml: journeyTablesHtml(journey, {
+              audience: 'customer',
+              dispatchDates: !hasScheduleTable,
+            }),
             scheduleHtml: parts.tableHtml,
             deliveryScheduleDate: parts.doc?.deliveryScheduleDate ?? null,
             attachmentNames: parts.attachments.map((a) => a.filename),

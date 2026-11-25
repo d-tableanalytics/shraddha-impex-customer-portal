@@ -195,7 +195,7 @@ export default [
         "module": "Notifications and email",
         "key": null,
         "why": "Customer, placing staff and admins are told the outcome.",
-        "data": "In-app notices; one booking or indent email to the customer, staff placer copied",
+        "data": "In-app notices; one booking or indent email to the customer, staff placer copied. The booking email carries Booking Details (with each SKU's own dispatch date) and, when stock covered a SKU not at all, a separate Indent table for those lines.",
         "direction": "one-way",
         "trigger": "Confirm Booking",
         "verified": true

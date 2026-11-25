@@ -351,7 +351,14 @@ export const sendBookingMails = async ({
   // The shared booking table, loaded from the rows the confirmation just
   // committed. If the load fails the mail still goes, with the classic single
   // booking table — a mail outage over a table is the wrong trade.
+  //
+  // It also carries the two things this mail cannot work out for itself: the
+  // STANDALONE indent lines, which have no order row and so are absent from
+  // `summary` entirely, and each line's own dispatch date.
   let journeyByAudience = null;
+  // Every distinct dispatch date across the booking's lines. Used only to
+  // decide what the header box may claim — see `headerDispatch` below.
+  let lineDispatchDates = null;
   try {
     const journey = await buildBookingJourney({ orderId: orderNumber });
     if (journey) {
@@ -359,10 +366,42 @@ export const sendBookingMails = async ({
         customer: journeyTablesHtml(journey, { audience: 'customer' }),
         support: journeyTablesHtml(journey, { audience: 'support' }),
       };
+      lineDispatchDates = [...new Set(
+        [...(journey.dispatchBySku?.values() ?? [])]
+          .flat()
+          .map((d) => new Date(d).getTime())
+          .filter((n) => !Number.isNaN(n)),
+      )];
     }
   } catch (e) {
     console.error('[Mail] booking journey build failed, falling back to summary table:', e.message);
   }
+
+  /**
+   * THE HEADER'S DISPATCH DATE IS A SUMMARY, AND MAY NOT PRETEND OTHERWISE.
+   *
+   * The desk schedules PER LINE, so a booking's SKUs routinely leave on
+   * different days. One date in the header read as the date for the whole
+   * booking, which is a promise nobody made the moment two lines disagree —
+   * and the customer has no way to tell from the box that it is only one of
+   * several.
+   *
+   * So the box now states a date ONLY when every scheduled line shares it,
+   * which is the ordinary case at confirmation: `defaultDispatchDate` stamps
+   * the same day on every line booked from stock. When they differ, the box
+   * says so and points at the per-SKU column, which carries the real answer.
+   *
+   * `null` (the journey could not be built) falls back to the caller's
+   * `dispatchDate` — the behaviour this mail has always had.
+   */
+  const headerDispatch = (() => {
+    if (lineDispatchDates === null) {
+      return dispatchDate ? { single: dispatchDate } : null;
+    }
+    if (lineDispatchDates.length === 0) return null;
+    if (lineDispatchDates.length === 1) return { single: new Date(lineDispatchDates[0]) };
+    return { varies: true };
+  })();
 
   const facts = (audience) => `
     <div style="margin: 18px 0; padding: 14px 18px; background: #f0f6ff; border: 1px solid #cfe0f7; border-radius: 4px;">
@@ -373,11 +412,14 @@ export const sendBookingMails = async ({
         ${poNumber && poNumber !== '-' ? ` &nbsp;·&nbsp; PO: <strong>${esc(poNumber)}</strong>` : ''}
         ${hasIndent ? ` &nbsp;·&nbsp; Indent reference: <strong style="font-family: monospace; color: #b54708;">${esc(indentId)}</strong>` : ''}
       </div>
-      ${dispatchDate ? `
+      ${headerDispatch ? `
       <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #cfe0f7;">
         <div style="font-size: 11px; color: #5a7ca8; text-transform: uppercase; letter-spacing: 0.5px;">Dispatch Date</div>
-        <div style="font-size: 16px; font-weight: bold; color: #1a5b9e; margin-top: 2px;">${esc(fmtDay(dispatchDate))}</div>
-        ${hasIndent ? '<div style="margin-top: 2px; font-size: 12px; color: #5a7ca8;">For the units confirmed from stock. Indented units are scheduled once material arrives.</div>' : ''}
+        ${headerDispatch.varies
+          ? '<div style="font-size: 13px; font-weight: bold; color: #1a5b9e; margin-top: 2px;">Varies by SKU</div>'
+            + '<div style="margin-top: 2px; font-size: 12px; color: #5a7ca8;">Each line carries its own date in the Dispatch Date column below.</div>'
+          : `<div style="font-size: 16px; font-weight: bold; color: #1a5b9e; margin-top: 2px;">${esc(fmtDay(headerDispatch.single))}</div>`
+            + (hasIndent ? '<div style="margin-top: 2px; font-size: 12px; color: #5a7ca8;">For the units confirmed from stock. Indented units are scheduled once material arrives.</div>' : '')}
       </div>` : ''}
     </div>
     ${customerBlock(customer, { audience })}

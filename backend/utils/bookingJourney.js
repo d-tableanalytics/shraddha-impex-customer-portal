@@ -5,7 +5,7 @@
  * lifecycle status mails) shows the SAME single table, so the customer can read
  * the whole story of an order in any one of them. One row per SKU:
  *
- *   SKU | Booked | Confirmed | Indent | Change
+ *   SKU | Booked | Confirmed | Indent | Dispatch Date | Change
  *
  * The Change column is reconstructed, not stored: the edit audit trail is
  * replayed forward (buildChangeSummary) to recover each line's booking-stage
@@ -13,12 +13,40 @@
  * actually decided. When nothing was ever edited the column reads "No change",
  * which is exactly what a customer should see.
  *
+ * The Dispatch Date column is PER LINE, read from each order row's
+ * `scheduledDate` — the field the Sales Desk edits. It is deliberately not a
+ * single booking-level date: two SKUs on one booking routinely leave on
+ * different days, and printing one date against both is a promise the warehouse
+ * never made. A line with no date assigned shows an em dash rather than a
+ * default, because "not scheduled yet" and "leaving on the 3rd" are different
+ * facts and guessing between them is how a customer waits in for nothing.
+ *
+ * ---------------------------------------------------------------------------
+ * STANDALONE INDENTS — THE LINES THE BOOKING TABLE CANNOT HOLD
+ * ---------------------------------------------------------------------------
+ *
+ * The table above is driven by the booking's ORDER ROWS, and a line stock could
+ * not cover AT ALL never becomes one: the confirmation only pushes a row when
+ * `confirmedQty > 0`. Such a line exists purely as a reservation under the
+ * booking's indent number, so it has no row to hang an Indent quantity off and
+ * fell out of every mail — the customer was told about the shortfall on the
+ * SKUs they partly got, and heard nothing at all about the SKUs they got none
+ * of.
+ *
+ * They are reported in a SECOND table rather than folded into the first. The
+ * booking table's columns are Booked / Confirmed / Change, which are facts
+ * about an order row; a standalone indent has none of them, and inventing
+ * zeroes for it would change what every existing figure in that table means.
+ * See `standaloneIndentLines` on the journey, and the section rendered by
+ * `standaloneIndentHtml` (headed `STANDALONE_HEADING`) in `journeyTablesHtml`.
+ *
  * This module is a LEAF: it imports models only, so both mail utils and the
  * sales controller can build on it without an import cycle.
  */
 
 import AuditLog from '../models/AuditLog.js';
 import Order, { LINE_ORDER } from '../models/Order.js';
+import { Product } from '../models/Product.js';
 import Reservation from '../models/Reservation.js';
 
 /**
@@ -117,6 +145,46 @@ export const openIndentBySku = async (orderId) =>
   (await openIndentsByOrder([orderId])).get(String(orderId)) ?? new Map();
 
 /**
+ * Display names for a set of SKUs, in ONE query across every brand.
+ *
+ * A product's display name is its `description` — the master has no `name`
+ * field, and every screen that shows one reads that column (see
+ * inventory/activity.controller.js). Missing is null, never the SKU: the caller
+ * decides whether to fall back, and a name that is silently the code again
+ * would make an empty master look populated.
+ *
+ * Uniqueness is per-brand, so the same code can exist twice. Indent lines carry
+ * no brand of their own, so the first match wins — which is also what
+ * `findProductBySku` does, and the two must not disagree about the name of the
+ * line they are both describing.
+ */
+export const productNamesForSkus = async (skuCodes = []) => {
+  const skus = [...new Set(skuCodes.filter(Boolean).map(String))];
+  const out = new Map();
+  if (!skus.length) return out;
+
+  const rows = await Product.find({ skuCode: { $in: skus } }, 'skuCode description').lean();
+  for (const p of rows) {
+    if (!out.get(p.skuCode) && p.description) out.set(p.skuCode, p.description);
+  }
+  return out;
+};
+
+/**
+ * Which SKUs this booking actually holds an order row for.
+ *
+ * The question behind "is this indent line standalone": a SKU with a row was
+ * partly covered by stock and is already on the booking table; a SKU without
+ * one was covered not at all and appears nowhere. Takes the already-loaded rows
+ * when a caller has them, so the sales desk's detail response does not pay for
+ * a second query it already made.
+ */
+const bookedSkusFor = async (orderId, rows = null) => {
+  const source = rows ?? await Order.find({ orderId }).select('skuCode').lean();
+  return new Set(source.map((r) => r.skuCode).filter(Boolean));
+};
+
+/**
  * The open indent for ONE booking, as lines.
  *
  * ---------------------------------------------------------------------------
@@ -141,11 +209,27 @@ export const openIndentBySku = async (orderId) =>
  * booking, which the batched `openIndentsByOrder` already gives it in one
  * query, and fetching every reservation line for a whole page would be a
  * query per row for something no list column shows.
+ *
+ * Every line is classified:
+ *
+ *   standalone: true   no order row on this booking carries the SKU — stock
+ *                      covered none of it, so it is invisible everywhere the
+ *                      booking's own lines are listed.
+ *   standalone: false  the booking holds a partly-confirmed row for the SKU;
+ *                      the shortfall already shows in that row's Indent column.
+ *
+ * The flag is decided on the SERVER and sent, rather than left to each screen
+ * to work out by comparing two lists. The sales desk used to derive it from the
+ * line table it had on hand, which made the answer move while the desk typed —
+ * adding the missing SKU as a draft line made the warning about it disappear
+ * before anything had been saved.
+ *
+ * @param {object[]|null} [options.rows] the booking's order rows, if loaded
  */
-export const openIndentLinesFor = async (orderId) => {
+export const openIndentLinesFor = async (orderId, { rows = null } = {}) => {
   const indentNumber = indentIdFor(orderId);
 
-  const rows = await Reservation.find({
+  const reservations = await Reservation.find({
     indentNumber,
     status: { $in: ['Pending', 'Partially Confirmed'] },
   })
@@ -153,13 +237,28 @@ export const openIndentLinesFor = async (orderId) => {
     .sort({ skuCode: 1 })
     .lean();
 
+  // Both lookups are skipped entirely for a booking stock covered in full,
+  // which is most of them.
+  const [booked, names] = reservations.length
+    ? await Promise.all([
+      bookedSkusFor(orderId, rows),
+      productNamesForSkus(reservations.map((r) => r.skuCode)),
+    ])
+    : [new Set(), new Map()];
+
   return {
     indentNumber,
-    lines: rows.map((r) => ({
+    lines: reservations.map((r) => ({
       reservationId: r.reservationId,
       skuCode: r.skuCode,
       msilCode: r.msilCode || null,
+      // The material's name, so a line can be recognised without looking the
+      // code up. Null when the master has none — the screen falls back to the
+      // SKU, which it is already showing.
+      productName: names.get(r.skuCode) || null,
       quantity: r.quantity || 0,
+      // See the note above: decided here, not on the screen.
+      standalone: !booked.has(r.skuCode),
       status: r.status,
       reservedOn: r.reservationDate || null,
       expiresOn: r.expiryDate || null,
@@ -321,6 +420,43 @@ export const changeLabel = (l) => {
 // ── Journey assembly ───────────────────────────────────────────────────────
 
 /**
+ * The dispatch date of every line, keyed by SKU.
+ *
+ * ---------------------------------------------------------------------------
+ * A LIST PER SKU, NOT A DATE PER SKU
+ * ---------------------------------------------------------------------------
+ *
+ * One booking can carry the same SKU on more than one row — a desk-added line,
+ * or stock that arrived later against the indent and was allocated as its own
+ * row — and those rows can be scheduled for different days. Collapsing them to
+ * one date would quietly drop a delivery the customer has been promised, so
+ * every distinct day is kept and the renderer prints them all.
+ *
+ * Dates are de-duplicated on their UTC day, which is how a dispatch date is
+ * stored whether the default wrote it (utils/dispatchDate.js) or the desk
+ * picked it, so two rows scheduled for the same day read as one date.
+ *
+ * A row with no date contributes NOTHING rather than a null entry: a SKU whose
+ * rows are all unscheduled ends up with an empty list, which the renderer shows
+ * as an em dash — "not scheduled yet", not "scheduled for nothing".
+ *
+ * @returns {Map<string, Date[]>}
+ */
+export const dispatchDatesBySku = (orderRows = []) => {
+  const out = new Map();
+  for (const r of orderRows) {
+    if (!r?.skuCode) continue;
+    if (!out.has(r.skuCode)) out.set(r.skuCode, []);
+    const when = r.scheduledDate ? new Date(r.scheduledDate) : null;
+    if (!when || Number.isNaN(when.getTime())) continue;
+    const list = out.get(r.skuCode);
+    if (!list.some((d) => d.getTime() === when.getTime())) list.push(when);
+  }
+  for (const list of out.values()) list.sort((a, b) => a - b);
+  return out;
+};
+
+/**
  * Everything the table needs, computed once per mail.
  *
  * @param {string} orderId
@@ -339,6 +475,24 @@ export const buildBookingJourney = async ({ orderId, rows = null }) => {
     .filter((l) => (l.indent || 0) > 0)
     .map((l) => ({ skuCode: l.skuCode, msilCode: l.msilCode, quantity: l.indent }));
 
+  /**
+   * THE STANDALONE INDENT — the lines the table above structurally cannot show.
+   *
+   * Measured against the rows the booking table actually renders, NOT against
+   * the order rows. The two differ by one case that matters: a line the desk
+   * REMOVED is gone from the order rows but is still pushed onto
+   * `summary.lines` from the audit trail, carrying its open indent in the
+   * Indent column. Keying off the order rows would list such a line in both
+   * tables and double its quantity on the page.
+   *
+   * So the rule is exactly "an open indent line that no row of the booking
+   * table accounts for", which is the only definition under which the two
+   * tables partition the indent instead of overlapping on it.
+   */
+  const accounted = new Set(summary.lines.map((l) => l.skuCode));
+  const standaloneIndentLines = (await openIndentLinesFor(orderId, { rows: orderRows }))
+    .lines.filter((l) => !accounted.has(l.skuCode));
+
   const first = orderRows[0];
   const po = String(first.poNumber ?? '').trim();
   const locked = Boolean(first.poGeneratedAt) || (po !== '' && po !== '-');
@@ -356,6 +510,9 @@ export const buildBookingJourney = async ({ orderId, rows = null }) => {
       : null,
     summary,
     indentLines,
+    standaloneIndentLines,
+    // Per line, for the Dispatch Date column. See dispatchDatesBySku().
+    dispatchBySku: dispatchDatesBySku(orderRows),
   };
 };
 
@@ -375,6 +532,16 @@ export const indentOnlyJourney = ({ indentId, lines = [] }) => ({
     msilCode: l.msilCode || null,
     quantity: Number(l.quantity) || 0,
   })),
+  /**
+   * EMPTY ON PURPOSE, even though every line here is in the literal sense
+   * standalone. The second table exists to carry what the FIRST one cannot,
+   * and on this mail the first table is already built from these very lines —
+   * listing them again below would print the same indent twice and double its
+   * total on the page.
+   */
+  standaloneIndentLines: [],
+  // No booking, so no line has a dispatch date: nothing is in hand to dispatch.
+  dispatchBySku: new Map(),
 });
 
 // ── Rendering ──────────────────────────────────────────────────────────────
@@ -390,6 +557,43 @@ const fmtD = (d) => {
   const date = d ? new Date(d) : null;
   if (!date || Number.isNaN(date.getTime())) return '—';
   return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+/**
+ * A calendar DAY stored as UTC midnight — a dispatch date, however it was set
+ * (utils/dispatchDate.js, or picked on the Sales Desk) — printed as that same
+ * day wherever the server runs.
+ *
+ * `fmtD` above reads in the server's zone, which is right for an instant like
+ * the booking time and wrong for a stored day: on a server west of UTC it
+ * renders the day BEFORE the one the desk picked, so the customer is told to
+ * expect goods a day early. Same reasoning, and same fix, as `fmtDay` in
+ * indentMail.js.
+ */
+const fmtDispatchDay = (d) => {
+  const date = d ? new Date(d) : null;
+  if (!date || Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('en-IN', {
+    timeZone: 'UTC', day: '2-digit', month: 'short', year: 'numeric',
+  });
+};
+
+/**
+ * The Dispatch Date cell for one SKU.
+ *
+ * Several dates are stacked, not joined onto one line: they are separate
+ * promises about separate rows, and a comma between them reads as a range.
+ * No date at all is an em dash — see the note at the top of this module on why
+ * an unscheduled line must not borrow anybody else's date.
+ */
+const dispatchCell = (dates = []) => {
+  const printed = dates.map(fmtDispatchDay).filter(Boolean);
+  if (!printed.length) {
+    return `<span style="color: #bbb;" title="Not scheduled yet.">&mdash;</span>`;
+  }
+  return printed
+    .map((d) => `<div style="white-space: nowrap;">${escHtml(d)}</div>`)
+    .join('');
 };
 
 const CELL = 'padding: 7px 12px; border-bottom: 1px solid #eee; font-size: 13px;';
@@ -438,8 +642,12 @@ const emptyNote = (text) => `
  *
  * The MSIL column follows the audience rule the rest of the mails use: the
  * customer orders by SKU; support reconciles codes, so only support sees it.
+ *
+ * @param {boolean} [opts.dispatchDates=true] render the Dispatch Date column.
+ *   Pass false ONLY on a mail that already carries the booking's delivery
+ *   schedule table — the PO mail — so the same dates are not printed twice.
  */
-export const journeyTablesHtml = (journey, { audience = 'customer' } = {}) => {
+export const journeyTablesHtml = (journey, { audience = 'customer', dispatchDates = true } = {}) => {
   if (!journey) return '';
   const showMsil = audience === 'support';
   const msilHead = showMsil ? `<th style="${HEAD}">MSIL Code</th>` : '';
@@ -476,6 +684,32 @@ export const journeyTablesHtml = (journey, { audience = 'customer' } = {}) => {
   const tc = t('change');
   const ti = t('indent');
 
+  /**
+   * The Dispatch Date column rides on the BOOKING table only.
+   *
+   * A journey with no `dispatchBySku` is one built before this column existed,
+   * or the indent-only shape, where nothing is in hand to dispatch. Dropping
+   * the column entirely in that case keeps those mails exactly as they were
+   * rather than giving them a row of em dashes to explain.
+   *
+   * `dispatchDates: false` is the PO mail, and ONLY the PO mail. That mail
+   * already attaches the booking's full delivery schedule — every live line,
+   * its quantity and its dispatch date, in the layout the customer files
+   * purchase orders in — so the column here would print the same dates a few
+   * inches above the table that exists to carry them. The caller passes false
+   * only when that schedule table is actually present; when it is empty (every
+   * line cancelled) the column stays, because then nothing else on the mail
+   * says when anything leaves. See raisePo() in sales.controller.js.
+   */
+  const dispatchBySku = journey.dispatchBySku instanceof Map ? journey.dispatchBySku : null;
+  const showDispatch = Boolean(dispatchDates && dispatchBySku && journey.summary);
+  const dispatchHead = showDispatch
+    ? `<th style="${HEAD}">Dispatch Date</th>`
+    : '';
+  const dispatchTd = (skuCode) => (showDispatch
+    ? `<td style="${CELL}">${dispatchCell(dispatchBySku.get(skuCode) || [])}</td>`
+    : '');
+
   const body = rows.map((r) => `
     <tr>
       <td style="${CELL}"><strong>${escHtml(r.skuCode)}</strong></td>
@@ -483,6 +717,7 @@ export const journeyTablesHtml = (journey, { audience = 'customer' } = {}) => {
       <td style="${CELL} text-align: right;">${r.booked} pcs</td>
       <td style="${CELL} text-align: right; font-weight: bold; ${r.confirmed > 0 ? 'color: #1a7f37;' : 'color: #bbb;'}">${r.confirmed} pcs</td>
       <td style="${CELL} text-align: right; ${r.indent > 0 ? 'color: #b54708; font-weight: bold;' : 'color: #bbb;'}">${r.indent} pcs</td>
+      ${dispatchTd(r.skuCode)}
       <td style="${CELL} ${TONE[r.type] || TONE.unchanged}">${escHtml(r.label)}</td>
     </tr>`).join('');
 
@@ -493,6 +728,7 @@ export const journeyTablesHtml = (journey, { audience = 'customer' } = {}) => {
         <th style="${HEAD} text-align: right;">Booked</th>
         <th style="${HEAD} text-align: right;">Confirmed</th>
         <th style="${HEAD} text-align: right;">Indent</th>
+        ${dispatchHead}
         <th style="${HEAD}">Change</th>
       </tr></thead>
       <tbody>${body}</tbody>
@@ -501,6 +737,7 @@ export const journeyTablesHtml = (journey, { audience = 'customer' } = {}) => {
         <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">${t('booked')} pcs</td>
         <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; color: #1a7f37;">${t('confirmed')} pcs</td>
         <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; ${ti > 0 ? 'color: #b54708;' : 'color: #bbb;'}">${ti} pcs</td>
+        ${showDispatch ? `<td style="${CELL} border-bottom: none;"></td>` : ''}
         <td style="${CELL} border-bottom: none; font-weight: bold;">${tc === 0 ? '' : `${tc > 0 ? '+' : '-'}${Math.abs(tc)} pcs`}</td>
       </tr></tfoot>
     </table>`;
@@ -516,9 +753,14 @@ export const journeyTablesHtml = (journey, { audience = 'customer' } = {}) => {
        </p>`
     : '';
 
+  const standalone = Array.isArray(journey.standaloneIndentLines)
+    ? journey.standaloneIndentLines
+    : [];
+  const standaloneQty = standalone.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+
   // The indent has its own reference number, and the customer needs it to chase
-  // the outstanding units — so it is named whenever any remain.
-  const indentNote = ti > 0 && journey.indentId
+  // the outstanding units — so it is named whenever any remain, on either table.
+  const indentNote = (ti > 0 || standaloneQty > 0) && journey.indentId
     ? `<p style="margin: 0 0 8px; font-size: 12px; color: #888;">
          Indent reference <strong style="font-family: monospace; color: #b54708;">${escHtml(journey.indentId)}</strong>
          &mdash; the Indent column is live and shrinks as stock arrives.
@@ -534,10 +776,94 @@ export const journeyTablesHtml = (journey, { audience = 'customer' } = {}) => {
       journey.bookingDate ? `As booked on ${fmtD(journey.bookingDate)}.` : null)}
     ${poHtml}
     ${tableHtml}
-    ${indentNote}`;
+    ${indentNote}
+    ${standaloneIndentHtml(journey, standalone, { showMsil })}`;
+};
+
+/**
+ * STANDALONE INDENTS — its own section, under the booking table.
+ *
+ * These are the SKUs stock could not cover at all. They have no order row, so
+ * the table above has nowhere to put them (see the note at the top of this
+ * module), and until now the customer's confirmation mail simply did not
+ * mention them: they asked for five materials, were told about the three that
+ * were partly in stock, and the two that were entirely out went unmentioned.
+ *
+ * SEPARATE, NOT MERGED. The booking table's Booked / Confirmed / Change columns
+ * are facts about an order row; these lines have none, and filling those cells
+ * with zeroes would change the meaning of every total above. Keeping the two
+ * apart also keeps the existing partial-indent reporting exactly as it was —
+ * nothing in the first table moves because this one exists.
+ *
+ * Rendered only when there is something to say. A booking whose indent is
+ * entirely partial, or which has no indent at all, gets the mail it always got.
+ */
+/**
+ * The section's heading, as the customer reads it.
+ *
+ * Plain "Indent", not "Standalone Indents": "standalone" is OUR word for how a
+ * line came to be — that stock covered none of it, so confirmation never wrote
+ * it an order row — and it tells the customer nothing they need. What they
+ * need is which materials are on indent, and the caption below says the rest.
+ *
+ * Exported because it is the only unambiguous anchor for this section: the
+ * booking table above already heads a column "Indent", so a test (or anything
+ * else) searching the HTML for that word on its own finds the wrong thing.
+ */
+export const STANDALONE_HEADING = 'Indent';
+
+const standaloneIndentHtml = (journey, lines, { showMsil }) => {
+  if (!lines.length) return '';
+
+  const total = lines.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+  const msilHead = showMsil ? `<th style="${HEAD}">MSIL Code</th>` : '';
+
+  const body = lines.map((l) => `
+    <tr>
+      <td style="${CELL}"><strong>${escHtml(l.skuCode)}</strong></td>
+      ${showMsil ? `<td style="${CELL}">${escHtml(l.msilCode || '—')}</td>` : ''}
+      <td style="${CELL}">${escHtml(l.productName || '—')}</td>
+      <td style="${CELL} text-align: right; color: #b54708; font-weight: bold;">${Number(l.quantity) || 0} pcs</td>
+      <td style="${CELL}">${escHtml(l.status || '—')}</td>
+      <td style="${CELL} font-family: monospace; font-size: 12px;">${escHtml(l.reservationId || '—')}</td>
+    </tr>`).join('');
+
+  return `
+    ${sectionHeading(
+      STANDALONE_HEADING,
+      'Materials on this booking that stock could not cover at all. They carry no '
+      + 'confirmed quantity, so they do not appear in the table above.')}
+    <p style="margin: 0 0 8px; font-size: 12px; color: #666;">
+      Raised under indent
+      <strong style="font-family: monospace; color: #b54708;">${escHtml(journey.indentId || '—')}</strong>
+      ${journey.orderId
+        ? `against booking <strong style="font-family: monospace; color: #1a5b9e;">${escHtml(journey.orderId)}</strong>`
+        : ''}.
+    </p>
+    <table style="border-collapse: collapse; margin: 0 0 8px; width: 100%;">
+      <thead><tr>
+        <th style="${HEAD}">SKU / Product Code</th>${msilHead}
+        <th style="${HEAD}">Product Name</th>
+        <th style="${HEAD} text-align: right;">Qty on Indent</th>
+        <th style="${HEAD}">Status</th>
+        <th style="${HEAD}">Line Ref</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr>
+        <td colspan="${showMsil ? 3 : 2}" style="${CELL} border-bottom: none; text-align: right; font-weight: bold;">Total</td>
+        <td style="${CELL} border-bottom: none; text-align: right; font-weight: bold; color: #b54708;">${total} pcs</td>
+        <td style="${CELL} border-bottom: none;"></td>
+        <td style="${CELL} border-bottom: none;"></td>
+      </tr></tfoot>
+    </table>
+    <p style="margin: 0 0 8px; font-size: 12px; color: #888;">
+      These units are not dispatched with the booking above. They are scheduled
+      once material is received, and we will email you when that happens.
+    </p>`;
 };
 
 export default {
   QTY_EDIT_ACTIONS, buildChangeSummary, changeLabel,
   buildBookingJourney, indentOnlyJourney, journeyTablesHtml,
+  dispatchDatesBySku, productNamesForSkus,
 };
