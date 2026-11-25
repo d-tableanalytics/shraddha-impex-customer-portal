@@ -37,8 +37,8 @@
  * booking table's columns are Booked / Confirmed / Change, which are facts
  * about an order row; a standalone indent has none of them, and inventing
  * zeroes for it would change what every existing figure in that table means.
- * See `standaloneIndentLines` on the journey, and the Standalone Indents
- * section in `journeyTablesHtml`.
+ * See `standaloneIndentLines` on the journey, and the section rendered by
+ * `standaloneIndentHtml` (headed `STANDALONE_HEADING`) in `journeyTablesHtml`.
  *
  * This module is a LEAF: it imports models only, so both mail utils and the
  * sales controller can build on it without an import cycle.
@@ -798,6 +798,20 @@ export const journeyTablesHtml = (journey, { audience = 'customer', dispatchDate
  * Rendered only when there is something to say. A booking whose indent is
  * entirely partial, or which has no indent at all, gets the mail it always got.
  */
+/**
+ * The section's heading, as the customer reads it.
+ *
+ * Plain "Indent", not "Standalone Indents": "standalone" is OUR word for how a
+ * line came to be — that stock covered none of it, so confirmation never wrote
+ * it an order row — and it tells the customer nothing they need. What they
+ * need is which materials are on indent, and the caption below says the rest.
+ *
+ * Exported because it is the only unambiguous anchor for this section: the
+ * booking table above already heads a column "Indent", so a test (or anything
+ * else) searching the HTML for that word on its own finds the wrong thing.
+ */
+export const STANDALONE_HEADING = 'Indent';
+
 const standaloneIndentHtml = (journey, lines, { showMsil }) => {
   if (!lines.length) return '';
 
@@ -816,7 +830,7 @@ const standaloneIndentHtml = (journey, lines, { showMsil }) => {
 
   return `
     ${sectionHeading(
-      'Standalone Indents',
+      STANDALONE_HEADING,
       'Materials on this booking that stock could not cover at all. They carry no '
       + 'confirmed quantity, so they do not appear in the table above.')}
     <p style="margin: 0 0 8px; font-size: 12px; color: #666;">

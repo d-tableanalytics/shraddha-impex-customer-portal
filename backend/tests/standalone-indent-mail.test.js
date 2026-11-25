@@ -46,8 +46,24 @@ import Reservation from '../models/Reservation.js';
 import { Product, ProductKoken } from '../models/Product.js';
 import {
   indentIdFor, openIndentLinesFor, buildBookingJourney, journeyTablesHtml,
-  indentOnlyJourney, dispatchDatesBySku, QTY_EDIT_ACTIONS,
+  indentOnlyJourney, dispatchDatesBySku, QTY_EDIT_ACTIONS, STANDALONE_HEADING,
 } from '../utils/bookingJourney.js';
+
+/**
+ * Where the standalone-indent section begins, found by its HEADING ELEMENT.
+ *
+ * Deliberately not a search for the heading's TEXT. It now reads "Indent", and
+ * the booking table above it already heads a column of exactly that name — so
+ * a plain string search lands in the wrong table and every assertion built on
+ * the offset silently measures the wrong half of the mail.
+ */
+const HEADING_EL = new RegExp(`<h4[^>]*>\\s*${STANDALONE_HEADING}\\s*</h4>`);
+const hasIndentSection = (html) => HEADING_EL.test(html);
+const indentSectionAt = (html) => {
+  const at = html.search(HEADING_EL);
+  assert.notEqual(at, -1, 'the mail has an indent section to split on');
+  return at;
+};
 import { shapeBooking } from '../modules/sales/booking.shape.js';
 
 const ORDER_ID = 'BO-2026-000501';
@@ -291,14 +307,14 @@ describe('dispatchDatesBySku', () => {
 describe('journeyTablesHtml', () => {
   const build = () => buildBookingJourney({ orderId: ORDER_ID });
 
-  test('🔴 the Standalone Indents table names the SKU, the material and the quantity', async () => {
+  test('🔴 the indent table names the SKU, the material and the quantity', async () => {
     await Order.create([row('SKU-A', { confirmedQty: 8, pendingQty: 4 })]);
     await product('SKU-B', 'Impact Socket Set');
     await Reservation.create([indent('SKU-A', 4), indent('SKU-B', 25)]);
 
     const html = journeyTablesHtml(await build(), { audience: 'customer' });
 
-    assert.match(html, /Standalone Indents/);
+    assert.ok(hasIndentSection(html));
     assert.match(html, /Impact Socket Set/);
     assert.match(html, /SKU-B/);
     assert.match(html, /25 pcs/);
@@ -312,7 +328,7 @@ describe('journeyTablesHtml', () => {
     await Reservation.create([indent('SKU-A', 4), indent('SKU-B', 25)]);
 
     const html = journeyTablesHtml(await build(), { audience: 'customer' });
-    const bookingTable = html.slice(0, html.indexOf('Standalone Indents'));
+    const bookingTable = html.slice(0, indentSectionAt(html));
 
     // The partial indent still reports where it always did, and the standalone
     // line has not crept into the table above or into its totals.
@@ -327,7 +343,7 @@ describe('journeyTablesHtml', () => {
     await Reservation.create([indent('SKU-A', 4)]);
 
     const html = journeyTablesHtml(await build(), { audience: 'customer' });
-    assert.ok(!html.includes('Standalone Indents'));
+    assert.ok(!hasIndentSection(html));
   });
 
   test('🔴 the dispatch date is printed against its own SKU', async () => {
@@ -430,7 +446,7 @@ describe('journeyTablesHtml', () => {
 
     const html = journeyTablesHtml(await build(), { audience: 'customer', dispatchDates: false });
 
-    assert.match(html, /Standalone Indents/);
+    assert.ok(hasIndentSection(html));
     assert.match(html, /Impact Socket Set/);
     assert.match(html, /25 pcs/);
   });
@@ -445,7 +461,7 @@ describe('journeyTablesHtml', () => {
     );
 
     assert.match(html, /SKU-B/);
-    assert.ok(!html.includes('Standalone Indents'));
+    assert.ok(!hasIndentSection(html));
     // Nothing is in hand, so there is no dispatch date column to show either.
     assert.ok(!html.includes('Dispatch Date'));
   });
