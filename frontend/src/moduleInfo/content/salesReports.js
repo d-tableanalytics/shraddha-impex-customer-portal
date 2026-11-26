@@ -85,8 +85,12 @@ export default [
         "detail": "Cancels stock that arrived against this booking's indent. The record is kept as Cancelled, and the stock and the indent are restored."
       },
       {
-        "title": "Indent section (standalone and partial)",
-        "detail": "Under Booking Items, every line the customer is still waiting for on this booking, with SKU, MSIL code, product name, quantity and status. Standalone lines come first: stock covered none of that SKU, so it has no row in Booking Items at all and appears nowhere else on the screen. Partial lines are the shortfall on a line that is already in the table above. These are live reservations, not the quantity frozen on the booking at confirmation."
+        "title": "Standalone Indents table",
+        "detail": "Directly under Booking Items, and only when there is something to show. Lists the materials stock could not cover AT ALL — no confirmed quantity, so no row in Booking Items and nothing about them anywhere else on the screen. Columns: Booking ID, Indent ID, SKU / Product Code, Product Name, Indent Quantity and Status, plus the rate for a reader with view_pricing. Held MSIL lines carry their Convert / Cancel decision here."
+      },
+      {
+        "title": "Indent section (partial shortfalls)",
+        "detail": "Below the allocations, the shortfall on lines that ARE in Booking Items above, as live reservations rather than the quantity frozen on the booking at confirmation — the two diverge as soon as stock arrives and auto-books part of the indent. Standalone lines are not repeated here: the two tables partition the booking's open indent, so no material is counted twice."
       },
       {
         "title": "MSIL Supply Date and held indents",
