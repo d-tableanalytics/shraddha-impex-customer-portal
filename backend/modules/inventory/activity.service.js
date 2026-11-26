@@ -5,6 +5,12 @@ import { Product } from '../../models/Product.js';
 import User from '../../models/User.js';
 import { getSkuBalance } from './balance.service.js';
 
+const loadBookingModels = async () => ({
+  Order: (await import('../../models/Order.js')).default,
+  BookingStatusEvent: (await import('../../models/BookingStatusEvent.js')).default,
+});
+
+
 /**
  * SKU activity log — the ledger said in the words a client uses.
  *
@@ -102,7 +108,27 @@ export const ACTIVITY_TYPES = Object.freeze([
   })),
   { type: 'BOOKING_PENDING', label: 'Booking Pending', source: 'indent', movementType: null },
   { type: 'INDENT_RAISED', label: 'Indent Raised', source: 'indent', movementType: null },
+  { type: 'SELECTION_CLOSED', label: 'Selection List Closed', source: 'indent', movementType: null },
+  { type: 'BOOKING_CREATED', label: 'Booking Created', source: 'booking', movementType: null },
+  { type: 'PO_RAISED', label: 'PO Raised', source: 'booking', movementType: null },
+  { type: 'STATUS_CHANGED', label: 'Status Changed', source: 'booking', movementType: null },
 ]);
+
+/**
+ * The business-event types, as opposed to the ledger's stock movements.
+ *
+ * A booking is TWO things that happen at once: a commitment to a customer, and
+ * a quantity of stock being set aside. The ledger records the second and has
+ * no vocabulary for the first — it cannot say who the customer was, what they
+ * asked for versus what they got, or that a PO was raised against it.
+ *
+ * So these are read from the booking documents themselves and carry
+ * `affectsStock: false`. Nothing here pretends a quantity moved; the movement
+ * that went with it is its own row, as it already was. Showing both is the
+ * point: "Booking confirmed — 7 requested, 3 from stock, 4 to indent" next to
+ * "3 Units set aside for a booking" is the sentence a person was missing.
+ */
+export const BOOKING_EVENT_TYPES = ['BOOKING_CREATED', 'PO_RAISED', 'STATUS_CHANGED'];
 
 /** activityType → the movement types that produce it, for the type filter. */
 const MOVEMENTS_FOR_TYPE = Object.entries(FROM_MOVEMENT).reduce((acc, [movementType, m]) => {
@@ -110,7 +136,7 @@ const MOVEMENTS_FOR_TYPE = Object.entries(FROM_MOVEMENT).reduce((acc, [movementT
   return acc;
 }, {});
 
-export const INDENT_TYPES = ['BOOKING_PENDING', 'INDENT_RAISED'];
+export const INDENT_TYPES = ['BOOKING_PENDING', 'INDENT_RAISED', 'SELECTION_CLOSED'];
 
 /**
  * Workflow key → the action a person recognises.
@@ -145,6 +171,11 @@ const WORKFLOW_LABEL = {
   'indent-auto-book': 'Indent converted to a booking',
   'indent-auto-book-rollback': 'Indent conversion rolled back',
   reversal: 'Reversal',
+  // Remediation workflows (Phases 3 and 4). Without these the rows produced by
+  // a backfill or a reconciliation would read as "—", which is exactly the
+  // kind of unexplained entry this screen exists to stop.
+  'ledger-backfill': 'Ledger backfill — movement recorded after the fact',
+  'stock-reconciliation': 'Stock reconciliation correction',
 };
 
 export const workflowLabel = (w) => WORKFLOW_LABEL[w] || null;
@@ -158,6 +189,29 @@ const REFERENCE_LABEL = {
 
 const units = (n) => `${Math.abs(n).toLocaleString('en-IN')} Unit${Math.abs(n) === 1 ? '' : 's'}`;
 
+/**
+ * Who or what caused an activity: a person, a scheduled job, or the system
+ * acting on its own.
+ *
+ * Derived from the workflow rather than stored, because the workflows already
+ * say it unambiguously and a stored flag would be a second thing to keep in
+ * step. An admin reading "released" needs to know whether somebody decided
+ * that or the 7-day job did.
+ */
+const AUTOMATIC_WORKFLOWS = new Set([
+  'po-settlement-release', 'po-settlement-consume', 'po-expiry',
+  'indent-auto-book', 'indent-auto-book-rollback', 'auto-booking-to-allocation',
+]);
+const SYSTEM_WORKFLOWS = new Set([
+  'ledger-backfill', 'stock-reconciliation', 'reversal',
+]);
+
+export const triggerOf = (workflowType, actorType) => {
+  if (SYSTEM_WORKFLOWS.has(workflowType)) return 'system';
+  if (AUTOMATIC_WORKFLOWS.has(workflowType)) return 'automatic';
+  if (actorType === 'system') return 'automatic';
+  return 'manual';
+};
 // ─── Movement → activity record ──────────────────────────────────────────────
 /**
  * Turn one ledger movement into a self-explanatory activity record.
@@ -231,6 +285,26 @@ export const describeMovement = (m, extra = {}) => {
       : { name: m.user?.name || m.user?.user || m.user?.email || null, type: 'user' },
     reasonCode: m.reasonCode || null,
     remarks: m.note || null,
+    trigger: triggerOf(extra.workflowType, m.actorType),
+    // The same shape every other source carries, so one renderer serves all.
+    // A movement knows its reference and its own balance pair; it does not
+    // know the customer, and nothing here invents one.
+    details: {
+      customer: extra.customerName ?? null,
+      company: extra.company ?? null,
+      actorRole: null,
+      placedBy: null,
+      requestedQty: null,
+      confirmedQty: null,
+      pendingQty: null,
+      bookingId: m.referenceType === 'booking' || m.referenceType === 'order' ? m.referenceId : null,
+      indentNumber: m.referenceType === 'reservation' ? m.referenceId : null,
+      poNumber: null,
+      reservationId: null,
+      statusFrom: null,
+      statusTo: null,
+      sourceModule: extra.workflowType ? (workflowLabel(extra.workflowType) || extra.workflowType) : 'Stock ledger',
+    },
   };
 };
 
@@ -258,6 +332,18 @@ const INDENT_OPEN_STATUSES = new Set(['Pending', 'Partially Confirmed']);
 export const RESERVATION_MATCH = Object.freeze({
   INDENT_RAISED: { indentNumber: { $ne: null } },
   BOOKING_PENDING: { indentNumber: null, status: { $in: PENDING_STATUSES } },
+  /**
+   * A selection-list line that was removed or expired without ever becoming a
+   * booking.
+   *
+   * Previously invisible: the filter only admitted lines still pending, so a
+   * customer who put 40 units in their list and took them out again left no
+   * trace on this screen at all. It holds no stock either way, which is why it
+   * was easy to leave out and why leaving it out was wrong — "nothing
+   * happened" and "something happened that moved no stock" are different
+   * answers to an admin asking what became of a SKU.
+   */
+  SELECTION_CLOSED: { indentNumber: null, status: { $in: ['Cancelled', 'Expired'] } },
 });
 
 /** What became of an indent, for the row that records its raising. */
@@ -290,18 +376,22 @@ export const describeReservation = (r, extra = {}) => {
     : (r.reservationDate || r.createdAt);
 
   const outcome = INDENT_OUTCOME[r.status] || null;
+  // A list line that was taken out or timed out, rather than one still open.
+  const closed = !isIndent && ['Cancelled', 'Expired'].includes(r.status);
 
   return {
     id: `RES-${r.reservationId}`,
     source: 'indent',
-    activityType: isIndent ? 'INDENT_RAISED' : 'BOOKING_PENDING',
+    activityType: isIndent ? 'INDENT_RAISED' : (closed ? 'SELECTION_CLOSED' : 'BOOKING_PENDING'),
     movementType: null,
     label: isIndent ? ACTIVITY_LABELS.INDENT : ACTIVITY_LABELS.BOOKING,
     direction: DIRECTIONS.NONE,
-    description: isIndent
+    description: closed
+      ? `${units(r.quantity)} removed from the selection list (${String(r.status).toLowerCase()})`
+      : isIndent
       ? `${units(r.quantity)} indented${outcome ? ` — ${outcome}` : ''}`
       : `${units(r.quantity)} requested — booking not yet confirmed`,
-    action: isIndent ? 'Indent raised' : 'Booking pending',
+    action: closed ? 'Selection list line closed' : (isIndent ? 'Indent raised' : 'Booking pending'),
     // True only while the indent is still open. The row records the RAISING,
     // which happened either way; this says whether it is still outstanding.
     open: isIndent ? INDENT_OPEN_STATUSES.has(r.status) : true,
@@ -326,8 +416,212 @@ export const describeReservation = (r, extra = {}) => {
     reasonCode: null,
     remarks: r.cancellationReason || r.scheduleNote || null,
     status: r.status,
+    trigger: r.autoBookedOrderId ? 'automatic' : 'manual',
+    details: {
+      customer: extra.customerName ?? null,
+      company: extra.company ?? null,
+      actorRole: null,
+      placedBy: extra.actorName || null,
+      requestedQty: r.quantity ?? null,
+      confirmedQty: null,
+      pendingQty: isIndent ? (r.quantity ?? null) : null,
+      bookingId: r.indentNumber ? String(r.indentNumber).replace(/^PI-/, 'BO-') : null,
+      indentNumber: r.indentNumber || null,
+      poNumber: r.poNumber && r.poNumber !== '-' ? r.poNumber : null,
+      reservationId: r.reservationId,
+      statusFrom: null,
+      statusTo: r.status,
+      sourceModule: isIndent ? 'Pending Indent' : 'Selection List',
+    },
   };
 };
+
+// ─── Business events ─────────────────────────────────────────────────────────
+/**
+ * The details a stock movement cannot carry.
+ *
+ * Attached to every record as `details`, always the same shape, so a screen
+ * can render it without knowing which source the row came from. Fields that
+ * are genuinely unknown stay null — a booking placed before a field existed
+ * does not get a plausible-looking value invented for it.
+ */
+const detailsOf = ({
+  customer = null, company = null, actorRole = null, placedBy = null,
+  requestedQty = null, confirmedQty = null, pendingQty = null,
+  bookingId = null, indentNumber = null, poNumber = null, reservationId = null,
+  statusFrom = null, statusTo = null, sourceModule = null,
+} = {}) => ({
+  customer, company, actorRole, placedBy,
+  requestedQty, confirmedQty, pendingQty,
+  bookingId, indentNumber, poNumber, reservationId,
+  statusFrom, statusTo, sourceModule,
+});
+
+/** Who a booking was FOR, and who actually keyed it in. */
+const partiesOf = (line, userName) => ({
+  customer: userName ?? null,
+  company: line.company || null,
+  // Set only when the desk booked on someone's behalf; null for a customer's
+  // own booking, which is how the booking flow already records it.
+  placedBy: line.createdByName || null,
+  actorRole: line.role || null,
+});
+
+/**
+ * An order line's creation, as a business event.
+ *
+ * `bookedQty` is what the customer asked for, `confirmedQty` what stock could
+ * cover, `pendingQty` what became an indent. The ledger only ever saw the
+ * middle one, which is why a partially-filled booking was impossible to
+ * explain from this screen.
+ */
+export const describeBookingCreated = (line, extra = {}) => {
+  const requested = line.bookedQty ?? line.requestedQty ?? 0;
+  const confirmed = line.confirmedQty ?? 0;
+  const pending = line.pendingQty ?? 0;
+  const parts = [`${units(requested)} requested`];
+  if (confirmed) parts.push(`${units(confirmed)} confirmed from stock`);
+  if (pending) parts.push(`${units(pending)} to indent`);
+
+  return {
+    id: `ORD-${line.orderId}-${line.skuCode}-created`,
+    source: 'booking',
+    activityType: 'BOOKING_CREATED',
+    movementType: null,
+    label: ACTIVITY_LABELS.BOOKING,
+    direction: DIRECTIONS.NONE,
+    description: parts.join(', '),
+    action: pending > 0 && confirmed > 0 ? 'Booking partially confirmed'
+      : pending > 0 ? 'Booking moved to indent' : 'Booking confirmed',
+    skuCode: line.skuCode,
+    productName: extra.productName || null,
+    brand: line.brand || null,
+    locationCode: null,
+    quantity: requested,
+    affectsStock: false,
+    balanceKind: null,
+    previousStock: null,
+    updatedStock: null,
+    referenceType: 'booking',
+    referenceLabel: 'Booking',
+    referenceNumber: line.orderId,
+    batchId: null,
+    at: line.orderTimestamp || line.createdAt || line.date || null,
+    postedAt: line.createdAt || null,
+    backdated: false,
+    actor: { name: extra.actorName || line.createdByName || extra.customerName || null, type: 'user' },
+    reasonCode: null,
+    remarks: line.remarks || null,
+    status: line.status || null,
+    trigger: line.createdByName ? 'manual' : 'manual',
+    details: detailsOf({
+      ...partiesOf(line, extra.customerName),
+      requestedQty: requested,
+      confirmedQty: confirmed,
+      pendingQty: pending,
+      bookingId: line.orderId,
+      indentNumber: pending > 0 ? String(line.orderId).replace(/^[A-Z]+-/, 'PI-') : null,
+      poNumber: isRealPo(line.poNumber) ? line.poNumber : null,
+      sourceModule: line.createdByName ? 'Sales Desk (on behalf)' : 'Customer Portal',
+    }),
+  };
+};
+
+/** A placeholder PO is not a PO. '-' and '' mean none was raised. */
+const isRealPo = (po) => Boolean(po) && String(po).trim() !== '-' && String(po).trim() !== '';
+
+/** The PO that locked a booking line and took its stock out of inventory. */
+export const describePoRaised = (line, extra = {}) => ({
+  id: `ORD-${line.orderId}-${line.skuCode}-po`,
+  source: 'booking',
+  activityType: 'PO_RAISED',
+  movementType: null,
+  label: ACTIVITY_LABELS.BOOKING,
+  direction: DIRECTIONS.NONE,
+  description: `PO ${line.poNumber} raised — ${units(line.confirmedQty ?? 0)} committed for dispatch`,
+  action: 'PO raised',
+  skuCode: line.skuCode,
+  productName: extra.productName || null,
+  brand: line.brand || null,
+  locationCode: null,
+  quantity: line.confirmedQty ?? 0,
+  affectsStock: false,
+  balanceKind: null,
+  previousStock: null,
+  updatedStock: null,
+  referenceType: 'booking',
+  referenceLabel: 'Booking',
+  referenceNumber: line.orderId,
+  batchId: null,
+  at: line.poGeneratedAt,
+  postedAt: line.poGeneratedAt,
+  backdated: false,
+  actor: { name: extra.poActorName || null, type: 'user' },
+  reasonCode: null,
+  remarks: null,
+  status: line.status || null,
+  trigger: 'manual',
+  details: detailsOf({
+    ...partiesOf(line, extra.customerName),
+    confirmedQty: line.confirmedQty ?? 0,
+    bookingId: line.orderId,
+    poNumber: line.poNumber,
+    sourceModule: 'Sales Desk',
+  }),
+});
+
+/**
+ * A recorded status transition.
+ *
+ * Read from `bookingstatusevents`, which is the only place a transition is
+ * written down. It carries no SKU — a booking spans several — so each event is
+ * attributed to every line of its booking that this SKU appears on.
+ */
+export const describeStatusEvent = (event, line, extra = {}) => ({
+  id: `BSE-${event._id}-${line.skuCode}`,
+  source: 'booking',
+  activityType: 'STATUS_CHANGED',
+  movementType: null,
+  label: ACTIVITY_LABELS.BOOKING,
+  direction: DIRECTIONS.NONE,
+  description: event.previousStatus
+    ? `Status changed from ${event.previousStatus} to ${event.status}`
+    : `Status set to ${event.status}`,
+  action: 'Status changed',
+  skuCode: line.skuCode,
+  productName: extra.productName || null,
+  brand: line.brand || null,
+  locationCode: null,
+  quantity: null,
+  affectsStock: false,
+  balanceKind: null,
+  previousStock: null,
+  updatedStock: null,
+  referenceType: 'booking',
+  referenceLabel: 'Booking',
+  referenceNumber: event.orderId,
+  batchId: null,
+  at: event.changedAt || event.createdAt,
+  postedAt: event.createdAt || null,
+  backdated: false,
+  actor: {
+    name: event.changedByName || 'System',
+    type: event.changedByName && event.changedByName !== 'System' ? 'user' : 'system',
+  },
+  reasonCode: null,
+  remarks: event.remarks || null,
+  status: event.status,
+  trigger: (!event.changedByName || event.changedByName === 'System') ? 'automatic' : 'manual',
+  details: detailsOf({
+    ...partiesOf(line, extra.customerName),
+    actorRole: event.changedByRole || null,
+    statusFrom: event.previousStatus || null,
+    statusTo: event.status,
+    bookingId: event.orderId,
+    poNumber: isRealPo(line.poNumber) ? line.poNumber : null,
+    sourceModule: 'Booking lifecycle',
+  }),
+});
 
 // ─── Lookups ─────────────────────────────────────────────────────────────────
 /** SKU → display name. One query for the whole page, never one per row. */
@@ -346,6 +640,23 @@ const userNames = async (ids) => {
   return new Map(rows.map((u) => [String(u._id), u.name || u.user || u.email]));
 };
 
+/**
+ * Booking id → who it was for. One query for the page, never one per row.
+ */
+const bookingParties = async (orderIds) => {
+  if (orderIds.length === 0) return new Map();
+  const { Order } = await loadBookingModels();
+  const rows = await Order.find(
+    { orderId: { $in: orderIds } },
+    'orderId user company createdByName',
+  ).lean();
+  const users = await userNames(rows.map((r) => r.user));
+  return new Map(rows.map((r) => [r.orderId, {
+    customer: users.get(String(r.user)) || null,
+    company: r.company || null,
+    placedBy: r.createdByName || null,
+  }]));
+};
 const batchWorkflows = async (batchIds) => {
   const unique = [...new Set(batchIds.filter(Boolean))];
   if (unique.length === 0) return new Map();
@@ -353,6 +664,90 @@ const batchWorkflows = async (batchIds) => {
   return new Map(rows.map((b) => [b.batchId, b.workflowType]));
 };
 
+/**
+ * The booking side of a SKU's history.
+ *
+ * Three kinds of record, from the two places that actually write them down:
+ *
+ *   orders               the line itself — created, and PO raised
+ *   bookingstatusevents  every recorded transition
+ *
+ * All of them carry `affectsStock: false`. The stock that moved alongside is
+ * already in the ledger as its own row, and showing a quantity here too would
+ * be the same unit counted twice on one screen.
+ */
+const bookingEvents = async ({
+  skuCode, brands, from, to, take, activityType, reference, customerId, userId,
+}) => {
+  const wanted = activityType ? [activityType] : BOOKING_EVENT_TYPES;
+  if (!wanted.some((t) => BOOKING_EVENT_TYPES.includes(t))) return { records: [], total: 0 };
+
+  const { Order, BookingStatusEvent } = await loadBookingModels();
+  const lineFilter = { brand: { $in: brands } };
+  if (skuCode) lineFilter.skuCode = skuCode;
+  if (customerId) lineFilter.user = customerId;
+  if (reference) lineFilter.$or = [{ orderId: reference }, { poNumber: reference }];
+
+  // Bounded the same way the other sources are: the nth row overall cannot
+  // come from deeper than position n in any one source.
+  const lines = await Order.find(lineFilter)
+    .sort({ orderTimestamp: -1, _id: -1 })
+    .limit(Math.max(take, 1) * 3)
+    .lean();
+  if (lines.length === 0) return { records: [], total: 0 };
+
+  const customerIds = lines.map((l) => l.user).filter(Boolean);
+  const [names, customers] = await Promise.all([
+    productNames([...new Set(lines.map((l) => l.skuCode))]),
+    userNames(customerIds),
+  ]);
+  const extraFor = (line) => ({
+    productName: names.get(line.skuCode)?.name || null,
+    customerName: customers.get(String(line.user)) || null,
+  });
+
+  const records = [];
+  if (wanted.includes('BOOKING_CREATED')) {
+    for (const line of lines) records.push(describeBookingCreated(line, extraFor(line)));
+  }
+  if (wanted.includes('PO_RAISED')) {
+    for (const line of lines) {
+      if (line.poGeneratedAt && isRealPo(line.poNumber)) {
+        records.push(describePoRaised(line, extraFor(line)));
+      }
+    }
+  }
+  if (wanted.includes('STATUS_CHANGED')) {
+    const orderIds = [...new Set(lines.map((l) => l.orderId))];
+    const events = await BookingStatusEvent.find({ orderId: { $in: orderIds } })
+      .sort({ changedAt: -1 }).limit(Math.max(take, 1) * 3).lean();
+    // One event covers a whole booking, so it is attributed to each line of
+    // that booking for this SKU — which is what makes it visible here at all.
+    const linesByOrder = new Map();
+    for (const l of lines) {
+      if (!linesByOrder.has(l.orderId)) linesByOrder.set(l.orderId, []);
+      linesByOrder.get(l.orderId).push(l);
+    }
+    for (const e of events) {
+      for (const line of linesByOrder.get(e.orderId) || []) {
+        records.push(describeStatusEvent(e, line, extraFor(line)));
+      }
+    }
+  }
+
+  const inRange = records.filter((r) => {
+    if (!r.at) return false;
+    // The actor on a booking event is a name, not an id, so this one is
+    // matched in memory — the set is already bounded by the line query.
+    if (userId && r.actor?.id && String(r.actor.id) !== String(userId)) return false;
+    const at = new Date(r.at).getTime();
+    if (from && at < new Date(from).getTime()) return false;
+    if (to && at > new Date(to).getTime()) return false;
+    return true;
+  });
+  inRange.sort((a, b) => new Date(b.at) - new Date(a.at));
+  return { records: inRange.slice(0, take), total: inRange.length };
+};
 // ─── The merged feed ─────────────────────────────────────────────────────────
 /**
  * Build the activity feed.
@@ -370,8 +765,19 @@ const batchWorkflows = async (batchIds) => {
  * @param {Date}     [q.from] [q.to]
  * @param {number}   [q.page=1] [q.limit=20]
  */
+/**
+ * @param {string}   [q.reference]  a booking, indent, PO or reservation id
+ * @param {string}   [q.customerId] whose activity to show
+ * @param {string}   [q.userId]     who performed it
+ *
+ * The three filters above are pushed into each SOURCE query rather than
+ * applied to the merged page. Filtering after the merge would make `total`
+ * the count of what survived in one window rather than the count of what
+ * matches, and the last page would come back empty.
+ */
 export const getActivity = async ({
   skuCode = null, brands, activityType = null, from = null, to = null,
+  reference = null, customerId = null, userId = null,
   page = 1, limit = 20,
 } = {}) => {
   if (!Array.isArray(brands) || brands.length === 0) {
@@ -383,7 +789,22 @@ export const getActivity = async ({
 
   // Which sources can contribute at all, given the type filter.
   const wantsIndent = !activityType || INDENT_TYPES.includes(activityType);
+  const wantsBooking = !activityType || BOOKING_EVENT_TYPES.includes(activityType);
   const wantsLedger = !activityType || Boolean(MOVEMENTS_FOR_TYPE[activityType]);
+
+  /**
+   * A customer is not written on a stock movement — only on the booking the
+   * movement belongs to. So "show me this customer" becomes "show me these
+   * booking and reservation ids", resolved once and pushed into each source.
+   */
+  let customerRefs = null;
+  if (customerId) {
+    const [orderIds, reservationIds] = await Promise.all([
+      (await import('../../models/Order.js')).default.distinct('orderId', { user: customerId }),
+      Reservation.distinct('reservationId', { customerId }),
+    ]);
+    customerRefs = { orderIds, reservationIds };
+  }
 
   const dateRange = {};
   if (from) dateRange.$gte = from;
@@ -393,6 +814,9 @@ export const getActivity = async ({
   // ── Ledger side ──
   const movementFilter = { brand: { $in: brands } };
   if (skuCode) movementFilter.skuCode = skuCode;
+  if (reference) movementFilter.referenceId = reference;
+  if (userId) movementFilter.user = userId;
+  if (customerRefs) movementFilter.referenceId = { $in: customerRefs.orderIds };
   if (hasRange) movementFilter.effectiveDate = dateRange;
   if (activityType && MOVEMENTS_FOR_TYPE[activityType]) {
     movementFilter.movementType = { $in: MOVEMENTS_FOR_TYPE[activityType] };
@@ -420,9 +844,23 @@ export const getActivity = async ({
       // No filter means BOTH kinds, and only those two. A reservation that is
       // neither — a plain Confirmed one — is already in the ledger as a RESERVE
       // movement, and listing it here as well showed one booking twice.
-      : { $or: [RESERVATION_MATCH.INDENT_RAISED, RESERVATION_MATCH.BOOKING_PENDING] };
+      : {
+        $or: [
+          RESERVATION_MATCH.INDENT_RAISED,
+          RESERVATION_MATCH.BOOKING_PENDING,
+          RESERVATION_MATCH.SELECTION_CLOSED,
+        ],
+      };
 
     if (skuCode) reservationFilter.skuCode = skuCode;
+    if (reference) {
+      reservationFilter.$and = [
+        ...(reservationFilter.$and || []),
+        { $or: [{ indentNumber: reference }, { reservationId: reference }, { poNumber: reference }] },
+      ];
+    }
+    if (userId) reservationFilter.reservedBy = userId;
+    if (customerId) reservationFilter.customerId = customerId;
 
     let fenced = true;
     if (!skuCode) {
@@ -461,7 +899,12 @@ export const getActivity = async ({
     }
   }
 
-  // ── Shape both sides ──
+  // ── Booking side ──
+  const booking = wantsBooking
+    ? await bookingEvents({ skuCode, brands, from, to, take, activityType, reference, customerId, userId })
+    : { records: [], total: 0 };
+
+  // ── Shape every side ──
   const skus = [...new Set([
     ...movements.map((m) => m.skuCode),
     ...reservations.map((r) => r.skuCode),
@@ -472,9 +915,18 @@ export const getActivity = async ({
     userNames(reservations.map((r) => r.reservedBy)),
   ]);
 
+  // The customer a booking-referenced movement belongs to, looked up once for
+  // the page. A movement with no booking reference simply has none.
+  const bookingRefs = [...new Set(movements
+    .filter((m) => ['booking', 'order'].includes(m.referenceType))
+    .map((m) => m.referenceId).filter(Boolean))];
+  const partyByBooking = await bookingParties(bookingRefs);
+
   const ledgerRecords = movements.map((m) => describeMovement(m, {
     workflowType: workflows.get(m.batchId) || null,
     productName: names.get(m.skuCode)?.name || null,
+    customerName: partyByBooking.get(m.referenceId)?.customer || null,
+    company: partyByBooking.get(m.referenceId)?.company || null,
   }));
 
   const indentRecords = reservations
@@ -488,11 +940,11 @@ export const getActivity = async ({
   // and date-filtered on the date each row shows. Anything re-checked here
   // would be a row the count had already included.
 
-  const merged = [...ledgerRecords, ...indentRecords]
+  const merged = [...ledgerRecords, ...indentRecords, ...booking.records]
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(skip, skip + limit);
 
-  const total = movementTotal + reservationTotal;
+  const total = movementTotal + reservationTotal + booking.total;
   return { records: merged, total, page, pages: Math.ceil(total / limit) || 1, limit };
 };
 

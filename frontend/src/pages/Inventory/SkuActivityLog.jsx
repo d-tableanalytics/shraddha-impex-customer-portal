@@ -167,6 +167,70 @@ const SummaryBand = ({ summary, item }) => {
   );
 };
 
+/**
+ * The fields a row cannot fit, shown only when asked for.
+ *
+ * Every activity carries the same `details` shape and fills only the fields
+ * that apply to it. Empty ones are omitted rather than rendered as a dash: a
+ * booking has no before/after stock and a stock adjustment has no customer,
+ * and showing blank rows for both makes the panel read as though data were
+ * missing when it simply does not apply.
+ */
+const DetailPanel = ({ record }) => {
+  const d = record.details || {};
+  const recorded =
+    record.postedAt &&
+    record.at &&
+    new Date(record.postedAt).getTime() !== new Date(record.at).getTime()
+      ? fmtDateTime(record.postedAt)
+      : null;
+
+  const fields = [
+    ["Customer", d.customer],
+    ["Company", d.company],
+    ["Placed by (SI Team)", d.placedBy],
+    ["Performed by", record.actor?.name],
+    ["Role", d.actorRole],
+    ["Trigger", record.trigger],
+    ["Requested", d.requestedQty],
+    ["Confirmed", d.confirmedQty],
+    ["Pending / indent", d.pendingQty],
+    ["Booking", d.bookingId],
+    ["Pending Indent", d.indentNumber],
+    ["PO number", d.poNumber],
+    ["Reservation", d.reservationId],
+    ["Status", d.statusFrom ? `${d.statusFrom} → ${d.statusTo}` : d.statusTo],
+    ["Source module", d.sourceModule],
+    ["Recorded at", recorded],
+    ["Reason", record.reasonCode ? record.reasonCode.replace(/_/g, " ") : null],
+    ["Transaction", record.id],
+    ["Batch", record.batchId],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== "");
+
+  return (
+    <tr className="bg-slate-50/70">
+      <td colSpan={99} className="px-8 py-4 border-b border-slate-200">
+        <dl className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-2">
+          {fields.map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                {label}
+              </dt>
+              <dd className="text-xs text-slate-700 font-medium break-all">{String(value)}</dd>
+            </div>
+          ))}
+        </dl>
+        {record.remarks && (
+          <p className="mt-3 text-xs text-slate-600">
+            <span className="font-bold uppercase text-[10px] text-slate-400">Remarks </span>
+            {record.remarks}
+          </p>
+        )}
+      </td>
+    </tr>
+  );
+};
+
 export const SkuActivityLog = () => {
   const { user } = useUserStore();
   const {
@@ -174,6 +238,18 @@ export const SkuActivityLog = () => {
     showAll, setShowAll, activityTypes, skuOptions, skuSearchLoading,
     filters, setFilters, resetFilters, selectSku, fetch, fetchActivityTypes, searchSkus,
   } = useActivityStore();
+
+  // Which rows are open. A Set, so expanding one does not re-render the rest
+  // through a changed array identity.
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleRow = (id) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const [exporting, setExporting] = useState(false);
 
   const [skuTerm, setSkuTerm] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -368,8 +444,12 @@ export const SkuActivityLog = () => {
                   />
                 )}
 
-                {!loading && records.map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50 transition-colors align-top">
+                {!loading && records.flatMap((r) => [
+                  <tr
+                    key={r.id}
+                    onClick={() => toggleRow(r.id)}
+                    className="hover:bg-slate-50 transition-colors align-top cursor-pointer"
+                  >
                     <td className="px-5 py-4 whitespace-nowrap">
                       <span className="text-slate-700 font-semibold">{fmtDateTime(r.at)}</span>
                       {r.backdated && (
@@ -439,9 +519,13 @@ export const SkuActivityLog = () => {
                       ) : (
                         <span className="text-slate-700 font-medium">{r.actor?.name || "—"}</span>
                       )}
+                      {r.details?.customer && (
+                        <span className="block text-[11px] text-slate-500">for {r.details.customer}</span>
+                      )}
                     </td>
-                  </tr>
-                ))}
+                  </tr>,
+                  expanded.has(r.id) ? <DetailPanel key={`${r.id}-d`} record={r} /> : null,
+                ])}
 
                 {!loading && records.length === 0 && !error && (
                   <tr>

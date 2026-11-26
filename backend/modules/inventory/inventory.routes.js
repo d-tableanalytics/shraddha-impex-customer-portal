@@ -20,6 +20,7 @@ import {
 } from './ledger.controller.js';
 import {
   listActivity, getSkuActivity, getSkuActivitySummary, listActivitySkus, listActivityTypes,
+  exportSkuActivity,
 } from './activity.controller.js';
 import {
   listBalances, getBalanceBySku, getAvailabilityBatch, rebuild, getReconciliation,
@@ -173,6 +174,8 @@ router.get('/activity/skus', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), listActiv
 router.get('/activity', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), listActivity);
 // Before '/items/:sku/activity', or 'summary' is swallowed as part of it.
 router.get('/items/:sku/activity/summary', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), getSkuActivitySummary);
+// Same permission as the screen: an export may not show more than the page.
+router.get('/items/:sku/activity/export', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), exportSkuActivity);
 router.get('/items/:sku/activity', authorize(PERMISSIONS.VIEW_STOCK_LEDGER), getSkuActivity);
 
 // ── Balance engine (M3) ───────────────────────────────────────────────────

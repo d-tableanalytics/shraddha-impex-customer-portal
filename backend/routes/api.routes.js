@@ -1,4 +1,5 @@
 import express from 'express';
+import { recordStockMovement } from '../utils/dualWrite.js';
 import mongoose from 'mongoose';
 import { createProductModel } from '../models/Product.js';
 import { canonicalBrand } from '../utils/brandRegistry.js';
@@ -110,6 +111,9 @@ router.post('/orders', protect, authorize(PERMISSIONS.CREATE_ORDER), async (req,
    * or a full Mongoose transaction block if MongoDB replica set is available.
    */
   const session = await mongoose.startSession();
+  // Filled inside the transaction, posted to the ledger after it commits — so a
+  // rolled-back booking can never leave a movement claiming stock moved.
+  let ledgerRecord = null;
 
   try {
     session.startTransaction();
@@ -143,11 +147,39 @@ router.post('/orders', protect, authorize(PERMISSIONS.CREATE_ORDER), async (req,
       }
     }
 
-    // Recompute and update product inventory fields
-    product.availableForSale -= requestedQty;
-    product.bookedQuantity += requestedQty;
+    // Recompute and update product inventory fields.
+    //
+    // ATOMIC, not read-modify-write. This was:
+    //
+    //     product.availableForSale -= requestedQty;
+    //     product.bookedQuantity   += requestedQty;
+    //     await product.save({ session });
+    //
+    // which re-sends the whole document from a value read earlier in the
+    // request, so two concurrent bookings for the same SKU each wrote their own
+    // total and one silently vanished — an oversell, and no record that it
+    // happened. The guarded $inc moves both counters in one operation and
+    // cannot commit against stock that has since gone.
+    //
+    // The check above stays exactly where it was so the 400 and its message are
+    // unchanged; this guard is what makes the decision binding.
+    const updatedProduct = await Model.findOneAndUpdate(
+      { _id: product._id, availableForSale: { $gte: requestedQty } },
+      { $inc: { availableForSale: -requestedQty, bookedQuantity: requestedQty } },
+      { new: true, session },
+    );
+    if (!updatedProduct) {
+      // Another booking took the stock between the check and the write. Same
+      // message and status as the check above — a caller cannot tell which of
+      // the two refused it, and does not need to.
+      throw new Error(`Insufficient stock. Available: ${Math.max(0, product.availableForSale - requestedQty)}`);
+    }
     // Total available quantity remains unchanged as stock was just moved from available to booked
-    await product.save({ session });
+    ledgerRecord = {
+      product: updatedProduct,
+      requestedQty,
+      bookedAfter: updatedProduct.bookedQuantity,
+    };
 
     // Whose order this is. A customer books for themselves, whatever `email`
     // says; only the desk (view_all_bookings) books on behalf of an account.
@@ -188,6 +220,26 @@ router.post('/orders', protect, authorize(PERMISSIONS.CREATE_ORDER), async (req,
 
     await session.commitTransaction();
     session.endSession();
+
+    // Dual-write, after the commit. This route moved stock without ever telling
+    // the ledger, so its bookings were invisible to the Stock Ledger, the SKU
+    // Activity Log and reconciliation. Never throws (see utils/dualWrite.js).
+    if (ledgerRecord) {
+      await recordStockMovement({
+        product: ledgerRecord.product,
+        workflow: 'order-create',
+        referenceType: 'booking',
+        referenceId: newOrder[0].orderId,
+        actor: req.user,
+        req,
+        movements: [{
+          movementType: 'RESERVE',
+          quantity: ledgerRecord.requestedQty,
+          beforeQuantity: ledgerRecord.bookedAfter - ledgerRecord.requestedQty,
+          afterQuantity: ledgerRecord.bookedAfter,
+        }],
+      });
+    }
 
     res.status(201).json({ success: true, data: newOrder[0] });
   } catch (error) {

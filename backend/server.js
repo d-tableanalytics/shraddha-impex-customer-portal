@@ -25,6 +25,9 @@ import { runWeeklyHistoryReport } from './modules/orders/historyReport.job.js';
 import { readHistoryReportConfig, describeHistoryReportConfig } from './config/historyReport.js';
 import cron from 'node-cron';
 
+import { startOutboxDrain } from './modules/inventory/outboxDrain.js';
+import StockOutbox from './models/StockOutbox.js';
+
 import { isSuperAdmin } from './middlewares/rbac.js';
 dotenv.config();
 
@@ -190,6 +193,29 @@ const startServer = async () => {
   // Settle the stock held by confirmed bookings: consume it where a PO was
   // raised, release it where the 7-day PO deadline has passed.
   await runPoSettlement();
+
+  /**
+   * The outbox's indexes must exist BEFORE the first request is served.
+   *
+   * `idempotencyKey` is unique, and that uniqueness is the whole reason a
+   * ledger posting can be retried safely. Mongoose builds indexes in the
+   * background, so without awaiting it a booking taken in the first seconds
+   * after a restart could write a row the index is not yet protecting. This
+   * blocks the boot until the index is in place — on an empty or small
+   * collection, effectively instantly.
+   *
+   * Placed before startOutboxDrain() for the same reason: a worker claiming
+   * rows against a half-built index is a race nobody should have to think
+   * about at four in the morning.
+   */
+  await StockOutbox.init();
+
+  // Drain the stock-ledger outbox. Every row is a posting whose stock mutation
+  // has already committed, so this only writes history and the projection
+  // derived from it — it moves no stock, sends no mail and fulfils no indent.
+  // Safe to run on every instance: rows are claimed atomically, so two workers
+  // cannot post the same one.
+  startOutboxDrain();
 
   // Daily cron scheduler (runs at 00:00 every day)
   // The 7-day PO deadline is measured in elapsed hours, so it is checked every

@@ -13,6 +13,10 @@
 
 import mongoose from 'mongoose';
 
+// Installs the loopback-only fence around mongoose.connect. Imported for the
+// side effect, before any helper below can connect. See isolation.js.
+import './isolation.js';
+
 /** First start includes a binary download on a cold machine. */
 const LAUNCH_TIMEOUT_MS = 120_000;
 

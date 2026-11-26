@@ -18,6 +18,9 @@ const FULL_LIMIT = 50;
 
 const initialFilters = () => ({
   activityType: "",
+  reference: "",
+  customerId: "",
+  userId: "",
   from: "",
   to: "",
   page: 1,

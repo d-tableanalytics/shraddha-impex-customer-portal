@@ -1,6 +1,9 @@
 import mongoose from 'mongoose';
 import StockMovement, { MOVEMENT_CLASS } from '../../models/StockMovement.js';
+import { reportStockDiscrepancy } from '../../utils/stockInvariant.js';
 import StockBalance, { deriveBalance } from '../../models/StockBalance.js';
+import StockBatch from '../../models/StockBatch.js';
+import { isTransactionUnsupported } from '../../utils/mongoSession.js';
 import Location from '../../models/Location.js';
 import { Product } from '../../models/Product.js';
 import { recordAudit } from '../../utils/auditLog.js';
@@ -433,9 +436,139 @@ export default {
  * oversell — mirroring over it from a projection read a moment earlier would
  * reintroduce the race it exists to prevent.
  */
+/**
+ * Claim the right to fold `batchId` into the projection. True for exactly one
+ * caller; false for everyone else, including a retry of the same work.
+ *
+ * This is what makes the projection safe under at-least-once delivery. A
+ * posted batch may be handed to several workers — one retrying after a timeout,
+ * another after reclaiming an abandoned row — and `$inc` is not idempotent, so
+ * "has it been posted?" is the wrong question to gate on. This asks "has it
+ * been PROJECTED?", which is the question that actually matters.
+ *
+ * The claim is taken BEFORE the fold, not after, because a second worker
+ * folding the same batch would double-count — a worse failure than a missed
+ * fold, which `reconcile()` detects and `rebuildBalances()` repairs.
+ */
+/**
+ * How long a projection claim may be held before another worker may take it.
+ * Generous: folding a batch is a handful of writes, so anything approaching
+ * this is a dead process rather than a slow one.
+ */
+export const PROJECTION_CLAIM_TIMEOUT_MS = Number(process.env.IMS_PROJECTION_CLAIM_TIMEOUT_MS) || 120_000;
+
+export const claimProjection = async (batchId) => {
+  if (!batchId) return false;
+  const stale = new Date(Date.now() - PROJECTION_CLAIM_TIMEOUT_MS);
+  const res = await StockBatch.updateOne(
+    {
+      batchId,
+      // Never re-fold something already folded. This is the idempotency gate.
+      projectionAppliedAt: null,
+      // Free, or abandoned long enough that the holder is gone.
+      $or: [{ projectionClaimedAt: null }, { projectionClaimedAt: { $lte: stale } }],
+    },
+    { $set: { projectionClaimedAt: new Date() } },
+  );
+  return res.modifiedCount === 1;
+};
+
+/** Confirm the fold. Only after this is the batch off limits permanently. */
+export const confirmProjection = async (batchId, session = null) => {
+  if (!batchId) return;
+  await StockBatch.updateOne(
+    { batchId },
+    { $set: { projectionAppliedAt: new Date() } },
+    session ? { session } : {},
+  );
+};
+
+/**
+ * Fold a batch into the projection AND mark it folded, atomically.
+ *
+ * WHY THIS HAS TO BE ONE OPERATION
+ * --------------------------------
+ * The claim makes folding exclusive, and `projectionAppliedAt` stops a folded
+ * batch being folded again. Between them sat a window: a worker that applied
+ * the movements and then died before confirming left the batch claimed but
+ * unmarked. The claim expires — by design, so a dead worker cannot strand a
+ * batch for ever — and the next worker folds the SAME movements a second time.
+ * `applyMovements` is a `$inc`, so that is a silent double-count.
+ *
+ * Expiring the claim and not double-counting cannot both be true unless the
+ * fold and the mark commit together. They now do: both writes go through one
+ * transaction, so a crash at any point either leaves the batch untouched (and
+ * safely reclaimable) or completely done (and never reclaimed).
+ *
+ * Health recomputation is deliberately OUTSIDE: it is derived, always
+ * rebuildable, and has no business lengthening a transaction that holds locks
+ * on the balance documents the booking flow reads.
+ *
+ * Falls back to the sequential path only where transactions do not exist (a
+ * standalone mongod, i.e. never in this deployment), where the old window
+ * remains and reconciliation is what reports it.
+ */
+export const applyAndConfirmProjection = async (batchId, movements) => {
+  const session = await mongoose.startSession();
+  try {
+    let applied = false;
+    await session.withTransaction(async () => {
+      await applyMovements(movements, session);
+      await confirmProjection(batchId, session);
+      applied = true;
+    });
+    return applied;
+  } catch (error) {
+    if (isTransactionUnsupported(error)) {
+      await applyMovements(movements);
+      await confirmProjection(batchId);
+      return true;
+    }
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/**
+ * Give the claim back when the fold failed, so the next attempt may try at
+ * once rather than waiting out the timeout.
+ *
+ * A hard crash cannot reach this — which is precisely why the claim expires.
+ */
+export const releaseProjectionClaim = async (batchId) => {
+  if (!batchId) return;
+  await StockBatch.updateOne({ batchId }, { $set: { projectionClaimedAt: null } });
+};
+
 export const syncLegacyStock = async (skuCodes) => {
   const skus = [...new Set((skuCodes || []).filter(Boolean))];
   if (skus.length === 0) return { synced: 0 };
+
+  /**
+   * DRAIN FIRST — the projection must not be read while it is behind.
+   *
+   * This function copies the ledger's PHYSICAL position onto the product's
+   * `totalAvailableQuantity`. Since Phase 2 a movement may be posted moments
+   * after the stock moved, so an import, count or adjustment running in that
+   * window would read a projection that has not yet heard about, say, the
+   * ISSUE from a PO raised ten seconds ago — and would write that stale,
+   * higher figure back over the correct one.
+   *
+   * Draining the rows for these SKUs first closes the window. Scoped to the
+   * SKUs in hand, so a large backlog elsewhere cannot delay an import.
+   *
+   * Imported dynamically: outboxDrain.js imports this module, and a static
+   * import here would be a cycle.
+   */
+  try {
+    const { drainOutboxForSkus } = await import('./outboxDrain.js');
+    await drainOutboxForSkus(skus);
+  } catch (error) {
+    // Never fatal. A drain that cannot run leaves the projection no staler
+    // than it already was, and reconciliation reports the gap.
+    console.warn(`[Balance] Could not drain the outbox before syncing ${skus.length} SKU(s): ${error.message}`);
+  }
 
   const totals = await StockBalance.aggregate([
     { $match: { skuCode: { $in: skus } } },
@@ -449,42 +582,70 @@ export const syncLegacyStock = async (skuCodes) => {
     },
   ]);
 
+  /**
+   * `bookedQuantity` IS NOT WRITTEN HERE. See the header.
+   *
+   * `availableForSale` is derived from the live booked figure using an
+   * aggregation-pipeline update, so the subtraction happens inside the same
+   * atomic write that sets the physical total. Computing it in JavaScript from
+   * a value read a moment earlier would reintroduce the lost update this is
+   * meant to avoid — a booking confirmed between the read and the write would
+   * be overwritten exactly as before.
+   *
+   * $max against 0 floors availability rather than letting it go negative. A
+   * SKU whose commitments exceed its physical stock is genuinely oversold:
+   * the right answer for the storefront is zero, and the shortfall is reported
+   * below for a person to resolve. It is never resolved by reducing a booking.
+   */
+  const derive = (onHand, incoming) => [{
+    $set: {
+      totalAvailableQuantity: onHand,
+      inTransitQty: incoming,
+      availableForSale: {
+        $max: [0, { $subtract: [onHand, { $max: [0, { $ifNull: ['$bookedQuantity', 0] }] }] }],
+      },
+    },
+  }];
+
   const ops = totals.map((t) => ({
     updateOne: {
       filter: { skuCode: t._id.skuCode },
-      update: {
-        $set: {
-          totalAvailableQuantity: t.onHand,
-          bookedQuantity: t.reserved,
-          availableForSale: t.onHand - t.reserved,
-          inTransitQty: t.incoming,
-        },
-      },
+      update: derive(t.onHand, t.incoming),
     },
   }));
 
-  // A SKU the ledger has no position for holds nothing, and must be written as
-  // zero rather than skipped. Skipping leaves whatever the legacy field last
-  // said — so stock cleared down to nothing would keep showing its old figure
-  // to customers, which is the exact failure this function exists to end.
+  // A SKU the ledger has no position for holds no PHYSICAL stock, and must be
+  // written as zero rather than skipped — skipping leaves whatever the legacy
+  // field last said, so stock cleared down to nothing would keep showing its
+  // old figure to customers. Its COMMITMENTS are untouched for the same reason
+  // as above: the ledger not knowing about a reservation is not evidence that
+  // the reservation does not exist. That inference is what voided seven units
+  // of a live booking on 21 Nov 2026.
   const withBalance = new Set(totals.map((t) => t._id.skuCode));
   for (const sku of skus) {
     if (withBalance.has(sku)) continue;
-    ops.push({
-      updateOne: {
-        filter: { skuCode: sku },
-        update: {
-          $set: {
-            totalAvailableQuantity: 0, bookedQuantity: 0, availableForSale: 0, inTransitQty: 0,
-          },
-        },
-      },
-    });
+    ops.push({ updateOne: { filter: { skuCode: sku }, update: derive(0, 0) } });
   }
   if (ops.length === 0) return { synced: 0 };
 
   // Through the raw driver: `brand` is the schema's discriminatorKey, and a
   // bulkWrite cast on the base model strips it out of the filter.
   const res = await Product.collection.bulkWrite(ops, { ordered: false });
-  return { synced: res.modifiedCount ?? 0 };
+
+  // Anything now showing zero available while still holding commitments is
+  // oversold. Reported, never corrected here.
+  const oversold = await Product.find(
+    { skuCode: { $in: skus }, $expr: { $gt: ['$bookedQuantity', '$totalAvailableQuantity'] } },
+    'skuCode brand totalAvailableQuantity bookedQuantity availableForSale',
+  ).lean();
+  for (const p of oversold) {
+    await reportStockDiscrepancy({
+      product: p,
+      requested: p.bookedQuantity ?? 0,
+      applied: p.totalAvailableQuantity ?? 0,
+      operation: 'sync',
+    });
+  }
+
+  return { synced: res.modifiedCount ?? 0, oversold: oversold.length };
 };

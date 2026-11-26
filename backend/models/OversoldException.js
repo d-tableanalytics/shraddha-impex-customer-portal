@@ -31,7 +31,16 @@ const oversoldExceptionSchema = new mongoose.Schema(
     shortfall: { type: Number, required: true },
 
     // What caused it.
-    source: { type: String, enum: ['count', 'adjustment', 'issue'], default: 'count' },
+    // 'release' / 'consume' / 'sync' are raised by utils/stockInvariant.js when a
+    // stock movement could not be fully accounted for. Added to the existing
+    // enum rather than given their own collection: the question is the same one
+    // ('units promised that do not exist — which bookings?') and the worklist
+    // that answers it already reads this collection.
+    source: {
+      type: String,
+      enum: ['count', 'adjustment', 'issue', 'release', 'consume', 'sync'],
+      default: 'count',
+    },
     countId: { type: String, default: null },
     transactionId: { type: String, default: null },
 

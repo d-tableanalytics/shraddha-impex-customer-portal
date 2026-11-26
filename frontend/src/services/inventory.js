@@ -431,10 +431,13 @@ export const inventoryApi = {
 
   /** The cross-SKU feed: what happened across every SKU this user may see. */
   listActivity: async ({
-    skuCode = "", brand = "", activityType = "", from = "", to = "", page = 1, limit = 20,
+    skuCode = "", brand = "", activityType = "", from = "", to = "",
+    reference = "", customerId = "", userId = "", page = 1, limit = 20,
   } = {}) => {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-    for (const [key, value] of Object.entries({ skuCode, brand, activityType, from, to })) {
+    for (const [key, value] of Object.entries({
+      skuCode, brand, activityType, from, to, reference, customerId, userId,
+    })) {
       if (value) params.set(key, value);
     }
     const r = await api.get(`/inventory/activity?${params.toString()}`);
@@ -446,9 +449,14 @@ export const inventoryApi = {
   },
 
   /** One SKU's history. Defaults to the latest 20; page through for all of it. */
-  getSkuActivity: async (skuCode, { activityType = "", from = "", to = "", page = 1, limit = 20 } = {}) => {
+  getSkuActivity: async (skuCode, {
+    activityType = "", from = "", to = "", reference = "", customerId = "", userId = "",
+    page = 1, limit = 20,
+  } = {}) => {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-    for (const [key, value] of Object.entries({ activityType, from, to })) {
+    for (const [key, value] of Object.entries({
+      activityType, from, to, reference, customerId, userId,
+    })) {
       if (value) params.set(key, value);
     }
     const r = await api.get(
@@ -479,6 +487,32 @@ export const inventoryApi = {
     if (search) params.set("search", search);
     const r = await api.get(`/inventory/activity/skus?${params.toString()}`);
     return r.data.data || [];
+  },
+
+  /**
+   * The SKU's history as a workbook, honouring the filters on screen.
+   *
+   * Downloaded through the same authenticated client as everything else,
+   * so the export obeys the same permission as the page it came from.
+   */
+  exportSkuActivity: async (skuCode, { activityType = "", from = "", to = "", reference = "", customerId = "", userId = "" } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries({ activityType, from, to, reference, customerId, userId })) {
+      if (value) params.set(key, value);
+    }
+    const r = await api.get(
+      `/inventory/items/${encodeURIComponent(skuCode)}/activity/export?${params.toString()}`,
+      { responseType: "blob" },
+    );
+    const url = URL.createObjectURL(new Blob([r.data]));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sku-activity-${String(skuCode).replace(/[^A-Za-z0-9._-]/g, "_")}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return true;
   },
 
   getActivityTypes: async () => {

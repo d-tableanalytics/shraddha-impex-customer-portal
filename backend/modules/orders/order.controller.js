@@ -23,6 +23,7 @@ import {
   settleBooking, releasedAllocations, indentsReleased, closeBookingIndent,
 } from '../../utils/stockSettlement.js';
 import { recordStockMovement } from '../../utils/dualWrite.js';
+import { reportStockDiscrepancy } from '../../utils/stockInvariant.js';
 import {
   applyBookingStatus,
   recordExternalStatusChange,
@@ -81,6 +82,33 @@ const deductStockAtomic = async (product, wantQty, session = null, ctx = null) =
           afterQuantity: updated.bookedQuantity,
         }],
       });
+
+      /**
+       * OVERSELLING AGAINST PHANTOM STOCK IS NOT ALLOWED TO BE SILENT.
+       *
+       * `availableForSale` is what a booking is granted from, and on a row
+       * already carrying phantom units it can exceed what physically exists.
+       * The booking still succeeds — reducing it here would be deciding a
+       * customer commitment on the strength of a figure we already know is
+       * wrong, and that is a person's call. But it is recorded the moment it
+       * happens rather than being discovered when the PO ships.
+       *
+       * Costs one comparison on a healthy row and touches the database only
+       * when the invariant is already broken.
+       */
+      const afsAfter = updated.availableForSale ?? 0;
+      const bookedAfter = updated.bookedQuantity ?? 0;
+      const totalAfter = updated.totalAvailableQuantity ?? 0;
+      if (afsAfter + bookedAfter > totalAfter) {
+        await reportStockDiscrepancy({
+          product: updated,
+          requested: afsAfter + bookedAfter,
+          applied: totalAfter,
+          operation: 'sync',
+          ctx,
+          session,
+        });
+      }
       return take;
     }
   }

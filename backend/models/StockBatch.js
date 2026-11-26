@@ -60,6 +60,38 @@ const stockBatchSchema = new mongoose.Schema(
     failureReason: { type: String, default: null },
 
     postedAt: { type: Date, default: null },
+
+    /**
+     * When this batch was folded into the balance projection.
+     *
+     * WHY IT IS NEEDED. Posting a batch and applying it to `stockbalances` are
+     * two operations. A process that dies between them used to leave the
+     * projection permanently short, because the retry asked "has this batch
+     * been posted?" — it had — and skipped the projection update on that
+     * basis. Posting and projecting are different questions and now have
+     * different answers.
+     *
+     * Used as a compare-and-set claim (see claimProjection in
+     * balance.service.js), so exactly one of any number of concurrent or
+     * retrying workers folds a given batch in. `null` on a batch posted before
+     * this field existed, which is correct: nothing replays those.
+     */
+    projectionAppliedAt: { type: Date, default: null },
+
+    /**
+     * When a worker took the right to fold this batch in — set BEFORE the fold,
+     * cleared or confirmed after it.
+     *
+     * The pair is what makes the fold recoverable rather than merely
+     * single-shot. `projectionAppliedAt` alone closed the window where a retry
+     * skipped an unprojected batch, but opened a smaller one: a process that
+     * died between claiming and folding left the batch marked as done for ever.
+     *
+     * With both, "claimed but not applied, and claimed a while ago" is a
+     * distinguishable state, and the next worker may take it. Claiming is
+     * still exclusive, so two workers cannot fold the same batch at once.
+     */
+    projectionClaimedAt: { type: Date, default: null },
   },
   { timestamps: true, versionKey: false },
 );
