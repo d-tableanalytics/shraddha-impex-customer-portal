@@ -692,7 +692,15 @@ export const createReservation = async (req, res, next) => {
       );
 
       if (updated) {
-        await recordAudit(req.user, 'Reservation Updated', `Added ${quantity} units of ${product.skuCode} to an existing reservation${forWhom} (now ${updated.quantity})`, req);
+        await recordAudit(req.user, 'Reservation Updated', `Added ${quantity} units of ${product.skuCode} to an existing reservation${forWhom} (now ${updated.quantity})`, req, {
+          meta: {
+            skuCode: product.skuCode,
+            reservationId: updated.reservationId,
+            previousQuantity: (updated.quantity ?? 0) - quantity,
+            newQuantity: updated.quantity,
+            addedQuantity: quantity,
+          },
+        });
         // The in-app notice goes to whoever is building the list — the desk's
         // own list for this customer is theirs to confirm, not the customer's.
         sendNotification(req.user._id, 'Item Booked', `${product.skuCode} updated to ${updated.quantity} units in your selection list${forWhom}. Confirm within 7 days — it is auto-cancelled after that.`, 'reservation');
@@ -771,10 +779,21 @@ export const updateReservationQuantity = async (req, res, next) => {
     enforceMoq(customer, product, quantity);
 
     // No stock validation/adjustment — stock is only allocated at confirmation time.
+    // Captured BEFORE the write: once the document is saved the previous
+    // figure is gone, and an audit entry that cannot say what the quantity
+    // was is not a record of a change.
+    const previousQuantity = reservation.quantity;
     reservation.quantity = quantity;
     await reservation.save();
 
-    await recordAudit(req.user, 'Reservation Updated', `Adjusted quantity of reservation ${reservation.reservationId} to ${quantity}`, req);
+    await recordAudit(req.user, 'Reservation Updated', `Adjusted quantity of reservation ${reservation.reservationId} to ${quantity}`, req, {
+      meta: {
+        skuCode: reservation.skuCode,
+        reservationId: reservation.reservationId,
+        previousQuantity,
+        newQuantity: quantity,
+      },
+    });
 
     res.status(200).json({ success: true, data: reservation });
   } catch (error) {
@@ -831,6 +850,16 @@ export const cancelReservation = async (req, res, next) => {
       isIndent ? 'Indent Cancelled' : 'Reservation Cancelled',
       `Cancelled ${label} (${reservation.skuCode} x${reservation.quantity}) — by ${byName}.`,
       req,
+      {
+        meta: {
+          skuCode: reservation.skuCode,
+          reservationId: reservation.reservationId,
+          indentNumber: reservation.indentNumber || null,
+          quantity: reservation.quantity,
+          previousStatus: reservation.status,
+          newStatus: 'Cancelled',
+        },
+      },
     );
 
     // Tell the OWNER, not the caller — a desk cancel must land in the

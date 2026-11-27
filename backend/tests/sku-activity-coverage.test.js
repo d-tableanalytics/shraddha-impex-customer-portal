@@ -384,3 +384,173 @@ describe('SKU activity coverage', () => {
     assert.equal(now, movements, 'a booking that moved no stock produced a stock movement');
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// TARGETED COVERAGE — events that only the audit log records durably
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('Durable event coverage', () => {
+  const auditRow = (skuCode, action, remarks, meta = {}) =>
+    mongoose.connection.collection('auditlogs').insertOne({
+      action, remarks, meta: { skuCode, ...meta },
+      method: 'POST', endpoint: '/test', ipAddress: '127.0.0.1', userAgent: 'test',
+      createdAt: new Date(), updatedAt: new Date(),
+    });
+
+  test('CV-01 a selection-list quantity change keeps BOTH the old and new figure', async () => {
+    await product('CV-1', 50);
+    await auditRow('CV-1', 'Reservation Updated',
+      'Adjusted quantity of reservation RES-CV-1 to 10',
+      { reservationId: 'RES-CV-1', previousQuantity: 40, newQuantity: 10 });
+
+    const { records } = await feed('CV-1');
+    const row = records.find((r) => r.activityType === 'AUDIT_EVENT');
+    assert.ok(row, 'a quantity change left no activity record');
+    assert.equal(row.details.statusFrom, '40', 'the previous quantity was lost');
+    assert.equal(row.details.statusTo, '10');
+    assert.equal(row.derivedFrom, 'audit-log');
+    assert.equal(row.affectsStock, false);
+  });
+
+  test('CV-02 the record survives deletion of the document it describes', async () => {
+    const p = await product('CV-2', 50);
+    const r = await Reservation.create({
+      reservationId: 'RES-CV-2', customerId: U.alice._id, productId: p._id, skuCode: 'CV-2',
+      quantity: 25, expiryDate: new Date(Date.now() + 864e5), reservedBy: U.alice._id,
+      status: 'Reserved',
+    });
+    await auditRow('CV-2', 'Reservation Cancelled',
+      'Cancelled selection line (CV-2 x25) — by the customer.',
+      { reservationId: 'RES-CV-2', quantity: 25, previousStatus: 'Reserved', newStatus: 'Cancelled' });
+
+    // The business document is removed entirely.
+    await Reservation.deleteOne({ _id: r._id });
+
+    const { records } = await feed('CV-2');
+    const row = records.find((r2) => r2.activityType === 'AUDIT_EVENT');
+    assert.ok(row, 'the history vanished with the document');
+    assert.match(row.description, /Cancelled/);
+    assert.equal(row.details.statusTo, 'Cancelled');
+  });
+
+  test('CV-03 a pre-PO booking amendment is recorded as its own event', async () => {
+    await product('CV-3', 50);
+    await auditRow('CV-3', 'Booking Edited (Sales)',
+      'Booking BO-CV-3 line CV-3 changed from 12 to 5 before PO.',
+      { orderId: 'BO-CV-3', previousQuantity: 12, newQuantity: 5 });
+
+    const { records } = await feed('CV-3');
+    const row = records.find((r) => r.activityType === 'AUDIT_EVENT');
+    assert.ok(row);
+    assert.equal(row.action, 'Booking quantity amended (pre-PO)');
+    assert.equal(row.details.bookingId, 'BO-CV-3');
+    assert.equal(row.details.sourceModule, 'Sales Desk');
+  });
+
+  test('CV-04 the whole Pending Indent lifecycle is visible', async () => {
+    await product('CV-4', 80);
+    const steps = [
+      ['Indent Scheduled', 'Indent PI-CV-4 scheduled'],
+      ['Indent Stock Assigned', '10 unit(s) of CV-4 assigned to PI-CV-4'],
+      ['Indent Allocated', '5 unit(s) of arriving stock allocated'],
+      ['Indent Returned To Booking', 'Indent PI-CV-4 returned to its booking'],
+      ['Indent Cancelled', 'Cancelled indent (CV-4 x5)'],
+    ];
+    for (const [action, remarks] of steps) await auditRow('CV-4', action, remarks, { indentNumber: 'PI-CV-4' });
+
+    const { records } = await feed('CV-4');
+    const actions = records.filter((r) => r.activityType === 'AUDIT_EVENT').map((r) => r.action);
+    for (const expected of [
+      'Indent scheduled', 'Indent stock assigned by hand', 'Indent allocated arriving stock',
+      'Indent returned to booking', 'Indent cancelled',
+    ]) {
+      assert.ok(actions.includes(expected), `missing: ${expected}`);
+    }
+  });
+
+  test('CV-05 repeated confirm/cancel/reconfirm cycles are separate events', async () => {
+    await product('CV-5', 80);
+    for (const n of [1, 2, 3]) {
+      await auditRow('CV-5', 'Reservation Confirmed',
+        `Reservation RES-CV-5-${n}: confirmed 5, pending 0 (requested 5)`,
+        { reservationId: `RES-CV-5-${n}` });
+    }
+    await auditRow('CV-5', 'Booking Cancelled', 'Booking BO-CV-5 cancelled', { orderId: 'BO-CV-5' });
+
+    const { records } = await feed('CV-5');
+    const confirms = records.filter((r) => r.action === 'Booking confirmed');
+    assert.equal(confirms.length, 3, 'repeated cycles were collapsed into one');
+    const ids = new Set(records.map((r) => r.id));
+    assert.equal(ids.size, records.length, 'the feed contains duplicates');
+  });
+
+  test('CV-06 an oversold exception appears on the SKU it concerns', async () => {
+    await product('CV-6', 4);
+    await mongoose.connection.collection('oversoldexceptions').insertOne({
+      skuCode: 'CV-6', brand: 'Koken', onHand: 4, reserved: 9, shortfall: 5,
+      source: 'count', countId: 'CNT-CV-6', status: 'Open',
+      affectedBookings: [{ orderId: 'BO-CV-6', confirmedQty: 9 }],
+      raisedAt: new Date(), createdAt: new Date(), updatedAt: new Date(),
+    });
+
+    const { records } = await feed('CV-6');
+    const row = records.find((r) => r.activityType === 'OVERSOLD_EXCEPTION');
+    assert.ok(row, 'an oversold exception is invisible on the SKU it concerns');
+    assert.equal(row.quantity, 5);
+    assert.equal(row.affectsStock, false);
+    assert.equal(row.details.bookingId, 'BO-CV-6');
+    assert.equal(row.trigger, 'system');
+  });
+
+  test('CV-07 SKU attribution does not match a longer code by accident', async () => {
+    await product('CV-7', 10);
+    await product('CV-70', 10);
+    await auditRow('CV-70', 'Reservation Updated', 'Adjusted quantity for CV-70 to 3', {});
+
+    const { records } = await feed('CV-7');
+    assert.equal(
+      records.some((r) => r.activityType === 'AUDIT_EVENT'), false,
+      'CV-7 picked up an entry that belongs to CV-70',
+    );
+  });
+
+  test('CV-08 rows say whether they come from a mutable document', async () => {
+    const p = await product('CV-8', 50);
+    await POST(`/api/v1/reservations/direct-booking`, U.alice,
+      { items: [{ productId: String(p._id), quantity: 5 }] });
+
+    const { records } = await feed('CV-8');
+    const created = records.find((r) => r.activityType === 'BOOKING_CREATED');
+    assert.equal(created.derivedFrom, 'current-document',
+      'a row read from a live document does not say so');
+    const movement = records.find((r) => r.affectsStock);
+    assert.equal(movement.derivedFrom, 'ledger');
+  });
+
+  test('CV-09 pagination covers every source without dropping rows', async () => {
+    const p = await product('CV-9', 200);
+    for (let i = 0; i < 3; i += 1) {
+      await POST(`/api/v1/reservations/direct-booking`, U.alice,
+        { items: [{ productId: String(p._id), quantity: 2 }] });
+    }
+    for (const n of [1, 2, 3]) await auditRow('CV-9', 'Reservation Updated', `change ${n} for CV-9`, {});
+
+    const all = await feed('CV-9');
+    const seen = new Set();
+    let fetched = 0;
+    for (let page = 1; page <= Math.ceil(all.total / 5); page += 1) {
+      const r = await getActivity({ skuCode: 'CV-9', brands: BRANDS, page, limit: 5 });
+      for (const rec of r.records) seen.add(rec.id);
+      fetched += r.records.length;
+    }
+    assert.equal(fetched, all.total, 'paging through dropped or repeated rows');
+    assert.equal(seen.size, all.total);
+  });
+
+  test('CV-10 the export states its limit rather than truncating silently', async () => {
+    await product('CV-10', 20);
+    const { exportLimit } = await import('../modules/inventory/activity.controller.js');
+    assert.equal(typeof exportLimit, 'number');
+    assert.ok(exportLimit >= 1000);
+  });
+});

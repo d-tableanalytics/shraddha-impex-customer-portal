@@ -44,6 +44,9 @@ const VALID_TYPES = new Set(ACTIVITY_TYPES.map((t) => t.type));
 /** An export is a convenience, not a bulk extract. */
 const EXPORT_LIMIT = Number(process.env.IMS_ACTIVITY_EXPORT_LIMIT) || 5000;
 
+/** Exposed so the screen can state the cap rather than truncate in silence. */
+export const exportLimit = EXPORT_LIMIT;
+
 const parse = (req, { defaultLimit = 20 } = {}) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || defaultLimit, 1), 100);
   const page = Math.min(Math.max(Number(req.query.page) || 1, 1), 500);

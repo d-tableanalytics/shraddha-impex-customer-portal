@@ -657,6 +657,16 @@ export const updateOrderPO = async (req, res, next) => {
       'PO Generated',
       `PO ${poNumber} raised for booking ${orderNumber}. Booking is now locked.`,
       req,
+      {
+        // The SKUs this PO actually covers, so the entry is answerable from
+        // a SKU's own history and not only from the booking's.
+        meta: {
+          orderId: orderNumber,
+          poNumber,
+          skuCodes: (stamped.settled || []).map((l) => l.skuCode),
+          lines: (stamped.settled || []).map((l) => ({ skuCode: l.skuCode, quantity: l.confirmedQty })),
+        },
+      },
     );
 
     res.status(200).json({ success: true, poNumber });

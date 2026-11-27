@@ -112,6 +112,8 @@ export const ACTIVITY_TYPES = Object.freeze([
   { type: 'BOOKING_CREATED', label: 'Booking Created', source: 'booking', movementType: null },
   { type: 'PO_RAISED', label: 'PO Raised', source: 'booking', movementType: null },
   { type: 'STATUS_CHANGED', label: 'Status Changed', source: 'booking', movementType: null },
+  { type: 'AUDIT_EVENT', label: 'Recorded Action', source: 'audit', movementType: null },
+  { type: 'OVERSOLD_EXCEPTION', label: 'Oversold Exception', source: 'exception', movementType: null },
 ]);
 
 /**
@@ -286,6 +288,8 @@ export const describeMovement = (m, extra = {}) => {
     reasonCode: m.reasonCode || null,
     remarks: m.note || null,
     trigger: triggerOf(extra.workflowType, m.actorType),
+    // A movement is immutable once posted.
+    derivedFrom: 'ledger',
     // The same shape every other source carries, so one renderer serves all.
     // A movement knows its reference and its own balance pair; it does not
     // know the customer, and nothing here invents one.
@@ -417,6 +421,7 @@ export const describeReservation = (r, extra = {}) => {
     remarks: r.cancellationReason || r.scheduleNote || null,
     status: r.status,
     trigger: r.autoBookedOrderId ? 'automatic' : 'manual',
+    derivedFrom: 'current-document',
     details: {
       customer: extra.customerName ?? null,
       company: extra.company ?? null,
@@ -513,7 +518,11 @@ export const describeBookingCreated = (line, extra = {}) => {
     reasonCode: null,
     remarks: line.remarks || null,
     status: line.status || null,
-    trigger: line.createdByName ? 'manual' : 'manual',
+    trigger: 'manual',
+    // Read from the order line as it stands NOW. A later Sales Desk edit
+    // changes these figures; the edit itself is recorded in the audit log and
+    // appears as its own row. See auditEvents().
+    derivedFrom: 'current-document',
     details: detailsOf({
       ...partiesOf(line, extra.customerName),
       requestedQty: requested,
@@ -561,6 +570,7 @@ export const describePoRaised = (line, extra = {}) => ({
   remarks: null,
   status: line.status || null,
   trigger: 'manual',
+  derivedFrom: 'current-document',
   details: detailsOf({
     ...partiesOf(line, extra.customerName),
     confirmedQty: line.confirmedQty ?? 0,
@@ -612,6 +622,7 @@ export const describeStatusEvent = (event, line, extra = {}) => ({
   remarks: event.remarks || null,
   status: event.status,
   trigger: (!event.changedByName || event.changedByName === 'System') ? 'automatic' : 'manual',
+  derivedFrom: 'status-event',
   details: detailsOf({
     ...partiesOf(line, extra.customerName),
     actorRole: event.changedByRole || null,
@@ -747,6 +758,211 @@ const bookingEvents = async ({
   });
   inRange.sort((a, b) => new Date(b.at) - new Date(a.at));
   return { records: inRange.slice(0, take), total: inRange.length };
+};
+/**
+ * Actions recorded in the audit log.
+ *
+ * WHY THIS SOURCE EXISTS AT ALL. Everything else on this screen is derived
+ * from a document that is still being edited. A selection-list line records
+ * its CURRENT quantity, an order line its CURRENT confirmed figure — so a
+ * line changed from 40 to 10 reads as though it were always 10, and the
+ * change itself is invisible. Worse, a reconstruction from those values is
+ * not merely incomplete, it is wrong about the past.
+ *
+ * The audit log is append-only. An entry written when the quantity changed
+ * still says 40 -> 10 a year later, and still says it if the reservation is
+ * afterwards deleted. That is what makes these rows the authority for
+ * "what happened", as against "what the document says now".
+ *
+ * ATTRIBUTION. `meta.skuCode` is exact and is what new entries carry. Older
+ * entries predate it and name the SKU only in their prose, so they are
+ * matched on that text with the SKU delimited — `115.100-10` must not match
+ * `115.100-100`. An entry that cannot be attributed is left out rather than
+ * guessed at.
+ */
+const AUDIT_ACTIONS = Object.freeze({
+  'Reservation Created': { label: 'Selection list line added', module: 'Selection List' },
+  'Reservation Updated': { label: 'Selection list quantity changed', module: 'Selection List' },
+  'Reservation Cancelled': { label: 'Selection list line removed', module: 'Selection List' },
+  'Reservation Confirmed': { label: 'Booking confirmed', module: 'Booking' },
+  'Booking Edited (Sales)': { label: 'Booking quantity amended (pre-PO)', module: 'Sales Desk' },
+  'Booking Priced': { label: 'Booking priced', module: 'Sales Desk' },
+  'Booking Cancelled': { label: 'Booking cancelled', module: 'Booking' },
+  'Cancel Booking': { label: 'Booking cancelled', module: 'Booking' },
+  'Booking Auto-Cancelled (No PO)': { label: 'Booking auto-cancelled (7-day PO deadline)', module: 'Expiry job' },
+  'Booking Stock Consumed': { label: 'Stock consumed for PO', module: 'Expiry job' },
+  'PO Generated': { label: 'PO raised', module: 'Sales Desk' },
+  'Indent Allocated': { label: 'Indent allocated arriving stock', module: 'Pending Indent' },
+  'Indent Stock Assigned': { label: 'Indent stock assigned by hand', module: 'Indent Assignment' },
+  'Indent Stock Reassigned (In)': { label: 'Indent stock reassigned', module: 'Indent Assignment' },
+  'Indent Returned To Booking': { label: 'Indent returned to booking', module: 'Pending Indent' },
+  'Indent Cancelled': { label: 'Indent cancelled', module: 'Pending Indent' },
+  'Indent Scheduled': { label: 'Indent scheduled', module: 'Pending Indent' },
+  'Indent Auto-Booked': { label: 'Indent converted to a booking', module: 'Pending Indent' },
+  'Auto-Booking To Allocation': { label: 'Auto-booking converted to an allocation', module: 'Pending Indent' },
+  'MSIL Indent Converted': { label: 'MSIL indent converted', module: 'MSIL supply' },
+  'MSIL Indent Cancelled': { label: 'MSIL indent cancelled', module: 'MSIL supply' },
+  'Oversold Exception Raised': { label: 'Oversold exception raised', module: 'Stock count' },
+  'Oversold Exception Resolved': { label: 'Oversold exception resolved', module: 'Stock count' },
+  'Stock Count Submitted': { label: 'Stock count submitted', module: 'Stock count' },
+  'Inventory Import Confirmed': { label: 'Inventory import confirmed', module: 'Import' },
+});
+
+/** A SKU, matched as a whole token rather than as a substring. */
+const skuPattern = (skuCode) => new RegExp(
+  `(^|[^A-Za-z0-9._-])${skuCode.replace(/[.*+?^${}()|[\]\\]/g, '\\// ─── The merged feed ──')}([^A-Za-z0-9._-]|$)`,
+);
+
+const auditEvents = async ({ skuCode, from, to, take, activityType }) => {
+  if (activityType && activityType !== 'AUDIT_EVENT') return { records: [], total: 0 };
+  // Only answerable for one SKU: an unscoped feed cannot attribute prose.
+  if (!skuCode) return { records: [], total: 0 };
+
+  const { default: AuditLog } = await import('../../models/AuditLog.js');
+  const actions = Object.keys(AUDIT_ACTIONS);
+  const filter = {
+    action: { $in: actions },
+    $or: [
+      { 'meta.skuCode': skuCode },
+      { 'meta.skuCodes': skuCode },
+      { 'meta.lines.skuCode': skuCode },
+      { 'meta.allocations.skuCode': skuCode },
+      { 'meta.exceptions.skuCode': skuCode },
+      { remarks: skuPattern(skuCode) },
+    ],
+  };
+  if (from || to) {
+    filter.createdAt = {};
+    if (from) filter.createdAt.$gte = from;
+    if (to) filter.createdAt.$lte = to;
+  }
+
+  const [rows, total] = await Promise.all([
+    AuditLog.find(filter).sort({ createdAt: -1 }).limit(Math.max(take, 1)).lean(),
+    AuditLog.countDocuments(filter),
+  ]);
+
+  return {
+    records: rows.map((a) => {
+      const spec = AUDIT_ACTIONS[a.action] || { label: a.action, module: null };
+      const meta = a.meta || {};
+      return {
+        id: `AUD-${a._id}`,
+        source: 'audit',
+        activityType: 'AUDIT_EVENT',
+        movementType: null,
+        label: spec.label,
+        direction: DIRECTIONS.NONE,
+        description: a.remarks || spec.label,
+        action: spec.label,
+        skuCode,
+        productName: null,
+        brand: null,
+        locationCode: null,
+        quantity: meta.newQuantity ?? meta.quantity ?? null,
+        // An audit entry records a DECISION. Whatever stock moved with it is
+        // its own ledger row; claiming it here would count the units twice.
+        affectsStock: false,
+        balanceKind: null,
+        previousStock: null,
+        updatedStock: null,
+        referenceType: meta.orderId ? 'booking' : (meta.reservationId ? 'reservation' : 'system'),
+        referenceLabel: meta.orderId ? 'Booking' : (meta.reservationId ? 'Indent' : 'Audit'),
+        referenceNumber: meta.orderId || meta.indentNumber || meta.reservationId || null,
+        batchId: meta.batchId || null,
+        at: a.createdAt,
+        postedAt: a.createdAt,
+        backdated: false,
+        actor: { name: a.userName || a.user?.name || 'System', type: a.user ? 'user' : 'system' },
+        reasonCode: null,
+        remarks: a.remarks || null,
+        status: meta.newStatus || null,
+        trigger: a.method === 'SYSTEM' || !a.user ? 'automatic' : 'manual',
+        // The point of this source: the values AS THEY WERE.
+        derivedFrom: "audit-log",
+        details: detailsOf({
+          requestedQty: meta.addedQuantity ?? null,
+          confirmedQty: null,
+          pendingQty: null,
+          bookingId: meta.orderId || null,
+          indentNumber: meta.indentNumber || null,
+          poNumber: meta.poNumber || null,
+          reservationId: meta.reservationId || null,
+          statusFrom: meta.previousStatus ?? (meta.previousQuantity !== undefined ? String(meta.previousQuantity) : null),
+          statusTo: meta.newStatus ?? (meta.newQuantity !== undefined ? String(meta.newQuantity) : null),
+          sourceModule: spec.module,
+        }),
+      };
+    }),
+    total,
+  };
+};
+
+/**
+ * Oversold exceptions, which are a SKU-level condition in their own right.
+ *
+ * Not a stock movement and not a booking — stock has been promised that does
+ * not exist, and somebody has to decide what to do about it. It belongs on
+ * the SKU's own history because that is where the question gets asked.
+ */
+const oversoldEvents = async ({ skuCode, from, to, take, activityType }) => {
+  if (activityType && activityType !== 'OVERSOLD_EXCEPTION') return { records: [], total: 0 };
+  if (!skuCode) return { records: [], total: 0 };
+
+  const { default: OversoldException } = await import('../../models/OversoldException.js');
+  const filter = { skuCode };
+  if (from || to) {
+    filter.raisedAt = {};
+    if (from) filter.raisedAt.$gte = from;
+    if (to) filter.raisedAt.$lte = to;
+  }
+  const [rows, total] = await Promise.all([
+    OversoldException.find(filter).sort({ raisedAt: -1 }).limit(Math.max(take, 1)).lean(),
+    OversoldException.countDocuments(filter),
+  ]);
+
+  return {
+    records: rows.map((e) => ({
+      id: `OVS-${e._id}`,
+      source: 'exception',
+      activityType: 'OVERSOLD_EXCEPTION',
+      movementType: null,
+      label: 'Oversold Exception',
+      direction: DIRECTIONS.NONE,
+      description: `${units(e.shortfall)} promised but absent — on hand ${e.onHand}, reserved ${e.reserved}`,
+      action: e.status === 'Resolved' ? 'Oversold exception resolved' : 'Oversold exception raised',
+      skuCode: e.skuCode,
+      productName: null,
+      brand: e.brand,
+      locationCode: e.locationCode || null,
+      quantity: e.shortfall,
+      affectsStock: false,
+      balanceKind: null,
+      previousStock: null,
+      updatedStock: null,
+      referenceType: 'system',
+      referenceLabel: 'Exception',
+      referenceNumber: e.countId || e.transactionId || null,
+      batchId: null,
+      at: e.raisedAt || e.createdAt,
+      postedAt: e.createdAt,
+      backdated: false,
+      actor: { name: 'System', type: 'system' },
+      reasonCode: e.source ? String(e.source).toUpperCase() : null,
+      remarks: e.resolutionNote || null,
+      status: e.status,
+      trigger: 'system',
+      details: detailsOf({
+        requestedQty: e.reserved,
+        confirmedQty: e.onHand,
+        pendingQty: e.shortfall,
+        bookingId: (e.affectedBookings || []).map((b) => b.orderId).join(", ") || null,
+        statusTo: e.status,
+        sourceModule: 'Oversold exceptions',
+      }),
+    })),
+    total,
+  };
 };
 // ─── The merged feed ─────────────────────────────────────────────────────────
 /**
@@ -899,6 +1115,12 @@ export const getActivity = async ({
     }
   }
 
+  // ── Audit + exception sides ──
+  const [audit, oversold] = await Promise.all([
+    auditEvents({ skuCode, from, to, take, activityType }),
+    oversoldEvents({ skuCode, from, to, take, activityType }),
+  ]);
+
   // ── Booking side ──
   const booking = wantsBooking
     ? await bookingEvents({ skuCode, brands, from, to, take, activityType, reference, customerId, userId })
@@ -940,11 +1162,12 @@ export const getActivity = async ({
   // and date-filtered on the date each row shows. Anything re-checked here
   // would be a row the count had already included.
 
-  const merged = [...ledgerRecords, ...indentRecords, ...booking.records]
+  const merged = [...ledgerRecords, ...indentRecords, ...booking.records,
+    ...audit.records, ...oversold.records]
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(skip, skip + limit);
 
-  const total = movementTotal + reservationTotal + booking.total;
+  const total = movementTotal + reservationTotal + booking.total + audit.total + oversold.total;
   return { records: merged, total, page, pages: Math.ceil(total / limit) || 1, limit };
 };
 
