@@ -118,13 +118,30 @@ describe('the indent balance', () => {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * The three LEGACY fields, isolated.
+ *
+ * `totals` also carries the named booking bifurcation now
+ * (utils/bookingBifurcation.js), which is a strict addition. These tests are
+ * about `booked` / `indent` / `total` keeping exactly the meaning they had, so
+ * they assert those three and nothing else — a deep-equal against the whole
+ * object would fail on every future field without saying anything about the
+ * behaviour under test.
+ */
+const legacy = ({ booked, indent, total }) => ({ booked, indent, total });
+
 describe('Total Quantity', () => {
   test('is confirmed plus indent', async () => {
     const id = 'BO-2026-000001';
     await Order.insertMany([line(id, 'SKU-A', 10, 5, 0), line(id, 'SKU-B', 20, 0, 1)]);
     await Reservation.create(indent(id, 'SKU-A', 5));
 
-    assert.deepEqual(await totalsFor(id), { booked: 30, indent: 5, total: 35 });
+    const totals = await totalsFor(id);
+    assert.deepEqual(legacy(totals), { booked: 30, indent: 5, total: 35 });
+    // And the bifurcation rides alongside, agreeing with it.
+    assert.deepEqual(
+      [totals.totalBookedQty, totals.allocatedQty, totals.pendingIndentQty], [35, 30, 5],
+    );
   });
 
   test('does NOT double-count the shortfall', async () => {
@@ -161,14 +178,20 @@ describe('Total Quantity', () => {
     await Order.insertMany([line(id, 'SKU-A', 10, 0)]);
     await Reservation.create(indent(id, 'SKU-UNAVAILABLE', 25));
 
-    assert.deepEqual(await totalsFor(id), { booked: 10, indent: 25, total: 35 });
+    const totals = await totalsFor(id);
+    assert.deepEqual(legacy(totals), { booked: 10, indent: 25, total: 35 });
+    assert.equal(totals.pendingIndentQty, 25, 'the bifurcation finds it too');
   });
 
   test('a fully confirmed booking has no indent and totals the confirmed units', async () => {
     const id = 'BO-2026-000001';
     await Order.insertMany([line(id, 'SKU-A', 10, 0, 0), line(id, 'SKU-B', 4, 0, 1)]);
 
-    assert.deepEqual(await totalsFor(id), { booked: 14, indent: 0, total: 14 });
+    const totals = await totalsFor(id);
+    assert.deepEqual(legacy(totals), { booked: 14, indent: 0, total: 14 });
+    assert.deepEqual(
+      [totals.totalBookedQty, totals.allocatedQty, totals.pendingIndentQty], [14, 14, 0],
+    );
   });
 
   test('reports null, not zero, when the indent was not supplied', async () => {

@@ -2,6 +2,7 @@ import { Product } from '../../models/Product.js';
 import StockBalance from '../../models/StockBalance.js';
 import StockHealth from '../../models/StockHealth.js';
 import { allowedBrands, canAccessBrand } from '../../utils/brandAccess.js';
+import { bifurcateSku } from '../../utils/bookingBifurcation.js';
 import { hasPermission, PERMISSIONS } from '../../middlewares/rbac.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { registerMsilCode } from '../../utils/msilRegistry.js';
@@ -522,6 +523,70 @@ export const getItem = async (req, res, next) => {
         showMsil: msilAppliesTo(req.user),
         balance: await balanceFor(doc),
       }),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/v1/inventory/items/:sku/bookings
+ *
+ * SKU-WISE BOOKING BIFURCATION — the split across every booking for one SKU:
+ *
+ *   totalBookedQty = allocatedQty + pendingIndentQty
+ *
+ * The question the inventory side has to ask and no booking-level figure can
+ * answer: "of the units people are waiting for on this SKU, how many are
+ * covered by stock we have set aside, and how many still need buying". It is
+ * the number that decides whether to raise a purchase order, and it is NOT the
+ * same as `availableForSale`, which is unreserved stock nobody has claimed.
+ * The two are reported side by side here precisely so they stop being treated
+ * as interchangeable.
+ *
+ * Derived by utils/bookingBifurcation.js from the booking rows and the live
+ * reservations — the same two sources, read the same way, as the booking-wise
+ * split on the sales desk and in the customer's own Order History. Sum one
+ * SKU's bookings here and you get what each of those screens shows for it.
+ *
+ * Brand-scoped: an inaccessible SKU is a 404, never an empty split, so the
+ * answer can never read as "nobody has booked this" when it means "not yours".
+ *
+ * Read-only. On VIEW_INVENTORY, the permission that already governs knowing
+ * what stock exists — this adds no commercial information to it, only how the
+ * same units are spoken for.
+ */
+export const getItemBookings = async (req, res, next) => {
+  try {
+    const brands = allowedBrands(req.user);
+    const doc = await Product.findOne(
+      { skuCode: req.params.sku, brand: { $in: brands } },
+      'skuCode brand description availableForSale bookedQuantity totalAvailableQuantity',
+    ).lean();
+
+    if (!doc) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    const split = await bifurcateSku(doc.skuCode, brands);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ...split,
+        brand: doc.brand,
+        productName: doc.description || null,
+        /*
+         * UNRESERVED stock — what is left to sell to the NEXT customer. Sent
+         * alongside the split, and named differently from it, because the
+         * whole point of the bifurcation is that this figure and
+         * `allocatedQty` are not the same thing and must never be added
+         * together or swapped for one another.
+         */
+        availableForSale: doc.availableForSale ?? 0,
+        reservedAgainstBookings: doc.bookedQuantity ?? 0,
+        physicalStock: doc.totalAvailableQuantity ?? 0,
+      },
     });
   } catch (error) {
     next(error);

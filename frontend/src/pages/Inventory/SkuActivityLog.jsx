@@ -9,7 +9,7 @@ import { TableSkeleton } from "../../components/ui/TableSkeleton";
 import { SearchInput } from "../../components/ui/SearchInput";
 import { DateField } from "../../components/ui/DateField";
 import { PageHeader } from "../../components/common/PageHeader";
-import { useActivityStore } from "../../store/activityStore";
+import { useActivityStore, RECENT_LIMIT } from "../../store/activityStore";
 import { useUserStore } from "../../store/userStore";
 import { hasPermission, PERMISSIONS } from "../../utils/permissions";
 import {
@@ -400,21 +400,23 @@ export const SkuActivityLog = () => {
         <CardContent className="p-0">
           <div className="flex flex-wrap items-center gap-3 px-5 py-3 border-b border-slate-100 bg-slate-50/60">
             <span className="text-sm font-bold text-slate-700">
-              {showAll ? "Complete history" : "Latest 20 activities"}
+              {showAll ? "Complete history" : `Latest ${RECENT_LIMIT} activities`}
             </span>
             <span className="text-xs text-slate-500">
               {total.toLocaleString("en-IN")} record{total === 1 ? "" : "s"} in total
             </span>
-            {/* The brief asks for the latest 20 by default AND the ability to
-                see everything. One toggle, one request — not two screens. */}
-            {total > 20 && (
+            {/* The brief asks for the latest N by default AND the ability to
+                see everything. One toggle, one request — not two screens.
+                The number is read from the store rather than typed here, so the
+                caption, the toggle and the request can never disagree about it. */}
+            {total > RECENT_LIMIT && (
               <Button
                 size="sm"
                 variant={showAll ? "secondary" : "outline"}
                 className="ml-auto"
                 onClick={() => setShowAll(!showAll)}
               >
-                {showAll ? "Show latest 20" : "View complete history"}
+                {showAll ? `Show latest ${RECENT_LIMIT}` : "View complete history"}
               </Button>
             )}
           </div>
@@ -545,7 +547,7 @@ export const SkuActivityLog = () => {
             </table>
           </div>
 
-          {/* Paging belongs to the complete history. The latest-20 view is a
+          {/* Paging belongs to the complete history. The recent view is a
               fixed window by definition, so offering page 2 of it would be a
               contradiction. */}
           {showAll && total > 0 && pages > 1 && (

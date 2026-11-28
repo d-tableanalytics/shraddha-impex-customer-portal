@@ -51,6 +51,7 @@ const { Product, createProductModel } = await import('../models/Product.js');
 const { default: Role } = await import('../models/Role.js');
 const { loadRoles } = await import('../utils/roleResolver.js');
 const { seedBrands } = await import('../utils/brandRegistry.js');
+const { RECENT_ACTIVITY_LIMIT } = await import('../modules/inventory/activity.controller.js');
 
 let server;
 let U;
@@ -378,26 +379,65 @@ describe('opening, in, out, closing', () => {
 // ── Paging ──────────────────────────────────────────────────────────────────
 
 describe('history', () => {
-  test('defaults to the latest 20, newest first, and pages through the rest', async () => {
+  test('defaults to the latest 40, newest first, and pages through the rest', async () => {
     await product('SKU-A');
-    for (let i = 0; i < 25; i += 1) await adjust('SKU-A', 2);
+    // More than the window, so "the latest 40" is a choice and not everything
+    // there is. The history behind it must still be reachable and intact.
+    for (let i = 0; i < 46; i += 1) await adjust('SKU-A', 2);
 
     const first = await activity('SKU-A');
-    assert.equal(first.data.length, 20, 'the default window is the latest 20');
-    assert.equal(first.pagination.total, 25);
+    assert.equal(first.data.length, RECENT_ACTIVITY_LIMIT, 'the default window is the latest 40');
+    assert.equal(RECENT_ACTIVITY_LIMIT, 40, 'the client asked for 40');
+    assert.equal(first.pagination.total, 46, 'nothing is truncated in the database');
 
     const times = first.data.map((r) => new Date(r.at).getTime());
     assert.deepEqual([...times].sort((a, b) => b - a), times, 'records must be newest first');
 
-    // The complete history is the same request with a bigger page.
+    // The window really is the NEWEST 40 and not the first 40 encountered:
+    // every record it returns is at least as new as every one it left out.
     const all = await activity('SKU-A', U.admin, '?limit=100');
-    assert.equal(all.data.length, 25);
+    assert.equal(all.data.length, 46);
+    const kept = new Set(first.data.map((r) => r.id));
+    const dropped = all.data.filter((r) => !kept.has(r.id)).map((r) => new Date(r.at).getTime());
+    assert.ok(
+      Math.min(...times) >= Math.max(...dropped),
+      'a record outside the window must not be newer than one inside it',
+    );
 
-    const second = await activity('SKU-A', U.admin, '?limit=20&page=2');
-    assert.equal(second.data.length, 5);
+    const second = await activity('SKU-A', U.admin, `?limit=${RECENT_ACTIVITY_LIMIT}&page=2`);
+    assert.equal(second.data.length, 6);
     // No overlap: page 2 continues where page 1 stopped.
     const ids = new Set(first.data.map((r) => r.id));
     assert.ok(second.data.every((r) => !ids.has(r.id)), 'page 2 repeated rows from page 1');
+  });
+
+  test('the order is total, so rows sharing a timestamp cannot move between pages', async () => {
+    await product('SKU-A');
+    // One booking writes its movement, its booking event and its indent inside
+    // the same millisecond — the tie the feed used to resolve by whichever
+    // source happened to be concatenated first.
+    await adjust('SKU-A', 20);
+    await book('SKU-A', 30);
+    await book('SKU-A', 30);
+
+    const all = await activity('SKU-A', U.admin, '?limit=100');
+    assert.ok(all.data.length > 3, 'needs enough records to page');
+
+    // Asking twice gives the same answer...
+    const again = await activity('SKU-A', U.admin, '?limit=100');
+    assert.deepEqual(again.data.map((r) => r.id), all.data.map((r) => r.id));
+
+    // ...and so does walking it one record at a time, which is where an
+    // unstable tie-break shows up as a repeated or missing row.
+    const walked = [];
+    for (let page = 1; page <= all.data.length; page += 1) {
+      walked.push(...(await activity('SKU-A', U.admin, `?limit=1&page=${page}`)).data);
+    }
+    assert.deepEqual(
+      walked.map((r) => r.id), all.data.map((r) => r.id),
+      'one-at-a-time paging must reproduce the whole feed exactly',
+    );
+    assert.equal(new Set(walked.map((r) => r.id)).size, walked.length, 'no record appears twice');
   });
 
   test('the merged feed pages correctly across both sources', async () => {

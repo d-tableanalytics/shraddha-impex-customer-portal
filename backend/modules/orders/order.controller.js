@@ -14,6 +14,7 @@ import { hasPermission, PERMISSIONS, isSuperAdmin} from '../../middlewares/rbac.
 import { withBoxNoVisibility } from '../../utils/boxNoVisibility.js';
 import { withPricingVisibility } from '../../utils/pricingVisibility.js';
 import { attachBookingValues } from '../../utils/bookingIndentValue.js';
+import { attachBookingBifurcation } from '../../utils/bookingBifurcation.js';
 import { attachCustomerDetails } from '../../utils/customerContact.js';
 import { findProductBySku, consumeStock, releaseStock } from '../../utils/stockLedger.js';
 import { processAvailableIndents } from '../inventory/indentAvailability.service.js';
@@ -136,6 +137,26 @@ export const getOrders = async (req, res, next) => {
     // Box number and pricing are both stripped for readers who may not have
     // them, in that order, so a customer's own bookings arrive without either.
     const visible = withPricingVisibility(withBoxNoVisibility(orders, req.user), req.user);
+    /*
+     * The booking quantity split — total / allocated / pending indent — comes
+     * from the SERVER, on every booking in the list.
+     *
+     * The Customer Portal used to derive it in the browser by summing each
+     * row's `pendingQty`, the shortfall FROZEN at confirmation. That reports
+     * ZERO indent for a SKU stock could not cover at all (such a line never
+     * gets an order row), and keeps reporting an indent on a booking whose
+     * indent has been closed (closing one cancels the reservations and leaves
+     * the rows alone, because an indent holds no stock). The sales desk read
+     * the live reservation balance instead, so the two portals disagreed about
+     * the same booking. See utils/bookingBifurcation.js.
+     *
+     * Costs one batched query for the whole response. Derived from the
+     * UNREDACTED rows for the same reason the values below are — redaction
+     * removes money and box numbers, neither of which this reads, but the
+     * rule is "derive from the source, stamp the copy" and keeping to it is
+     * what stops the next field from being derived from a stripped one.
+     */
+    await attachBookingBifurcation(visible, orders);
     res.status(200).json({
       success: true,
       // `orders` rather than `visible` as the source: eligibility is decided

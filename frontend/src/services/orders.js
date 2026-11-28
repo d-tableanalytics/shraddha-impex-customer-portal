@@ -225,12 +225,43 @@ const groupIntoBookings = (rawOrders) => {
        */
       value: rows.find((r) => r.value)?.value ?? null,
       totalQuantity,
+      /**
+       * THE BOOKING QUANTITY BIFURCATION, AS THE SERVER DERIVED IT.
+       *
+       *   totalBookedQty = allocatedQty + pendingIndentQty
+       *
+       * Stamped on every row of the booking by the orders endpoint
+       * (backend/utils/bookingBifurcation.js), so it is read off whichever row
+       * is to hand — the same shape `value` already arrives in.
+       *
+       * It replaces an arithmetic this file used to do ITSELF, by summing each
+       * row's `pendingQty` — the shortfall FROZEN onto the order row at
+       * confirmation. That was wrong in two ways:
+       *
+       *   • A SKU that stock could not cover AT ALL never gets an order row, so
+       *     a booking whose shortfall was total showed an indent of zero.
+       *   • Closing an indent (a cancellation, the 7-day expiry, an MSIL supply
+       *     decision) cancels the reservations and leaves the order rows
+       *     untouched, because an indent holds no stock. `pendingQty` keeps its
+       *     confirmation-time value, so a cancelled booking went on reporting
+       *     units nobody was waiting for.
+       *
+       * The sales desk read the live reservation balance and got it right, so
+       * the two portals disagreed about the same booking. They now read one
+       * derivation. Absent — an older server — falls back to the previous
+       * client-side sums below, so nothing breaks mid-deployment.
+       */
+      bifurcation: rows.find((r) => r.bifurcation)?.bifurcation ?? null,
       // What the CUSTOMER originally asked for across the booking, indent
       // included. Distinct from totalQuantity, which is what the booking holds
       // now — the two differ when stock was short or the desk amended a line.
-      totalBookedQuantity: rows.reduce((n, r) => n + (r.bookedQty ?? r.requestedQty ?? 0), 0),
-      // Still awaiting stock on the indent raised alongside this booking.
-      totalIndentQuantity: rows.reduce((n, r) => n + (r.pendingQty ?? 0), 0),
+      totalBookedQuantity: rows.find((r) => r.bifurcation)?.bifurcation?.bookedQtyEver
+        ?? rows.reduce((n, r) => n + (r.bookedQty ?? r.requestedQty ?? 0), 0),
+      // Still awaiting stock on the indent raised alongside this booking. The
+      // server's LIVE figure when it sent one; the frozen sum only as a
+      // fallback.
+      totalIndentQuantity: rows.find((r) => r.bifurcation)?.bifurcation?.pendingIndentQty
+        ?? rows.reduce((n, r) => n + (r.pendingQty ?? 0), 0),
       // Mirrors isBookingLocked() on the server: a booking is frozen once any
       // row carries a real PO number. '-' and blank are the "not raised yet"
       // placeholders. The server re-checks this on every write.

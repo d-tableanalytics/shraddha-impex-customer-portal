@@ -553,4 +553,157 @@ describe('Durable event coverage', () => {
     assert.equal(typeof exportLimit, 'number');
     assert.ok(exportLimit >= 1000);
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // The client's own coverage list (2026-11-28), item by item.
+  //
+  // Most of it was already exercised above. These pin the ones the list names
+  // that nothing asserted directly, so "the Activity Log covers X" is a test
+  // result rather than a reading of the code.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  test('RQ-01 a selection list that EXPIRED is visible, and moved no stock', async () => {
+    const p = await product('RQ-1', 50);
+    const added = await POST('/api/v1/reservations', U.alice,
+      { productId: String(p._id), quantity: 20 });
+    assert.ok(added.status < 300, JSON.stringify(added.body));
+
+    // The 7-day expiry, as the nightly job applies it. It holds no stock —
+    // nothing is reserved until confirmation — so the point of the record is
+    // that it exists at all, and says so.
+    await Reservation.updateOne(
+      { reservationId: added.body.data.reservationId },
+      { $set: { status: 'Expired', expiredAt: new Date() } },
+    );
+
+    const { records } = await feed('RQ-1');
+    const closed = records.find((r) => r.activityType === 'SELECTION_CLOSED');
+    assert.ok(closed, 'an expired selection-list line must not vanish from the log');
+    assert.equal(closed.affectsStock, false, 'it never held stock, so it releases none');
+    assert.equal(closed.quantity, 20, 'what was asked for is still reported');
+
+    // And no stock movement was invented alongside it.
+    assert.ok(
+      !records.some((r) => r.affectsStock),
+      'an expiring selection list must post no stock movement',
+    );
+    const fresh = await Product.findById(p._id).lean();
+    assert.equal(fresh.availableForSale, 50);
+  });
+
+  test('RQ-02 booking confirmation does not deduct what was never reserved', async () => {
+    // The client's worked complaint: "if stock has already been reserved
+    // during selection list creation, booking confirmation must not appear to
+    // deduct the same quantity again."
+    //
+    // In this system nothing is reserved at selection-list time, so there is
+    // exactly ONE allocation per booking. Asserted rather than assumed: a
+    // second RESERVE movement here would be the double deduction.
+    const p = await product('RQ-2', 50);
+    const added = await POST('/api/v1/reservations', U.alice,
+      { productId: String(p._id), quantity: 20 });
+    assert.ok(added.status < 300);
+
+    const afterList = await Product.findById(p._id).lean();
+    assert.equal(afterList.availableForSale, 50, 'a selection list holds no stock');
+
+    const confirmed = await POST('/api/v1/reservations/confirm', U.alice, {});
+    assert.ok(confirmed.status < 300, JSON.stringify(confirmed.body));
+
+    const { records } = await feed('RQ-2');
+    const reserves = records.filter((r) => r.activityType === 'BOOKING_CONFIRMED');
+    assert.equal(reserves.length, 1, 'the units are set aside once, not twice');
+    assert.equal(reserves[0].quantity, 20);
+
+    // The business event beside it says what happened without moving anything.
+    const created = records.find((r) => r.activityType === 'BOOKING_CREATED');
+    assert.ok(created);
+    assert.equal(created.affectsStock, false, 'the commitment is not a second deduction');
+  });
+
+  test('RQ-03 a confirmed booking that expired without a PO shows the release and its reason', async () => {
+    const p = await product('RQ-3', 50);
+    const orderId = await book(U.alice, p, 20);
+
+    // Age the booking past the 7-day PO deadline and run the real settlement.
+    const old = new Date(Date.now() - 9 * 864e5);
+    await Order.collection.updateMany(
+      { orderId }, { $set: { orderTimestamp: old, createdAt: old, date: old } },
+    );
+    const { runPoSettlement } = await import('../modules/orders/poExpiryJob.js');
+    await runPoSettlement();
+
+    const { records } = await feed('RQ-3');
+    const release = records.find((r) => r.activityType === 'BOOKING_RELEASED');
+    assert.ok(release, 'the stock going back must be on the log');
+    // Negative: a release is an allocation movement going the other way. The
+    // sign is the ledger's; what stops it reading as stock LEAVING is
+    // `direction` and `balanceKind` below, not the number.
+    assert.equal(release.quantity, -20);
+    assert.equal(release.direction, 'release', 'released, not "stock out" — the goods never left');
+    assert.equal(release.balanceKind, 'booked', 'the pair counts allocation, not on-hand');
+
+    // Released once. Releasing again is the defect this guards.
+    await runPoSettlement();
+    const { records: after } = await feed('RQ-3');
+    assert.equal(
+      after.filter((r) => r.activityType === 'BOOKING_RELEASED').length, 1,
+      'previously released inventory must not be released again',
+    );
+    const fresh = await Product.findById(p._id).lean();
+    assert.equal(fresh.availableForSale, 50, 'and the stock came back exactly once');
+  });
+
+  test('RQ-04 a dispatch is recorded as a status change, not as a stock deduction', async () => {
+    const p = await product('RQ-4', 50);
+    const orderId = await book(U.alice, p, 20);
+    await POST(`/api/v1/sales/bookings/${orderId}/po`, U.admin,
+      { poNumber: 'PO-RQ4', poDate: new Date().toISOString() });
+
+    const moved = await PUT(`/api/v1/orders/booking/${orderId}/status`, U.admin,
+      { status: 'Dispatched' });
+    assert.ok(moved.status < 300, JSON.stringify(moved.body));
+
+    const { records } = await feed('RQ-4');
+    const status = records.find((r) => r.activityType === 'STATUS_CHANGED');
+    assert.ok(status, 'the dispatch must appear');
+    assert.equal(status.affectsStock, false,
+      'the PO already consumed these units; a dispatch must not deduct them a second time');
+  });
+
+  test('RQ-05 every record says who did it and whether a person or the system did', async () => {
+    const p = await product('RQ-5', 50);
+    await book(U.alice, p, 20);
+    const { records } = await feed('RQ-5');
+    assert.ok(records.length > 0);
+    for (const r of records) {
+      // Three values, not two: 'manual' is a person, 'automatic' is a rule
+      // firing on a person's action (stock arriving auto-books an indent), and
+      // 'system' is a scheduled job. Collapsing the middle one into either
+      // would misattribute it.
+      assert.ok(
+        ['manual', 'automatic', 'system'].includes(r.trigger),
+        `no trigger on ${r.activityType}`,
+      );
+      assert.ok('actor' in r, `no actor field on ${r.activityType}`);
+      // Before/after are either BOTH present or BOTH absent, and labelled by
+      // what they count. A half-known pair is what produced misleading rows.
+      const known = r.previousStock !== null && r.previousStock !== undefined;
+      const knownAfter = r.updatedStock !== null && r.updatedStock !== undefined;
+      assert.equal(known, knownAfter, `a half-known before/after pair on ${r.activityType}`);
+      if (known) assert.ok(r.balanceKind, `a before/after pair with no balanceKind on ${r.activityType}`);
+    }
+  });
+
+  test('RQ-06 before/after are never fabricated when the record cannot supply them', async () => {
+    const p = await product('RQ-6', 50);
+    await book(U.alice, p, 60);  // 50 confirmed, 10 to indent
+
+    const { records } = await feed('RQ-6');
+    const indent = records.find((r) => r.activityType === 'INDENT_RAISED');
+    assert.ok(indent);
+    assert.equal(indent.affectsStock, false);
+    assert.equal(indent.previousStock, null, 'an indent moves nothing, so it has no before');
+    assert.equal(indent.updatedStock, null, 'and no after — invented ones are the complaint');
+  });
 });

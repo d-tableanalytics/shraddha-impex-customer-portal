@@ -132,6 +132,13 @@ export const SalesDesk = () => {
       poNumber: b.poNumber || "-",
       lineCount: b.lineCount ?? 0,
       totalQuantity: b.totalQuantity ?? 0,
+      // The booking quantity bifurcation, from the server (utils/
+      // bookingBifurcation.js). An em dash where the server sent none, never a
+      // zero — a spreadsheet cell reading 0 is a claim, and "not known" is not
+      // that claim.
+      allocatedQty: b.totals?.allocatedQty ?? "—",
+      pendingIndentQty: b.totals?.pendingIndentQty ?? "—",
+      outstandingQty: b.totals?.totalBookedQty ?? "—",
     }));
     const columns = [
       { key: "sr", label: "S.No" },
@@ -144,6 +151,9 @@ export const SalesDesk = () => {
       { key: "poNumber", label: "PO Number" },
       { key: "lineCount", label: "Items" },
       { key: "totalQuantity", label: "Qty" },
+      { key: "outstandingQty", label: "Total Booking" },
+      { key: "allocatedQty", label: "Allocated" },
+      { key: "pendingIndentQty", label: "Pending Indent" },
     ];
     // The title records WHICH slice this is, so a file opened next week still
     // says what it was filtered to.
@@ -304,6 +314,13 @@ export const SalesDesk = () => {
               <th className="px-5 py-3 border-b border-slate-200">PO Number</th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">Items</th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">Qty</th>
+              {/* The booking quantity bifurcation, booking by booking. The Qty
+                  column beside it keeps its long-standing meaning (confirmed
+                  units); these three are the outstanding split, and they are
+                  the figures the Customer Portal shows for the same booking. */}
+              <th className="px-5 py-3 border-b border-slate-200 text-center" title="Outstanding quantity the customer is waiting for">Total Booking</th>
+              <th className="px-5 py-3 border-b border-slate-200 text-center" title="Stock set aside for this booking — not available to anyone else">Allocated</th>
+              <th className="px-5 py-3 border-b border-slate-200 text-center" title="Still to be procured — no stock covers it yet">Pending Indent</th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">Action</th>
             </tr>
           </thead>
@@ -372,6 +389,15 @@ export const SalesDesk = () => {
                   <td className="px-5 py-4 font-medium text-slate-600">{b.poNumber || "—"}</td>
                   <td className="px-5 py-4 text-center font-bold text-slate-700">{b.lineCount}</td>
                   <td className="px-5 py-4 text-center font-bold text-slate-700">{b.totalQuantity}</td>
+                  <td className="px-5 py-4 text-center font-bold text-slate-800 tabular-nums">
+                    {b.totals?.totalBookedQty ?? "—"}
+                  </td>
+                  <td className="px-5 py-4 text-center font-semibold text-emerald-700 tabular-nums">
+                    {b.totals?.allocatedQty ?? "—"}
+                  </td>
+                  <td className="px-5 py-4 text-center font-semibold text-amber-700 tabular-nums">
+                    {b.totals?.pendingIndentQty ?? "—"}
+                  </td>
                   <td className="px-5 py-4 text-center">
                     {/* Two actions, one icon each. View Details opens the
                         booking for review and editing (the same drawer a row
@@ -409,7 +435,7 @@ export const SalesDesk = () => {
               ))
             ) : (
               <tr>
-                <td colSpan={11} className="px-5 py-10 text-center text-slate-400">
+                <td colSpan={14} className="px-5 py-10 text-center text-slate-400">
                   {appliedScope === "pending"
                     ? "No bookings are waiting for a PO."
                     : "No bookings found matching your criteria."}

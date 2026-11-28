@@ -52,9 +52,30 @@ export const listBrands = () => registry;
 /** Every brand name, e.g. ['Koken', 'BIX', 'IMADA', ...]. */
 export const allBrands = () => registry.map((b) => b.name);
 
-// Any unrestricted account, plus the internal inventory roles — the same rule
-// the server applies, so a dropdown never hides a brand the API would serve.
-const seesAllBrands = (user) => isSuperAdmin(user) || INVENTORY_ROLES.includes(user?.role);
+/**
+ * Does this account see every configured brand?
+ *
+ * THE SERVER ANSWERS THIS. `brandScoped` arrives with the signed-in user
+ * (`/auth/me`) and is `false` for an account whose brands were never scoped —
+ * internal staff with no brand ticked — and `true` for a customer, or for any
+ * account somebody deliberately fenced to a subset. The rule depends on the
+ * role model and on the account's own flags, and a browser carrying its own
+ * list of role names goes stale the moment a Super Admin invents one.
+ *
+ * That staleness is the defect this fixes. The list below holds four warehouse
+ * roles, so a Sales user — who holds view_catalogue — was treated as a customer
+ * with no brands ticked, and every brand filter, dropdown and catalogue page
+ * narrowed itself to nothing before a request was even sent.
+ *
+ * The old expression is kept as the FALLBACK, for a user object that predates
+ * the field (a restored session, an older server). Behaviour is then exactly
+ * what it was, so nothing regresses while a deployment is half-rolled.
+ */
+const seesAllBrands = (user) => {
+  if (typeof user?.brandScoped === "boolean") return !user.brandScoped;
+  return isSuperAdmin(user) || INVENTORY_ROLES.includes(user?.role);
+};
+
 const isMsilCustomer = (user) => !seesAllBrands(user) && user?.customerCategory === "MSIL";
 
 /** Canonical brand names this user may see, e.g. ['Koken', 'BIX']. */

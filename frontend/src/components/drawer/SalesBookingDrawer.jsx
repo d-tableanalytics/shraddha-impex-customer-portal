@@ -6,6 +6,7 @@ import {
   MapPin, Receipt, IndianRupee, Pencil, GripVertical, SlidersHorizontal,
   PackageX, History,
 } from "lucide-react";
+import { BookingBifurcation } from "../common/BookingBifurcation";
 import toast from "react-hot-toast";
 import { useSalesStore } from "../../store/salesStore";
 import { customerNameOf, companyNameOf, siTeamOf, siTeamLabelOf } from "../../utils/bookingParty";
@@ -796,10 +797,18 @@ export const SalesBookingDrawer = () => {
 
                 1. THE ICON MOVED INLINE with the label instead of sitting in a
                    column of its own, so the value gets the tile's full width.
-                2. TOTAL QUANTITY SPANS TWO. It is the figure the desk checks
-                   against the customer's PO first, and it is the only tile
-                   carrying a breakdown line, so it earns the room. The grid is
-                   six units at xl: 2 for the total, 1 each for the other four.
+                2. CUSTOMER SPANS TWO. The grid is six units at xl: 2 for the
+                   customer, 1 each for the other four.
+
+                   Total Quantity held the double width until 2026-11-28. The
+                   room belongs to the Customer tile instead: it is the only
+                   one carrying THREE values — the name, the company and the SI
+                   Team — each of which is free-text of no fixed length, and at
+                   one unit all three truncated at once ("KRISHAN CH...",
+                   "MARUT..."), which is the tile being unreadable rather than
+                   merely tight. Total Quantity holds a count and a short
+                   breakdown; "10 units" reads perfectly well in one unit, and
+                   a truncated customer name does not.
                 3. LABELS NEVER WRAP. `whitespace-nowrap` on every one, and
                    "Location & Phone" became "Location" with the phone beneath -
                    a label that wraps is what made the row look broken.
@@ -828,7 +837,7 @@ export const SalesBookingDrawer = () => {
                 - a confident total that silently omitted it would be worse than
                 none, because nobody re-checks a number that looks right.
               */}
-              <div className="col-span-2 h-full rounded-xl border border-primary-200 bg-primary-50/60 p-3.5 shadow-sm">
+              <div className="h-full rounded-xl border border-primary-200 bg-primary-50/60 p-3.5 shadow-sm">
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <Package size={13} className="text-primary-700 shrink-0" />
                   <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700/80 whitespace-nowrap">
@@ -848,7 +857,13 @@ export const SalesBookingDrawer = () => {
                         {selected.totals.total === 1 ? "unit" : "units"}
                       </span>
                     </p>
-                    <p className="mt-1.5 text-[11px] font-semibold text-slate-500 tabular-nums whitespace-nowrap">
+                    {/* Wraps now that this tile is one unit wide. It used to
+                        carry `whitespace-nowrap`, which was safe at double
+                        width and would have pushed "10 booked · 5 indent" out
+                        of the tile at single width. Two short lines are fine
+                        here: the Customer tile beside it is three lines tall
+                        and sets the row height anyway. */}
+                    <p className="mt-1.5 text-[11px] font-semibold text-slate-500 tabular-nums">
                       {selected.totals.booked} booked
                       {selected.totals.indent > 0 && (
                         <span className="text-amber-700"> · {selected.totals.indent} indent</span>
@@ -864,7 +879,7 @@ export const SalesBookingDrawer = () => {
                   company, and the SI Team stored on the booking. This tile
                   used to show `selected.customer`, which is the COMPANY
                   stamped on the order rows, under a "Customer" heading. */}
-              <div className="h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm" data-testid="booking-customer-tile">
+              <div className="col-span-2 h-full rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm" data-testid="booking-customer-tile">
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <User size={13} className="text-blue-600 shrink-0" />
                   <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 whitespace-nowrap">
@@ -1133,6 +1148,20 @@ export const SalesBookingDrawer = () => {
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* The booking quantity split — the SAME component and the SAME
+                server-derived figures the customer sees on their own copy of
+                this booking (components/common/BookingBifurcation.jsx). The
+                Total Quantity tile above keeps its long-standing meaning
+                (confirmed + open indent, everything included); this is the
+                outstanding split, which differs on a part-dispatched or
+                part-cancelled booking and is the one the two portals must
+                agree on. */}
+            {selected.totals?.totalBookedQty != null && (
+              <div className="mb-6">
+                <BookingBifurcation bifurcation={selected.totals} />
               </div>
             )}
 

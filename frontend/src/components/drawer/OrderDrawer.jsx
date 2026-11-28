@@ -18,6 +18,52 @@ import { useState, useEffect } from "react";
 
 const PAGE_SIZE = 10;
 
+/**
+ * One booking fact, as a cell of the facts panel.
+ *
+ * Replaces six near-identical card bodies that differed only in icon, colour
+ * and wording. One cell means one answer to the questions that were being
+ * answered six slightly different ways: how tall is the icon, how much padding
+ * is there, what happens to a value too long for its column.
+ *
+ * LONG VALUES TRUNCATE AND KEEP THE FULL TEXT ON HOVER. These fields hold
+ * customer names, addresses and GST numbers, none of which has a bound. The
+ * old cards used `line-clamp-2`, which silently cut the tail off a long value
+ * with no way to see the rest and made the whole row two lines tall whenever
+ * one field wrapped. `min-w-0` on the text column is what lets `truncate`
+ * work inside a flex row at all.
+ *
+ * `children` takes over from `value` for the one cell that is interactive —
+ * the PO number, which carries an inline editor.
+ */
+const FACT_TONES = {
+  blue: "bg-blue-50 text-blue-600",
+  violet: "bg-violet-50 text-violet-600",
+  emerald: "bg-emerald-50 text-emerald-600",
+  indigo: "bg-indigo-50 text-indigo-600",
+  sky: "bg-sky-50 text-sky-600",
+};
+
+const Fact = ({ icon: Icon, tone = "blue", label, value, hint, children }) => (
+  <div className="border-b border-r border-slate-200 px-3 py-2.5 flex items-start gap-2.5 min-w-0">
+    <span className={`w-6 h-6 mt-0.5 rounded-full flex items-center justify-center shrink-0 ${FACT_TONES[tone]}`}>
+      <Icon size={13} />
+    </span>
+    <div className="min-w-0 flex-1">
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+      {children ?? (
+        <p className="text-sm font-bold text-slate-800 truncate" title={value || undefined}>
+          {value}
+        </p>
+      )}
+      {hint && (
+        <p className="text-[10px] text-slate-500 truncate" title={hint}>{hint}</p>
+      )}
+    </div>
+  </div>
+);
+
+
 import { motion, AnimatePresence } from "framer-motion";
 import { useOrderHistoryStore } from "../../store/orderHistoryStore";
 import { useUserStore } from "../../store/userStore";
@@ -28,6 +74,7 @@ import { CodeValue } from "../ui/CodeValue";
 import { PoStatusBadge } from "../ui/PoStatusBadge";
 import { ERPButton } from "../ui/ERPButton";
 import { OrderTimeline } from "../cards/OrderTimeline";
+import { BookingBifurcation } from "../common/BookingBifurcation";
 import { useShowMsilCode } from "../../hooks/useShowMsilCode";
 import { canViewLineItemBoxNo, canEditBookingQuantity, canCancelBookings, hasPermission, PERMISSIONS, canUseSalesDesk } from "../../utils/permissions";
 import { BookingScheduleSection } from "./BookingScheduleSection";
@@ -195,6 +242,29 @@ export const OrderDrawer = () => {
   // What the CUSTOMER asked for across the booking, indent included.
   const totalBooked = lineItems.reduce((n, i) => n + (i.bookedQty ?? 0), 0);
   const totalIndent = lineItems.reduce((n, i) => n + (i.pendingQty ?? 0), 0);
+
+  /**
+   * WHICH COLUMN ABSORBS THE LEFTOVER WIDTH.
+   *
+   * A `w-full` table shares its spare width out between every column, so five
+   * short columns in a wide drawer became five islands with voids between
+   * them. Every column here holds a code, a date or a number — none of them
+   * WANTS to be wide — so the slack has to be parked somewhere deliberate
+   * rather than spread evenly.
+   *
+   * It goes on the LAST IDENTIFIER column, which puts the gap between the
+   * identifiers and the figures: codes tight on the left, quantities tight on
+   * the right, one gutter down the middle. That is how the row is actually
+   * read — which part, which box, how many — and it is the only place a gap
+   * carries meaning rather than just existing.
+   *
+   * Computed rather than hardcoded because the identifier columns are
+   * conditional: MSIL Code is shown only to users it applies to, Box No only
+   * to staff. Whichever of them is last takes the width; with neither, the SKU
+   * column takes it.
+   */
+  const growCol = showBoxNo ? "box" : showMsilCode ? "msil" : "sku";
+  const grow = (col) => (growCol === col ? "w-full" : "w-px");
 
   const linePaging = usePagination(lineItems, PAGE_SIZE);
   const indentPaging = usePagination(bookingIndents, PAGE_SIZE);
@@ -396,199 +466,229 @@ export const OrderDrawer = () => {
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-8">
-            {/* Top Info Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Moved out of the header, where it was one badge among four and
-                  said less than it could. Here it has room to name the indent
-                  the booking came from. */}
-              {selectedOrder.autoBooked && (
-                <div className="bg-white border border-emerald-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                  <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
-                    <Sparkles size={16} className="text-emerald-600" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase">
-                      Raised automatically
-                    </p>
-                    <p className="text-sm font-bold text-slate-800 truncate">
-                      From indent {selectedOrder.autoBookedFrom || "—"}
-                    </p>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      when the stock came back in
-                    </p>
-                  </div>
-                </div>
-              )}
+            {/* ── Booking facts ────────────────────────────────────────────
+                ONE PANEL, NOT SIX CARDS.
 
-              {seesCustomers && (
-                <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                  <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
-                    <User size={16} className="text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase">
-                      Customer
-                    </p>
-                    <p className="text-sm font-bold text-slate-800 line-clamp-2">
-                      {selectedOrder.customer}
-                    </p>
-                  </div>
-                </div>
-              )}
+                This was a three-column grid of six separate cards, each with
+                its own border, its own 16px padding and its own 32px avatar
+                circle. Two things made it waste most of its height:
 
-              {/* Who placed the booking on the customer's behalf (the SI Team),
-                  as stored on the booking. Shown to everyone, the customer
-                  included: it is their booking, and they are told who made it.
-                  Absent on a booking the customer placed themselves. */}
-              {selectedOrder.siTeam && (
-                <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                  <div className="w-8 h-8 rounded-full bg-violet-50 flex items-center justify-center shrink-0">
-                    <User size={16} className="text-violet-600" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase">
-                      Booked by (SI Team)
-                    </p>
-                    <p className="text-sm font-bold text-slate-800 truncate" title={selectedOrder.siTeam}>
-                      {selectedOrder.siTeam}
-                    </p>
-                    {selectedOrder.siTeamRole && (
-                      <p className="text-[10px] text-slate-500 mt-0.5">{selectedOrder.siTeamRole} · Shraddha Impex</p>
-                    )}
-                  </div>
-                </div>
-              )}
+                  • Grid cells stretch to the tallest in the row. "Customer"
+                    holds one line and sat next to "Customer master details",
+                    which holds five — so a one-line field was rendered 170px
+                    tall, almost all of it empty.
+                  • Every field got an equal third of the width whatever it
+                    held, so a 10-character date claimed as much room as a GST
+                    number, a shop name and a vendor code together.
 
-              {/* The customer's registered master details, from User
-                  Management. Read live, so anything an admin fills in there
-                  appears on past bookings too.
+                It is now one bordered panel whose cells are divided by
+                hairlines. Six borders become one, six paddings become one
+                grid, and the stretching that remains is between cells of
+                genuinely similar height.
 
-                  Kept SEPARATE from the delivery pair below, which is the
-                  booking's own snapshot and may deliberately differ once a PO
-                  quotes a different address. Showing one in place of the other
-                  is how a desk ships to the wrong place. */}
-              {selectedOrder.customerProfile && (
-                selectedOrder.customerProfile.location
-                || selectedOrder.customerProfile.phone
-                || selectedOrder.customerProfile.gstNumber
-                || selectedOrder.customerProfile.shopNumber
-                || selectedOrder.customerProfile.vendorNumber
-              ) && (
-                <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                  <div className="w-8 h-8 rounded-full bg-sky-50 flex items-center justify-center shrink-0">
-                    <User size={16} className="text-sky-600" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase">
-                      Customer master details
-                    </p>
-                    <dl className="mt-1 space-y-0.5 text-xs">
-                      {[
-                        ['Location', selectedOrder.customerProfile.location],
-                        ['Phone', selectedOrder.customerProfile.phone],
-                        ['Shop No.', selectedOrder.customerProfile.shopNumber],
-                        ['Vendor No.', selectedOrder.customerProfile.vendorNumber],
-                        ['GST No.', selectedOrder.customerProfile.gstNumber],
-                      ].filter(([, v]) => v).map(([label, value]) => (
-                        <div key={label} className="flex gap-2">
-                          <dt className="text-slate-400 font-semibold w-20 shrink-0">{label}</dt>
-                          <dd className="text-slate-700 font-semibold break-words min-w-0">{value}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </div>
-                </div>
-              )}
+                THE DIVIDERS ARE CELL BORDERS, NOT A `gap-px` BACKGROUND. The
+                gap trick — a slate background showing through 1px gaps — is
+                shorter to write and wrong here: the fields are conditional, so
+                the last row is usually part-filled, and an empty grid cell has
+                nothing to paint over the background. It rendered as a grey
+                block in the corner of the panel. Borders on the cells instead
+                mean an empty cell is simply empty. The grid is pulled 1px
+                right and down inside an `overflow-hidden` panel so the final
+                column's and row's borders are clipped rather than doubling up
+                against the panel's own.
 
-              {/* Delivery location and its phone number — the pair the pick
-                  list prints, shown here so it can be checked before printing. */}
-              {(selectedOrder.location || selectedOrder.phoneNumber) && (
-                <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                  <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
-                    <MapPin size={16} className="text-emerald-600" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase">
-                      Location &amp; Phone
-                    </p>
-                    <p className="text-sm font-bold text-slate-800 line-clamp-2">
-                      {selectedOrder.location || "—"}
-                    </p>
-                    {selectedOrder.phoneNumber && (
-                      <p className="text-xs font-semibold text-slate-500">
-                        {selectedOrder.phoneNumber}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
+                Field widths follow content: the five short facts share a
+                responsive 1/2/3-column grid, and the master details — the only
+                multi-value field — spans the full width underneath, laying its
+                pairs out side by side instead of stacking five rows deep.
 
-              <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center shrink-0">
-                  <Hash size={16} className="text-indigo-600" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">
-                    PO Number
-                  </p>
+                UI only. Every value, condition and permission below is exactly
+                what it was. */}
+            <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm bg-white">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 -mr-px -mb-px">
+
+                {/* Moved out of the header, where it was one badge among four
+                    and said less than it could. Here it has room to name the
+                    indent the booking came from. */}
+                {selectedOrder.autoBooked && (
+                  <Fact
+                    icon={Sparkles}
+                    tone="emerald"
+                    label="Raised automatically"
+                    value={`From indent ${selectedOrder.autoBookedFrom || "—"}`}
+                    hint="when the stock came back in"
+                  />
+                )}
+
+                {seesCustomers && (
+                  <Fact
+                    icon={User}
+                    tone="blue"
+                    label="Customer"
+                    value={selectedOrder.customer}
+                  />
+                )}
+
+                {/* Who placed the booking on the customer's behalf (the SI
+                    Team), as stored on the booking. Shown to everyone, the
+                    customer included: it is their booking, and they are told
+                    who made it. Absent on a booking the customer placed
+                    themselves. */}
+                {selectedOrder.siTeam && (
+                  <Fact
+                    icon={User}
+                    tone="violet"
+                    label="Booked by (SI Team)"
+                    value={selectedOrder.siTeam}
+                    hint={selectedOrder.siTeamRole && `${selectedOrder.siTeamRole} · Shraddha Impex`}
+                  />
+                )}
+
+                {/* Delivery location and its phone number — the pair the pick
+                    list prints, shown here so it can be checked before
+                    printing. */}
+                {(selectedOrder.location || selectedOrder.phoneNumber) && (
+                  <Fact
+                    icon={MapPin}
+                    tone="emerald"
+                    label="Location & Phone"
+                    value={selectedOrder.location || "—"}
+                    hint={selectedOrder.phoneNumber}
+                  />
+                )}
+
+                <Fact icon={Hash} tone="indigo" label="PO Number">
                   {isEditingPO ? (
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="flex items-center gap-1.5 mt-1">
                       <input
                         type="text"
                         value={newPO}
                         onChange={(e) => setNewPO(e.target.value)}
-                        className="w-full text-sm border border-slate-300 rounded px-2 py-1 outline-none focus:border-indigo-500 font-semibold text-slate-800"
+                        className="w-full min-w-0 text-sm border border-slate-300 rounded px-2 py-1 outline-none focus:border-indigo-500 font-semibold text-slate-800"
                         placeholder="Enter PO No..."
                         autoFocus
                       />
-                      <button onClick={handleSavePO} disabled={busy} className="text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-1.5 rounded">Save</button>
-                      <button onClick={() => setIsEditingPO(false)} disabled={busy} className="text-xs font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 px-2 py-1.5 rounded">Cancel</button>
+                      <button onClick={handleSavePO} disabled={busy} className="shrink-0 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-1.5 rounded">Save</button>
+                      <button onClick={() => setIsEditingPO(false)} disabled={busy} className="shrink-0 text-xs font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 px-2 py-1.5 rounded">Cancel</button>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-between gap-2 mt-0.5">
-                      <p className="text-sm font-bold text-slate-800 line-clamp-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-bold text-slate-800 truncate" title={selectedOrder.poNumber || undefined}>
                         {selectedOrder.poNumber || "-"}
                       </p>
-                      {/* Once the PO exists the booking is locked; only an Admin
-                          may change it, and the server enforces this regardless. */}
+                      {/* Once the PO exists the booking is locked; only an
+                          Admin may change it, and the server enforces this
+                          regardless. */}
                       {mayManageOrders && (
                         <button
                           onClick={() => {
                             setNewPO(poRaised ? selectedOrder.poNumber : "");
                             setIsEditingPO(true);
                           }}
-                          className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded hover:bg-indigo-100 whitespace-nowrap"
+                          className="shrink-0 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded hover:bg-indigo-100 whitespace-nowrap"
                         >
                           {poRaised ? "Edit" : "Raise PO"}
                         </button>
                       )}
                     </div>
                   )}
-                </div>
-              </div>
+                </Fact>
 
-              <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
-                <div className="w-8 h-8 rounded-full bg-violet-50 flex items-center justify-center shrink-0">
-                  <CalendarIcon size={16} className="text-violet-600" />
-                </div>
-                <div>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">
-                    Booking Date
-                  </p>
-                  <p className="text-sm font-bold text-slate-800 line-clamp-2">
-                    {new Date(selectedOrder.date).toLocaleDateString()}
-                  </p>
-                </div>
-              </div>
+                <Fact
+                  icon={CalendarIcon}
+                  tone="violet"
+                  label="Booking Date"
+                  value={new Date(selectedOrder.date).toLocaleDateString()}
+                />
 
+                {/* The customer's registered master details, from User
+                    Management. Read live, so anything an admin fills in there
+                    appears on past bookings too.
+
+                    Kept SEPARATE from the delivery pair above, which is the
+                    booking's own snapshot and may deliberately differ once a
+                    PO quotes a different address. Showing one in place of the
+                    other is how a desk ships to the wrong place.
+
+                    Full width, because it is the one field holding several
+                    values: given a third of a row it stacked five label/value
+                    pairs vertically and set the height of everything beside
+                    it. Across the whole width the same five pairs sit two or
+                    three abreast in two short rows.
+
+                    `border-t` as well as `border-b`: the row of short facts
+                    above is usually part-filled — there are five of them in a
+                    three-column grid — and an empty cell draws no border, so
+                    the divider under that row stopped halfway across. This
+                    cell's own top border carries the line the rest of the way.
+                    A part-filled row at the BOTTOM of the panel needs no such
+                    help: those are the borders the `-mb-px` clips. */}
+                {selectedOrder.customerProfile && (
+                  selectedOrder.customerProfile.location
+                  || selectedOrder.customerProfile.phone
+                  || selectedOrder.customerProfile.gstNumber
+                  || selectedOrder.customerProfile.shopNumber
+                  || selectedOrder.customerProfile.vendorNumber
+                ) && (
+                  <div className="sm:col-span-2 lg:col-span-3 border-t border-b border-r border-slate-200 px-3 py-2.5">
+                    <div className="flex items-start gap-2.5">
+                      <span className="w-6 h-6 mt-0.5 rounded-full bg-sky-50 flex items-center justify-center shrink-0">
+                        <User size={13} className="text-sky-600" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+                          Customer master details
+                        </p>
+                        {/* A wrapping grid rather than a stack: the pairs are
+                            independent facts, so they read as well side by
+                            side and take a fraction of the height. */}
+                        <dl className="mt-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-0.5 text-xs">
+                          {[
+                            ['Location', selectedOrder.customerProfile.location],
+                            ['Phone', selectedOrder.customerProfile.phone],
+                            ['Shop No.', selectedOrder.customerProfile.shopNumber],
+                            ['Vendor No.', selectedOrder.customerProfile.vendorNumber],
+                            ['GST No.', selectedOrder.customerProfile.gstNumber],
+                          ].filter(([, v]) => v).map(([label, value]) => (
+                            <div key={label} className="flex gap-2 min-w-0">
+                              <dt className="text-slate-400 font-semibold w-[4.5rem] shrink-0">{label}</dt>
+                              {/* Truncated with the full value on hover: a GST
+                                  number wrapping onto a second line was what
+                                  made this block tall in the first place. */}
+                              <dd className="text-slate-700 font-semibold truncate min-w-0" title={value}>
+                                {value}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
             </div>
+
+            {/* The booking quantity split, as the server derived it. Rendered
+                above the line items because it is the answer to the first
+                question a customer asks of a part-fulfilled booking — how much
+                of this do you actually have — and the per-line table below is
+                the detail behind it, not the other way round.
+
+                Null on a response from a server that does not send it, in
+                which case nothing is rendered rather than a guess. */}
+            {selectedOrder.bifurcation && (
+              <div className="mb-6">
+                <BookingBifurcation bifurcation={selectedOrder.bifurcation} />
+              </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               {/* Main Content */}
               <div className="lg:col-span-2 flex flex-col gap-6">
                 {/* Product Table */}
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
-                  <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
                       <Package size={18} className="text-primary-600" />
                       <h3 className="text-sm font-bold text-slate-800">
@@ -642,41 +742,48 @@ export const OrderDrawer = () => {
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left whitespace-nowrap">
+                      {/* `w-px` on a nowrap cell is "as narrow as the content
+                          allows" — the column shrinks to fit and the one marked
+                          `w-full` by grow() takes everything left over. */}
                       <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                         <tr>
-                          <th className="px-5 py-3">SKU Code</th>
+                          <th className={`px-4 py-2.5 ${grow("sku")}`}>SKU Code</th>
                           {/* MSIL Code replaces the old Product Name column, which
                               only ever rendered a placeholder like "Koken Product".
                               Shown only to users MSIL codes apply to — the same rule
                               used everywhere else (utils/msilVisibility on the server). */}
-                          {showMsilCode && <th className="px-5 py-3">MSIL Code</th>}
+                          {showMsilCode && <th className={`px-4 py-2.5 ${grow("msil")}`}>MSIL Code</th>}
                           {/* Beside the codes and before the quantity, so the row
                               reads the way it is picked: which part, which box,
                               how many. */}
-                          {showBoxNo && <th className="px-5 py-3">Box No</th>}
-                          <th className="px-5 py-3 text-center">Booked</th>
-                          <th className="px-5 py-3 text-center">Qty</th>
-                          {canEditQty && <th className="px-5 py-3 text-center">Change</th>}
-                          {hasIndent && <th className="px-5 py-3 text-center">Indent</th>}
+                          {showBoxNo && <th className={`px-4 py-2.5 ${grow("box")}`}>Box No</th>}
+                          {/* The figures are right-aligned and content-width, so
+                              they line up as one block against the right edge
+                              instead of floating in the middle of columns three
+                              times wider than the numbers in them. */}
+                          <th className="px-4 py-2.5 w-px text-right">Booked</th>
+                          <th className="px-4 py-2.5 w-px text-right">Qty</th>
+                          {canEditQty && <th className="px-4 py-2.5 w-px text-right">Change</th>}
+                          {hasIndent && <th className="px-4 py-2.5 w-px text-right">Indent</th>}
                           {/* The line's dispatch date: 3 days after booking by
                               default, or what the desk set. The same value the
                               confirmation and schedule emails show. */}
-                          {hasDispatchDate && <th className="px-5 py-3">Dispatch Date</th>}
+                          {hasDispatchDate && <th className="px-4 py-2.5 w-px text-right">Dispatch Date</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
                         {linePaging.pageItems.map((item, idx) => (
                           <tr key={idx} className="hover:bg-slate-50">
-                            <td className="px-5 py-4 font-bold text-slate-800">
+                            <td className={`px-4 py-2.5 font-bold text-slate-800 ${grow("sku")}`}>
                               <CodeValue value={item.product.code} />
                             </td>
                             {showMsilCode && (
-                              <td className="px-5 py-4">
+                              <td className={`px-4 py-2.5 ${grow("msil")}`}>
                                 <CodeValue value={item.product.msilCode} tone="muted" />
                               </td>
                             )}
                             {showBoxNo && (
-                              <td className="px-5 py-4 font-mono font-bold text-slate-700">
+                              <td className={`px-4 py-2.5 font-mono font-bold text-slate-700 ${grow("box")}`}>
                                 {item.product.boxNo || (
                                   <span className="font-sans font-normal text-slate-400">—</span>
                                 )}
@@ -685,10 +792,10 @@ export const OrderDrawer = () => {
                             {/* What the customer originally asked for. Read-only
                                 everywhere: a stock shortfall or a desk edit moves
                                 the Qty beside it, never this. */}
-                            <td className="px-5 py-4 text-center font-medium text-slate-500">
+                            <td className="px-4 py-2.5 w-px text-right font-medium text-slate-500 tabular-nums">
                               {item.bookedQty ?? item.orderQuantity}
                             </td>
-                            <td className="px-5 py-4 text-center font-bold text-slate-700">
+                            <td className="px-4 py-2.5 w-px text-right font-bold text-slate-700 tabular-nums">
                               {canEditQty ? (
                                 <input
                                   type="number"
@@ -702,7 +809,7 @@ export const OrderDrawer = () => {
                                         e.target.value === "" ? "" : Number(e.target.value),
                                     }))
                                   }
-                                  className="w-20 text-center border border-slate-300 rounded-lg px-2 py-1 text-sm font-bold text-slate-800 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+                                  className="w-16 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm font-bold text-slate-800 tabular-nums outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
                                 />
                               ) : (
                                 <>
@@ -711,7 +818,7 @@ export const OrderDrawer = () => {
                               )}
                             </td>
                             {canEditQty && (
-                              <td className="px-5 py-4 text-center text-xs font-bold">
+                              <td className="px-4 py-2.5 w-px text-right text-xs font-bold tabular-nums">
                                 {lineChange(item) === 0 ? (
                                   <span className="text-slate-300">&mdash;</span>
                                 ) : (
@@ -727,7 +834,7 @@ export const OrderDrawer = () => {
                               </td>
                             )}
                             {hasIndent && (
-                              <td className="px-5 py-4 text-center font-bold">
+                              <td className="px-4 py-2.5 w-px text-right font-bold tabular-nums">
                                 {(item.pendingQty ?? 0) > 0 ? (
                                   <span className="text-amber-600">{item.pendingQty}</span>
                                 ) : (
@@ -736,7 +843,7 @@ export const OrderDrawer = () => {
                               </td>
                             )}
                             {hasDispatchDate && (
-                              <td className="px-5 py-4 text-sm font-semibold text-slate-700">
+                              <td className="px-4 py-2.5 w-px text-right text-sm font-semibold text-slate-700">
                                 {item.scheduledDate ? (
                                   formatDisplayDate(new Date(item.scheduledDate))
                                 ) : (
@@ -750,8 +857,8 @@ export const OrderDrawer = () => {
                     </table>
                   </div>
                   {canEditQty && (
-                    <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 flex-wrap">
-                      <p className="text-[11px] text-slate-500 leading-relaxed max-w-md">
+                    <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-[11px] text-slate-500 leading-snug max-w-md">
                         Saving adjusts inventory immediately: raising a quantity reserves more
                         stock, lowering it returns the difference. The change is recorded and
                         shown to the customer when the PO is raised.
@@ -782,7 +889,7 @@ export const OrderDrawer = () => {
                     </div>
                   )}
                   {linePaging.total > 0 && (
-                    <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/50">
+                    <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50">
                       <Pagination
                         page={linePaging.page}
                         pageSize={PAGE_SIZE}
@@ -823,39 +930,47 @@ export const OrderDrawer = () => {
                 {/* Indents tied to this booking (matched by PO number) */}
                 {bookingIndents.length > 0 && (
                   <div className="bg-white border border-amber-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
-                    <div className="px-5 py-4 border-b border-amber-100 flex items-center gap-2 bg-amber-50/50">
+                    <div className="px-4 py-3 border-b border-amber-100 flex items-center gap-2 bg-amber-50/50">
                       <PackageX size={18} className="text-amber-500" />
                       <h3 className="text-sm font-bold text-slate-800">
                         Indents ({bookingIndents.length})
                       </h3>
                     </div>
                     <div className="overflow-x-auto">
+                      {/* Same column rule as Line Items above: codes tight on
+                          the left, the quantity tight on the right, the spare
+                          width in one gutter between them rather than shared
+                          out between three short columns. The two tables sit
+                          one above the other in this drawer, so a different
+                          answer in each would read as a mistake. */}
                       <table className="w-full text-left whitespace-nowrap">
                         <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                           <tr>
-                            <th className="px-5 py-3">SKU Code</th>
-                            {showMsilCode && <th className="px-5 py-3">MSIL Code</th>}
-                            <th className="px-5 py-3 text-center">Qty</th>
+                            <th className={`px-4 py-2.5 ${showMsilCode ? "w-px" : "w-full"}`}>SKU Code</th>
+                            {showMsilCode && <th className="px-4 py-2.5 w-full">MSIL Code</th>}
+                            <th className="px-4 py-2.5 w-px text-right">Qty</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-sm">
                           {indentPaging.pageItems.map((p) => (
                             <tr key={p._id} className="hover:bg-slate-50">
-                              <td className="px-5 py-3">
+                              <td className={`px-4 py-2.5 ${showMsilCode ? "w-px" : "w-full"}`}>
                                 <CodeValue value={p.product.code} />
                               </td>
                               {showMsilCode && (
-                                <td className="px-5 py-3">
+                                <td className="px-4 py-2.5 w-full">
                                   <CodeValue value={p.product.msilCode} tone="muted" />
                                 </td>
                               )}
-                              <td className="px-5 py-3 text-center font-black text-amber-600">{p.pendingQuantity}</td>
+                              <td className="px-4 py-2.5 w-px text-right font-black text-amber-600 tabular-nums">
+                                {p.pendingQuantity}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                    <div className="px-5 py-3 border-t border-amber-100 bg-amber-50/30">
+                    <div className="px-4 py-2.5 border-t border-amber-100 bg-amber-50/30">
                       <Pagination
                         page={indentPaging.page}
                         pageSize={PAGE_SIZE}

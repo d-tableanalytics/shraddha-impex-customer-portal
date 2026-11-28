@@ -58,7 +58,8 @@ export const OrderHistoryTable = () => {
   // desk — Sales and Admin — the people whose names it carries. A customer's
   // own history keeps its columns; the drawer still tells them who booked.
   const showSiTeam = useUserStore((s) => canUseSalesDesk(s.user));
-  const columnCount = 6 + (seesCustomers ? 2 : 0) + (showSiTeam ? 1 : 0);
+  // 6 base + the booking quantity bifurcation's three.
+  const columnCount = 9 + (seesCustomers ? 2 : 0) + (showSiTeam ? 1 : 0);
 
   const totalPages = Math.max(1, Math.ceil(orders.length / limit));
   const currentPage = Math.min(page, totalPages);
@@ -89,6 +90,13 @@ export const OrderHistoryTable = () => {
     date: order.date,
     poNumber: order.poNumber,
     siTeam: order.siTeam,
+    // The booking quantity bifurcation, repeated on every line of the booking
+    // for the same reason the customer block is: a flat row has to stand on
+    // its own. Booking-level figures, so they are the same on each of a
+    // booking's lines — that is the sheet being flat, not a double count.
+    outstandingQty: order.bifurcation?.totalBookedQty ?? "—",
+    allocatedQty: order.bifurcation?.allocatedQty ?? "—",
+    pendingIndentQty: order.bifurcation?.pendingIndentQty ?? "—",
   });
 
   const ROW_EXPORT_COLS = [
@@ -97,6 +105,9 @@ export const OrderHistoryTable = () => {
     ...(showSiTeam ? [{ key: "siTeam", label: "SI Team", format: (v) => v || "-" }] : []),
     { key: "date", label: "Booking Date", format: exportDate },
     { key: "poNumber", label: "PO Number", format: poNumberValue },
+    { key: "outstandingQty", label: "Total Booking Qty" },
+    { key: "allocatedQty", label: "Allocated Against Booking" },
+    { key: "pendingIndentQty", label: "Pending Indent Qty" },
   ];
 
   // One busy key per booking and format, so a row's icon spins while its file
@@ -187,6 +198,21 @@ export const OrderHistoryTable = () => {
               </th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">
                 Items
+              </th>
+              {/* The booking quantity bifurcation, from the server
+                  (backend/utils/bookingBifurcation.js). The Items column beside
+                  it keeps its meaning — the quantity the booking HOLDS — and
+                  these three say how that quantity is covered, which is the
+                  question a part-fulfilled booking raises and the one the
+                  drawer used to be the only place to answer. */}
+              <th className="px-5 py-3 border-b border-slate-200 text-center" title="Outstanding quantity you are waiting for">
+                Total Booking
+              </th>
+              <th className="px-5 py-3 border-b border-slate-200 text-center" title="Stock set aside for this booking">
+                Allocated
+              </th>
+              <th className="px-5 py-3 border-b border-slate-200 text-center" title="Still to be procured — no stock covers it yet">
+                Pending Indent
               </th>
               <th className="px-5 py-3 border-b border-slate-200 text-center">
                 Actions
@@ -301,6 +327,17 @@ export const OrderHistoryTable = () => {
                   </td>
                   <td className="px-5 py-4 text-center font-bold text-slate-700">
                     {order.totalQuantity}
+                  </td>
+                  {/* An em dash where the server sent no split, never a zero:
+                      "not known" and "none" are different facts. */}
+                  <td className="px-5 py-4 text-center font-bold text-slate-800 tabular-nums">
+                    {order.bifurcation?.totalBookedQty ?? <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-5 py-4 text-center font-semibold text-emerald-700 tabular-nums">
+                    {order.bifurcation?.allocatedQty ?? <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-5 py-4 text-center font-semibold text-amber-700 tabular-nums">
+                    {order.bifurcation?.pendingIndentQty ?? <span className="text-slate-400">—</span>}
                   </td>
                   <td className="px-5 py-4 text-center">
                     <button

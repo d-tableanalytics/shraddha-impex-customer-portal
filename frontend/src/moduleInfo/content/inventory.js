@@ -636,7 +636,7 @@ export default [
       },
       {
         "title": "Latest 20, or everything",
-        "detail": "Each item shows its 20 most recent activities, with one button to page through the complete history."
+        "detail": "Each item shows its 40 most recent activities, with one button to page through the complete history."
       },
       {
         "title": "Stock summary",
@@ -725,7 +725,7 @@ export default [
     "steps": [
       "Open Inventory Management > Activity Log.",
       "Search and choose a SKU code, or click one in the feed.",
-      "Read the latest 20 activities; set dates to narrow the period.",
+      "Read the latest 40 activities; set dates to narrow the period.",
       "Check Opening Stock, Stock In, Stock Out and Closing Stock at the top.",
       "Click View complete history to page back through everything."
     ],

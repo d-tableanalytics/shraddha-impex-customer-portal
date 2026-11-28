@@ -276,6 +276,28 @@ export const isAssignableRoleName = (name) =>
   Object.prototype.hasOwnProperty.call(BASELINE_ROLE_PERMISSIONS, name)
   || [...rolesById.values()].some((role) => role.name === name);
 
+/**
+ * Is this a role belonging to INTERNAL STAFF — somebody who works the
+ * business's own inventory rather than their own orders?
+ *
+ * The question used to be asked as a hardcoded allowlist of role names
+ * (`INVENTORY_ROLES.includes(user.role)`), which answers "no" for Sales,
+ * Billing, Accounts, Billing Head and HR, and for every staff role a Super
+ * Admin invents. That is the right answer to "is this a warehouse role" and
+ * the wrong answer to "do the per-customer brandAccess flags apply to this
+ * account" — see utils/brandAccess.js, where answering it wrongly emptied the
+ * Product Catalogue for a Sales user who held view_catalogue.
+ *
+ * FAIL-CLOSED. The role must be one this system actually knows — a built-in
+ * baseline role, or one in the roles collection. An absent, blank or unknown
+ * role name is NOT internal, so a malformed account can never be widened into
+ * seeing everything by a typo or a cold cache.
+ */
+export const isInternalRoleName = (name) =>
+  Boolean(name)
+  && isAssignableRoleName(name)
+  && !isPortalOnly(name, rolesByName.get(name));
+
 // ── Resolution ─────────────────────────────────────────────────────────────
 
 /**
@@ -569,6 +591,7 @@ export default {
   getCachedRoleById,
   assignableRoleNames,
   isAssignableRoleName,
+  isInternalRoleName,
   resolveRolePermissions,
   resolveUserPermissions,
   setHas,

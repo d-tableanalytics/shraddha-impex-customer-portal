@@ -8,12 +8,17 @@ import { inventoryApi } from "../services/inventory";
  *   no SKU chosen  → the cross-SKU feed, so the screen is never empty
  *   a SKU chosen   → that SKU's own history, plus its period summary
  *
- * The brief asks for "the most recent 20" and, separately, for the complete
+ * The brief asks for "the most recent N" and, separately, for the complete
  * history. Those are the same request with a different page size, so there is
  * one fetch and a `showAll` flag, not two code paths able to disagree.
+ *
+ * RECENT_LIMIT went from 20 to 40 on the client's request (2026-11-28). It is
+ * only the page size asked for: the server applies it per SKU inside each
+ * source query and the complete history behind it is untouched, so nothing is
+ * dropped from the database and "View complete history" still reaches it.
  */
 
-const RECENT_LIMIT = 20;
+export const RECENT_LIMIT = 40;
 const FULL_LIMIT = 50;
 
 const initialFilters = () => ({
@@ -38,7 +43,7 @@ export const useActivityStore = create((set, get) => ({
   loading: true,
   error: null,
 
-  // false → the latest 20. true → page through everything.
+  // false → the latest RECENT_LIMIT. true → page through everything.
   showAll: false,
 
   activityTypes: [],

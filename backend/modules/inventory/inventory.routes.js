@@ -1,6 +1,6 @@
 import express from 'express';
 import {
-  listItems, listItemCodes, lookupItems, getItem, updatePlanning, bulkUpdatePlanning,
+  listItems, listItemCodes, lookupItems, getItem, getItemBookings, updatePlanning, bulkUpdatePlanning,
   listCategories, checkSkuAvailable, createItem, getItemReferences, deleteItem, renameItemCode,
 } from './inventory.controller.js';
 import { postAdjustment, getAdjustmentPreview, getReasonCodes } from './adjustment.controller.js';
@@ -102,6 +102,11 @@ router.get('/items/available', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), c
 router.post('/items', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), createItem);
 
 router.get('/items/:sku', authorize(PERMISSIONS.VIEW_INVENTORY), getItem);
+// The SKU-wise booking bifurcation: total booked, allocated against bookings,
+// still on indent — across every booking for this SKU. On VIEW_INVENTORY, the
+// same permission as the SKU itself: it adds no commercial information, only
+// how the units already shown are spoken for.
+router.get('/items/:sku/bookings', authorize(PERMISSIONS.VIEW_INVENTORY), getItemBookings);
 // What would break if this SKU went. Read by the confirmation dialog, so the
 // cost is stated before the click rather than by the refusal after it.
 router.get('/items/:sku/references', authorize(PERMISSIONS.MANAGE_INVENTORY_MASTER), getItemReferences);

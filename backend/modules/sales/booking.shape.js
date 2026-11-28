@@ -1,15 +1,21 @@
 import { Product } from '../../models/Product.js';
 import { lockState, poDueAt, PO_DEADLINE_DAYS } from '../../utils/bookingLock.js';
 import { lineAmount, labelForPriceType, normalisePriceType, asPrice } from '../../config/pricing.js';
+import { bifurcateRows } from '../../utils/bookingBifurcation.js';
 
 /**
  * Turning Order rows into the booking object the sales desk renders.
  *
  * Split out of sales.controller.js because that module imports the socket
  * server, and importing it pulls the whole app up with it — routes, jobs and
- * all. This file depends on nothing but the Product model and the lock rules,
- * so the live/snapshot decision below can be loaded and tested on its own.
- * See scripts/verify-box-numbers.js.
+ * all. This file depends on MODELS AND PURE HELPERS ONLY, so the live/snapshot
+ * decision below can be loaded and tested on its own. See
+ * scripts/verify-box-numbers.js.
+ *
+ * `bookingBifurcation.js` is on that list: the function used from it
+ * (`bifurcateRows`) is pure, and the module's own imports reach no further
+ * than the Order, Reservation and Product models. Keep it that way — anything
+ * here that pulls in a route, a job or the socket server undoes the split.
  */
 
 export const boxKey = (skuCode, brand) => `${skuCode}::${brand}`;
@@ -119,7 +125,30 @@ const bookingTotals = (rows, indentBySku) => {
   if (!indentBySku) return { booked, indent: null, total: null };
 
   const indent = [...indentBySku.values()].reduce((n, q) => n + (q || 0), 0);
-  return { booked, indent, total: booked + indent };
+
+  /*
+   * THE SAME THREE NUMBERS, UNDER THE NAMES THE CLIENT USES, PLUS WHAT THEY
+   * LEAVE OUT.
+   *
+   * `booked` / `indent` / `total` above are kept EXACTLY as they were — several
+   * readers treat them as the desk's "what is on this booking" figures and
+   * widening one in place would silently change what they report.
+   *
+   * What is added is the bifurcation proper (utils/bookingBifurcation.js),
+   * which differs in two ways that matter:
+   *
+   *   • `allocatedQty` counts only stock STILL set aside. `booked` above sums
+   *     `confirmedQty` across every row, cancelled, released and dispatched
+   *     lines included, so on a part-cancelled or part-dispatched booking it
+   *     overstates what the customer is still waiting for.
+   *   • `dispatchedQty` and `cancelledQty` are reported separately rather than
+   *     folded in, so the history stays readable without polluting the split.
+   *
+   * It is the SAME derivation the Customer Portal and the SKU-wise view read,
+   * which is the point: three screens, one answer.
+   */
+  const { totals, bySku } = bifurcateRows(rows, indentBySku);
+  return { booked, indent, total: booked + indent, ...totals, bySku };
 };
 
 /**

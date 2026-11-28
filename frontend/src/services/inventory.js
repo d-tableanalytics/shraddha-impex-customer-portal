@@ -119,6 +119,23 @@ export const inventoryApi = {
     return response.data.data;
   },
 
+  /**
+   * SKU-WISE BOOKING BIFURCATION — the split across every booking for one SKU:
+   *
+   *   totalBookedQty = allocatedQty + pendingIndentQty
+   *
+   * Derived entirely on the server (utils/bookingBifurcation.js). The response
+   * also carries `availableForSale`, which is UNRESERVED stock and a different
+   * fact from `allocatedQty`: the two are returned together precisely so a
+   * screen showing one is never tempted to show it as the other.
+   */
+  getItemBookings: async (skuCode) => {
+    const response = await api.get(
+      `/inventory/items/${encodeURIComponent(skuCode)}/bookings`,
+    );
+    return response.data.data;
+  },
+
   updatePlanning: async (skuCode, updates) => {
     const response = await api.patch(
       `/inventory/items/${encodeURIComponent(skuCode)}/planning`,
@@ -448,10 +465,16 @@ export const inventoryApi = {
     };
   },
 
-  /** One SKU's history. Defaults to the latest 20; page through for all of it. */
+  /**
+   * One SKU's history. Page through for all of it.
+   *
+   * The default matches the server's RECENT_ACTIVITY_LIMIT (40). The screen
+   * always passes an explicit limit from the store, so this only covers a
+   * caller that asks for none.
+   */
   getSkuActivity: async (skuCode, {
     activityType = "", from = "", to = "", reference = "", customerId = "", userId = "",
-    page = 1, limit = 20,
+    page = 1, limit = 40,
   } = {}) => {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
     for (const [key, value] of Object.entries({

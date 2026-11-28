@@ -41,13 +41,27 @@ const VALID_TYPES = new Set(ACTIVITY_TYPES.map((t) => t.type));
  * uncapped limit or an unbounded page would turn one request into two
  * collection scans.
  */
+/**
+ * How many activities "recent" means, for one SKU.
+ *
+ * Raised from 20 to 40 on the client's request (2026-11-28). It is applied HERE
+ * — as the page size handed to getActivity() — which means each source is
+ * queried for the newest 40 rows FOR THIS SKU and the merge is sliced to 40.
+ * It is emphatically not "fetch some activities and keep 40 of them": the SKU
+ * filter is inside every source query (activity.service.js), so a SKU whose
+ * last 40 movements are a year old still returns all 40.
+ *
+ * Nothing is deleted or truncated in the database — this is a page size, and
+ * `?limit=&page=` still pages through the complete history behind it.
+ */
+export const RECENT_ACTIVITY_LIMIT = 40;
 /** An export is a convenience, not a bulk extract. */
 const EXPORT_LIMIT = Number(process.env.IMS_ACTIVITY_EXPORT_LIMIT) || 5000;
 
 /** Exposed so the screen can state the cap rather than truncate in silence. */
 export const exportLimit = EXPORT_LIMIT;
 
-const parse = (req, { defaultLimit = 20 } = {}) => {
+const parse = (req, { defaultLimit = RECENT_ACTIVITY_LIMIT } = {}) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || defaultLimit, 1), 100);
   const page = Math.min(Math.max(Number(req.query.page) || 1, 1), 500);
 
@@ -126,10 +140,10 @@ export const listActivity = async (req, res, next) => {
 /**
  * GET /api/v1/inventory/items/:sku/activity
  *
- * One SKU's history, newest first. Defaults to the latest 20 — the brief's
- * "most recent 20 activity records" — and pages through the complete history
- * from the same endpoint, because "show me everything" is the same question
- * with a bigger answer, not a different screen.
+ * One SKU's history, newest first. Defaults to the latest
+ * RECENT_ACTIVITY_LIMIT (40) and pages through the complete history from the
+ * same endpoint, because "show me everything" is the same question with a
+ * bigger answer, not a different screen.
  */
 export const getSkuActivity = async (req, res, next) => {
   try {

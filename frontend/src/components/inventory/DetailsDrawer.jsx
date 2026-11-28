@@ -17,7 +17,9 @@ import { ProductContentSection } from './ProductContentSection';
 import { useUserStore } from '../../store/userStore';
 import { isMsilCustomer } from '../../utils/moq';
 import { useShowMsilCode } from '../../hooks/useShowMsilCode';
-import { canUseInventoryMaster } from '../../utils/permissions';
+import { canUseInventoryMaster, hasPermission, PERMISSIONS } from '../../utils/permissions';
+import { inventoryApi } from '../../services/inventory';
+import { BookingBifurcation } from '../common/BookingBifurcation';
 
 const BRAND_COLORS = {
   KOKEN: 'bg-blue-50 text-blue-700 border-blue-200',
@@ -44,6 +46,24 @@ export const DetailsDrawer = ({
    */
   const [content, setContent] = useState(null);
   const [contentLoading, setContentLoading] = useState(false);
+  /**
+   * SKU-WISE BOOKING BIFURCATION — how this SKU's units are spoken for across
+   * every live booking: total booked, allocated from inventory, still on
+   * indent.
+   *
+   * It answers the question the Stock Balances grid below cannot. "Available
+   * for Sale" is what nobody has claimed; "Reserved / Booked" is what the
+   * product row's counter says is set aside. NEITHER of them says how much
+   * customers are still waiting for that NOTHING covers — the pending indent
+   * — which is the figure that decides whether to buy more.
+   *
+   * Fetched separately and allowed to fail on its own, like the content block
+   * above: it spans the booking and reservation collections, and a slow query
+   * there must not hold up the stock figures most people opened the panel for.
+   *
+   * Behind view_inventory, the permission that already governs this panel.
+   */
+  const [bookings, setBookings] = useState(null);
   const user = useUserStore((s) => s.user);
   const userShowMsil = useShowMsilCode();
   const isMsilUser = isMsilCustomer(user);
@@ -51,6 +71,8 @@ export const DetailsDrawer = ({
   // The inventory.master View cell, not Admin/Sales by name (audit F5) - which
   // also hid planning from the Inventory Manager, the role that edits it.
   const canSeePlanning = canUseInventoryMaster(user);
+  // Who may be told how this SKU's units are spoken for across bookings.
+  const canSeeBookings = hasPermission(user, PERMISSIONS.VIEW_INVENTORY);
 
   useEffect(() => {
     setItem(product);
@@ -67,6 +89,24 @@ export const DetailsDrawer = ({
         });
     }
   }, [isOpen, product]);
+
+  useEffect(() => {
+    const code = product?.code;
+    // Gated on the permission rather than left to 403: this panel also serves
+    // CUSTOMERS, who have no inventory access, and firing a request that is
+    // guaranteed to be refused on every product they open is not a graceful
+    // fallback, it is noise in the logs.
+    if (!isOpen || !code || !canSeeBookings) return undefined;
+    let cancelled = false;
+    setBookings(null);
+    inventoryApi
+      .getItemBookings(code)
+      .then((data) => { if (!cancelled) setBookings(data); })
+      // Silent: a SKU nobody has booked and an endpoint this reader may not
+      // call look the same from here, and both mean "show nothing".
+      .catch(() => { if (!cancelled) setBookings(null); });
+    return () => { cancelled = true; };
+  }, [isOpen, product?.code, canSeeBookings]);
 
   // Content follows the SKU CODE, not the product object: the same SKU reopened
   // from a re-rendered row must not refetch, and a different SKU must not show
@@ -259,6 +299,70 @@ export const DetailsDrawer = ({
             </div>
           </div>
         </div>
+
+        {/* ── Booked against this SKU ─────────────────────────────────────
+            The booking quantity bifurcation, SKU-wise: of everything
+            customers are waiting for on this item, how much is covered by
+            stock set aside for them and how much still has to be procured.
+
+            Deliberately a SEPARATE block from Stock Balances above, and
+            captioned to say so. "Available for Sale" there is unreserved
+            stock anyone can still book; "Allocated from inventory" here is
+            stock already spoken for. Putting them in one grid is what makes
+            people add them together or swap one for the other. */}
+        {bookings && bookings.totalBookedQty > 0 && (
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+              <Boxes className="w-3.5 h-3.5 text-slate-500" />
+              Booked against this SKU
+            </h3>
+            <BookingBifurcation bifurcation={bookings} title="Across all live bookings" />
+            <p className="mt-2 text-[11px] text-slate-400 leading-snug">
+              Allocated stock is set aside for a customer and is <strong>not</strong> part of
+              the {stockAvailable.toLocaleString()} shown as Available for Sale above.
+            </p>
+            {bookings.bookings?.length > 0 && (
+              <div className="mt-3 border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full text-[11px]">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-bold">Booking</th>
+                      <th className="px-3 py-2 text-right font-bold">Total</th>
+                      <th className="px-3 py-2 text-right font-bold">Allocated</th>
+                      <th className="px-3 py-2 text-right font-bold">Indent</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {bookings.bookings.slice(0, 10).map((b) => (
+                      <tr key={b.orderId}>
+                        <td className="px-3 py-2 font-mono text-slate-700">
+                          {b.orderId}
+                          {b.company ? (
+                            <span className="ml-1 font-sans text-slate-400">· {b.company}</span>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-800 font-semibold">
+                          {b.totalBookedQty}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-emerald-700">
+                          {b.allocatedQty}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-amber-700">
+                          {b.pendingIndentQty}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {bookings.bookings.length > 10 && (
+                  <div className="px-3 py-2 text-[11px] text-slate-400 bg-slate-50">
+                    Showing the 10 most recent of {bookings.bookings.length} bookings.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Photographs, the long description and the videos.
             Placed above the master fields because it is what a customer opened

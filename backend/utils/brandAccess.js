@@ -1,5 +1,6 @@
 import { createProductModel, registerBrandValue } from '../models/Product.js';
 import { INVENTORY_ROLES, isSuperAdmin, hasPermission, PERMISSIONS } from '../middlewares/rbac.js';
+import { isInternalRoleName } from './roleResolver.js';
 import {
   listBrands, brandNames, onBrandsChanged, canonicalBrand, hasBrandFlag,
 } from './brandRegistry.js';
@@ -49,16 +50,80 @@ export const brandOfProduct = (doc) => {
 };
 
 /**
- * Roles that act on the business's own stock rather than their own orders, so
- * the per-user brandAccess flags — which exist to scope CUSTOMERS — do not
- * apply to them.
+ * Accounts the per-user `brandAccess` flags do NOT apply to.
  *
- * Sales is deliberately NOT in this list. Its brand visibility is already
- * decided by the sales-desk rules, and widening it here would silently change
- * what existing Sales users see on the dashboard and in their booking lists.
+ * ---------------------------------------------------------------------------
+ * THE DEFECT THIS FIXES
+ * ---------------------------------------------------------------------------
+ *
+ * `brandAccess` is a per-ACCOUNT set of flags whose purpose is to scope a
+ * CUSTOMER to the brands they buy. It is ticked on an account in Customer
+ * Users and nowhere else: no staff onboarding path sets it, so every ordinary
+ * internal account carries the schema default
+ * `{ koken: false, bix: false, imada: false }`.
+ *
+ * This predicate used to be `isSuperAdmin(user) || INVENTORY_ROLES.includes(role)`
+ * — an allowlist of four warehouse roles. Sales, Billing, Accounts, Billing
+ * Head and HR all fell outside it, so `allowedBrands()` returned `[]` for them
+ * and every brand-scoped read resolved to nothing.
+ *
+ * That is the root cause of the reported Product Catalogue defect. A Sales
+ * user holding `view_catalogue` passed the route guard, reached
+ * `getInventory`, and was handed an empty list with HTTP 200 — no 403, no
+ * error, just no rows, because `allowedBrandModels(user)` had no models to
+ * query. The permission was never the problem; the brand fence was.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE TEST IS "HAS ANY BRAND BEEN TICKED", NOT "IS THIS A STAFF ROLE"
+ * ---------------------------------------------------------------------------
+ *
+ * Widening it to "every internal role sees every brand" would have fixed the
+ * symptom and removed a capability the system deliberately has: a Super Admin
+ * can create a staff role and scope that ACCOUNT to one brand — a Koken-only
+ * auditor, a BIX-only salesperson. Those accounts exist and are exercised by
+ * the brand-fence tests. Role name is the wrong axis for a per-account fence.
+ *
+ * So the question asked is the one the data can actually answer: HAS ANYBODY
+ * SCOPED THIS ACCOUNT? An internal account with at least one brand ticked was
+ * scoped on purpose and stays scoped. An internal account with none was never
+ * scoped at all, and reading that as "scoped to nothing" is what blinded the
+ * sales desk.
+ *
+ * ---------------------------------------------------------------------------
+ * AND WHY A CUSTOMER STILL FAILS CLOSED
+ * ---------------------------------------------------------------------------
+ *
+ * The relaxation applies ONLY to an account whose role this system knows and
+ * which is not fenced into the Customer Portal. A Customer — or any role a
+ * Super Admin marks `portalOnly` — with no brands ticked still resolves to
+ * `[]` and still sees nothing, which is what `brandFilter()`'s
+ * `{ brand: { $in: [] } }` has always promised. `isInternalRoleName` is itself
+ * fail-closed on an absent, blank or unknown role, so a malformed account gets
+ * the customer fence rather than being widened to everything.
+ *
+ * It grants no permission. A Sales user still sees only the modules their
+ * permission set allows; this only stops a list they were already authorised
+ * to read from arriving empty.
+ *
+ * INVENTORY_ROLES stays in the expression deliberately: those four names are
+ * compiled in, so they answer correctly even on a cold role cache, before
+ * `loadRoles()` has run, and they see every brand even if somebody ticks a
+ * flag on one of their accounts by mistake.
  */
+const hasAnyBrandFlag = (brandAccess) =>
+  listBrands().some((b) => hasBrandFlag(brandAccess, b.key));
+
 const seesAllBrands = (user) =>
-  isSuperAdmin(user) || INVENTORY_ROLES.includes(user?.role);
+  isSuperAdmin(user)
+  || INVENTORY_ROLES.includes(user?.role)
+  || (isInternalRoleName(user?.role) && !hasAnyBrandFlag(user?.brandAccess));
+
+/**
+ * True when this account's brands come from its own `brandAccess` flags. Sent
+ * to the browser on sign-in so the UI applies the same rule without having to
+ * know any role names — see modules/auth/auth.controller.js.
+ */
+export const isBrandScopedAccount = (user) => !seesAllBrands(user);
 
 const isMsilCustomer = (user) => !seesAllBrands(user) && user?.customerCategory === 'MSIL';
 
@@ -132,5 +197,6 @@ export const brandsVisibleTo = (user) => {
 };
 
 export default {
-  allBrands, allowedBrands, canAccessBrand, brandOfProduct, allBrandModels, allowedBrandModels, brandFilter, brandsVisibleTo,
+  allBrands, allowedBrands, canAccessBrand, brandOfProduct, allBrandModels, allowedBrandModels,
+  brandFilter, brandsVisibleTo, isBrandScopedAccount,
 };

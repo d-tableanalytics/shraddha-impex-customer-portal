@@ -15,6 +15,6 @@
   "shared/permissions/matrix.js": "67197b3621427b91d53908eae511207d737d575206bcb757b840a118357bedfb",
   "utils/brandRegistry.js": "7284ae7ed412dc54a81bd5bdf4180c3d625e04ae8a0a8bb3ba570f9f9e1b5aae",
   "utils/hrmsRoleGuard.js": "fd597f1ab51273f86d0da4b0ee457b51f9d713548223693a4410225315dabb9b",
-  "utils/roleResolver.js": "6347a1999f1adebaf44ce06697f56442afa76f7bfcbb7e73b0d393b367e2ad0a",
+  "utils/roleResolver.js": "102868d395b74f427a007f4841f7edf972fc738337eb7986fb157be9159c204f",
   "utils/tokens.js": "8025d16bd5960a48798e402a2a4a05430b0d8db74c38c5f8b04103731d567cdd"
 }

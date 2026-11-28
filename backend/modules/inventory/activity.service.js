@@ -756,7 +756,10 @@ const bookingEvents = async ({
     if (to && at > new Date(to).getTime()) return false;
     return true;
   });
-  inRange.sort((a, b) => new Date(b.at) - new Date(a.at));
+  // The same total order the merged feed uses. It matters here too: this list
+  // is TRUNCATED to `take`, so a tie straddling the cut would otherwise decide
+  // arbitrarily which of two records reaches the merge.
+  inRange.sort(byNewestFirst);
   return { records: inRange.slice(0, take), total: inRange.length };
 };
 /**
@@ -964,6 +967,38 @@ const oversoldEvents = async ({ skuCode, from, to, take, activityType }) => {
     total,
   };
 };
+/**
+ * The feed's order: newest first, and TOTAL.
+ *
+ * Sorting on `at` alone is not an ordering when two records share a timestamp,
+ * and they share one constantly — a booking confirmation writes its RESERVE
+ * movement, its booking event and its indent reservation inside the same
+ * millisecond, and a bulk import posts hundreds of movements on one
+ * `effectiveDate`. `Array.prototype.sort` is stable, so ties used to fall back
+ * to the order the five sources happened to be concatenated in (ledger, then
+ * indent, then booking, then audit, then exception). That is not chronological,
+ * and worse, it is not STABLE ACROSS PAGES: each source is fetched with its own
+ * `skip + limit` window, so which tied rows are present changes from page to
+ * page and a record could appear on two pages or on none.
+ *
+ * So ties are broken on facts the records actually carry:
+ *   1. `postedAt` — when the row was RECORDED, as against the date it is filed
+ *      under. A backdated receipt and the adjustment that corrected it share an
+ *      effective date; the one entered later belongs above.
+ *   2. `id` — the transaction id, reservation id or synthetic event key. Unique
+ *      and immutable on every record from every source, so the order it imposes
+ *      is the same on every request. Ascending: the direction is arbitrary (a
+ *      tie has no chronology to respect), being FIXED is the whole point.
+ */
+export const byNewestFirst = (a, b) => {
+  const at = new Date(b.at).getTime() - new Date(a.at).getTime();
+  if (at) return at;
+  const posted = (b.postedAt ? new Date(b.postedAt).getTime() : 0)
+    - (a.postedAt ? new Date(a.postedAt).getTime() : 0);
+  if (posted) return posted;
+  return String(a.id ?? '').localeCompare(String(b.id ?? ''));
+};
+
 // ─── The merged feed ─────────────────────────────────────────────────────────
 /**
  * Build the activity feed.
@@ -1164,7 +1199,7 @@ export const getActivity = async ({
 
   const merged = [...ledgerRecords, ...indentRecords, ...booking.records,
     ...audit.records, ...oversold.records]
-    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+    .sort(byNewestFirst)
     .slice(skip, skip + limit);
 
   const total = movementTotal + reservationTotal + booking.total + audit.total + oversold.total;

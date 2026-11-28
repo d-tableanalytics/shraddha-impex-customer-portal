@@ -32,7 +32,7 @@ import {
   menuFor,
 } from '../../utils/roleResolver.js';
 import { isHrmsRoleKey } from '../../shared/permissions/constants.js';
-import { brandsVisibleTo } from '../../utils/brandAccess.js';
+import { brandsVisibleTo, isBrandScopedAccount } from '../../utils/brandAccess.js';
 
 /** The device label stored against a session, so a person can recognise it. */
 const agentOf = (req) => String(req?.headers?.['user-agent'] ?? '').slice(0, 255) || null;
@@ -510,6 +510,21 @@ export const getMe = async (req, res, next) => {
          * brandsVisibleTo(): a customer is told only about their own brands.
          */
         brands: brandsVisibleTo(user),
+        /**
+         * Does this account's brand visibility come from its own `brandAccess`
+         * flags (a customer), or does it see every configured brand (internal
+         * staff)? The SERVER answers it, because the answer depends on the role
+         * model — which roles are fenced to the Customer Portal — and a browser
+         * that had to know role names would drift out of step the moment a
+         * Super Admin invented one. That drift is exactly what left Sales users
+         * with an empty Product Catalogue: the UI filtered the catalogue's
+         * brand list down to the brands ticked on a staff account, which is
+         * none of them. See utils/brandAccess.js.
+         *
+         * A client that does not read this field keeps its previous behaviour,
+         * so an old tab against a new server is not broken by it.
+         */
+        brandScoped: isBrandScopedAccount(user),
         /**
          * Whether this account has HRMS access at all, and which HRMS roles it
          * holds. NOT the HRMS actor: that needs the Employee record behind the
